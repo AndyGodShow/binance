@@ -1,0 +1,249 @@
+.container {
+    position: fixed;
+    top: 80px;
+    right: 20px;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    pointer-events: none;
+}
+
+.card {
+    position: relative;
+    width: 320px;
+    background: rgba(22, 26, 30, 0.95);
+    backdrop-filter: blur(10px);
+    border-radius: 12px;
+    padding: 16px;
+    pointer-events: all;
+    cursor: pointer;
+    overflow: hidden;
+    animation: slideIn 0.3s ease-out;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.card:hover {
+    transform: translateX(-4px);
+}
+
+/* Level-specific styles */
+.card.info {
+    border: 1px solid rgba(59, 130, 246, 0.5);
+    box-shadow: 0 4px 24px rgba(59, 130, 246, 0.15);
+}
+
+.card.info:hover {
+    box-shadow: 0 8px 32px rgba(59, 130, 246, 0.25);
+}
+
+.card.warning {
+    border: 1px solid rgba(251, 191, 36, 0.5);
+    box-shadow: 0 4px 24px rgba(251, 191, 36, 0.15);
+}
+
+.card.warning:hover {
+    box-shadow: 0 8px 32px rgba(251, 191, 36, 0.25);
+}
+
+.card.critical {
+    border: 1px solid rgba(239, 68, 68, 0.5);
+    box-shadow: 0 4px 24px rgba(239, 68, 68, 0.15);
+}
+
+.card.critical:hover {
+    box-shadow: 0 8px 32px rgba(239, 68, 68, 0.25);
+}
+
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.levelBadge {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.card.info .levelBadge {
+    background: rgba(59, 130, 246, 0.15);
+    color: rgb(59, 130, 246);
+}
+
+.card.warning .levelBadge {
+    background: rgba(251, 191, 36, 0.15);
+    color: rgb(251, 191, 36);
+}
+
+.card.critical .levelBadge {
+    background: rgba(239, 68, 68, 0.15);
+    color: rgb(239, 68, 68);
+}
+
+.emoji {
+    font-size: 14px;
+}
+
+.levelText {
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.closeBtn {
+    background: none;
+    border: none;
+    color: rgba(255, 255, 255, 0.5);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.closeBtn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.9);
+}
+
+.content {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.symbol {
+    font-size: 20px;
+    font-weight: 700;
+    color: white;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.price {
+    font-size: 16px;
+    font-weight: 600;
+    font-family: 'Courier New', monospace;
+    color: rgba(34, 197, 94, 0.9);
+    margin-left: 4px;
+}
+
+.perp {
+    font-size: 11px;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.4);
+    background: rgba(255, 255, 255, 0.05);
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+
+.typeLabel {
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.6);
+    font-weight: 500;
+}
+
+.change {
+    font-size: 28px;
+    font-weight: 700;
+    font-family: 'Courier New', monospace;
+    margin-top: 4px;
+}
+
+.card.info .change {
+    color: rgb(59, 130, 246);
+}
+
+.card.warning .change {
+    color: rgb(251, 191, 36);
+}
+
+.card.critical .change {
+    color: rgb(239, 68, 68);
+}
+
+.timeInfo {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    font-size: 11px;
+}
+
+.timeWindow {
+    color: rgba(255, 255, 255, 0.6);
+    font-weight: 500;
+}
+
+.triggerTime {
+    color: rgba(255, 255, 255, 0.4);
+    font-family: 'Courier New', monospace;
+    font-size: 10px;
+}
+
+.progress {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    height: 3px;
+    width: 100%;
+    animation: progressBar linear forwards;
+}
+
+.card.info .progress {
+    background: linear-gradient(90deg, rgba(59, 130, 246, 0.8), rgba(59, 130, 246, 0.3));
+}
+
+.card.warning .progress {
+    background: linear-gradient(90deg, rgba(251, 191, 36, 0.8), rgba(251, 191, 36, 0.3));
+}
+
+.card.critical .progress {
+    background: linear-gradient(90deg, rgba(239, 68, 68, 0.8), rgba(239, 68, 68, 0.3));
+}
+
+@keyframes slideIn {
+    from {
+        transform: translateX(400px);
+        opacity: 0;
+    }
+
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+@keyframes progressBar {
+    from {
+        width: 100%;
+    }
+
+    to {
+        width: 0%;
+    }
+}
+
+/* Mobile responsive */
+@media (max-width: 768px) {
+    .container {
+        top: 60px;
+        right: 12px;
+        left: 12px;
+    }
+
+    .card {
+        width: auto;
+    }
+}

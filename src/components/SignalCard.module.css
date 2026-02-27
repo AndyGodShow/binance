@@ -1,0 +1,282 @@
+.card {
+    background: var(--surface);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 12px;
+    border: 1px solid var(--border);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.card.long {
+    border-left: 3px solid rgb(34, 197, 94);
+}
+
+.card.short {
+    border-left: 3px solid rgb(239, 68, 68);
+}
+
+/* 超级信号特殊样式 */
+.card.superSignal {
+    border: 2px solid rgb(251, 191, 36);
+    box-shadow: 0 0 20px rgba(251, 191, 36, 0.3);
+    background: linear-gradient(135deg, rgba(251, 191, 36, 0.05) 0%, transparent 100%);
+}
+
+/* 强信号特殊样式 */
+.card.strongSignal {
+    border: 2px solid rgb(96, 165, 250);
+    box-shadow: 0 0 15px rgba(96, 165, 250, 0.2);
+    background: linear-gradient(135deg, rgba(96, 165, 250, 0.05) 0%, transparent 100%);
+}
+
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.symbol {
+    font-size: 18px;
+    font-weight: 700;
+    color: white;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.symbol:hover {
+    color: var(--primary);
+}
+
+.price {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    font-family: 'Roboto Mono', monospace;
+}
+
+.confidenceGroup {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.stackBadge {
+    font-size: 20px;
+    animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+
+    0%,
+    100% {
+        transform: scale(1);
+        opacity: 1;
+    }
+
+    50% {
+        transform: scale(1.1);
+        opacity: 0.8;
+    }
+}
+
+.confidence {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--primary);
+}
+
+.closeBtn {
+    background: transparent;
+    border: none;
+    color: rgba(255, 255, 255, 0.4);
+    font-size: 18px;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: all 0.2s;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.closeBtn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.8);
+    transform: scale(1.1);
+}
+
+.closeBtn:active {
+    transform: scale(0.95);
+}
+
+/* 叠加信息 */
+.stackInfo {
+    background: rgba(96, 165, 250, 0.1);
+    border-radius: 4px;
+    padding: 6px 10px;
+    margin-bottom: 10px;
+    border-left: 3px solid rgb(96, 165, 250);
+}
+
+.stackLabel {
+    font-size: 12px;
+    font-weight: 600;
+    color: rgb(147, 197, 253);
+}
+
+.bonus {
+    font-size: 11px;
+    color: rgb(96, 165, 250);
+    margin-left: 4px;
+}
+
+.strategy {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+}
+
+.direction {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 8px;
+}
+
+.reason {
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+    margin-bottom: 8px;
+}
+
+/* 叠加策略列表 */
+.stackedList {
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 6px;
+    padding: 10px;
+    margin-top: 10px;
+    margin-bottom: 10px;
+}
+
+.stackedTitle {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.5);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+}
+
+.stackedItem {
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.7);
+    padding: 3px 0;
+    line-height: 1.4;
+}
+
+/* 复合策略条件显示 */
+.compositeConditions {
+    background: rgba(59, 130, 246, 0.08);
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin-top: 10px;
+    margin-bottom: 10px;
+    border: 1px solid rgba(59, 130, 246, 0.2);
+}
+
+.conditionsTitle {
+    font-size: 11px;
+    color: rgba(147, 197, 253, 0.9);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+    font-weight: 600;
+}
+
+.conditionItem {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.conditionMet {
+    color: rgba(134, 239, 172, 0.9);
+}
+
+.conditionNotMet {
+    color: rgba(255, 255, 255, 0.4);
+}
+
+.conditionIcon {
+    font-size: 14px;
+    font-weight: bold;
+    min-width: 16px;
+    text-align: center;
+}
+
+.conditionDesc {
+    flex: 1;
+}
+
+.time {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.4);
+    font-family: 'Courier New', monospace;
+}
+
+/* 🔥 风险管理样式 */
+.riskManagement {
+    background: rgba(16, 185, 129, 0.05);
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin-top: 10px;
+    border: 1px solid rgba(16, 185, 129, 0.2);
+}
+
+.riskRow {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 5px 0;
+    font-size: 13px;
+}
+
+.riskLabel {
+    color: rgba(255, 255, 255, 0.7);
+    font-weight: 500;
+    min-width: 80px;
+}
+
+.riskValue {
+    color: white;
+    font-weight: 600;
+    font-family: 'Roboto Mono', monospace;
+    text-align: right;
+    flex: 1;
+    font-size: 12px;
+}
+
+.stopLoss {
+    color: rgb(248, 113, 113);
+}
+
+.takeProfit {
+    color: rgb(134, 239, 172);
+}
+
+.rrRatio {
+    color: rgb(250, 204, 21);
+}

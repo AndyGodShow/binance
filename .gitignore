@@ -2,6 +2,9 @@
 
 # dependencies
 /node_modules
+
+# historical data (too large for git)
+/data/historical/
 /.pnp
 .pnp.*
 .yarn/*

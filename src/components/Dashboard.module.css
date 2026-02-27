@@ -1,0 +1,30 @@
+.dashboard {
+    padding-bottom: 40px;
+}
+
+.header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 24px;
+    padding: 24px 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.title {
+    font-size: 24px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+}
+
+.status {
+    font-size: 14px;
+    font-weight: 500;
+}
+
+.footer {
+    margin-top: 16px;
+    text-align: right;
+    color: var(--text-secondary);
+    font-size: 13px;
+}

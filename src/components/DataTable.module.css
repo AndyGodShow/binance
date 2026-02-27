@@ -1,0 +1,172 @@
+.tableWrapper {
+    overflow-x: auto;
+    border-radius: 8px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    height: 100%;
+    /* Important for sticky */
+    max-height: calc(100vh - 200px);
+    /* Approx height */
+}
+
+.table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 900px;
+}
+
+/* Sticky Header */
+.thead th {
+    position: sticky;
+    top: 0;
+    background: var(--surface);
+    z-index: 10;
+    padding: 14px 16px;
+    text-align: left;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border);
+    box-shadow: 0 1px 0 var(--border);
+    /* Better border for sticky */
+}
+
+.thead th:hover {
+    color: var(--text-primary);
+    background: var(--surface-hover);
+}
+
+.thContent {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.thContentRight {
+    justify-content: flex-end;
+}
+
+.alignRight {
+    text-align: right;
+}
+
+/* Row Styles */
+.row {
+    transition: background-color 0.1s;
+}
+
+/* Zebra Stripes */
+.row:nth-child(even) {
+    background-color: rgba(255, 255, 255, 0.015);
+}
+
+/* Hover Effect */
+.table .row:hover {
+    background-color: var(--surface-hover);
+}
+
+/* Clickable Row */
+.clickable {
+    cursor: pointer;
+}
+
+.clickable .symbolText {
+    cursor: pointer;
+}
+
+.table .row.clickable:hover {
+    background-color: rgba(139, 92, 246, 0.08);
+}
+
+.table td {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 14px;
+    color: var(--text-primary);
+    vertical-align: middle;
+}
+
+/* Compact Mode */
+.compact td,
+.compact th {
+    padding: 8px 12px;
+    font-size: 13px;
+}
+
+/* Symbol */
+.symbolContainer {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.symbolText {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.perpText {
+    font-size: 10px;
+    color: var(--text-tertiary);
+    background: rgba(255, 255, 255, 0.05);
+    padding: 2px 4px;
+    border-radius: 2px;
+}
+
+.price {
+    font-family: 'Roboto Mono', monospace;
+    font-weight: 500;
+}
+
+/* Funding Cell */
+.fundingCell {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: 'Roboto Mono', monospace;
+}
+
+.bgGreenSoft {
+    background-color: rgba(14, 203, 129, 0.15);
+}
+
+.bgRedSoft {
+    background-color: rgba(246, 70, 93, 0.15);
+}
+
+/* Progress Bar */
+.barContainer {
+    position: relative;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding-right: 4px;
+}
+
+.progressBar {
+    position: absolute;
+    right: 0;
+    top: 4px;
+    bottom: 4px;
+    background: rgba(255, 255, 255, 0.08);
+    /* Subtle bar */
+    border-radius: 2px;
+    z-index: 0;
+    pointer-events: none;
+}
+
+.barValue {
+    position: relative;
+    z-index: 1;
+}
+
+.sortIcon {
+    opacity: 0.3;
+}
+
+.activeSort {
+    opacity: 1;
+    color: var(--primary);
+}
