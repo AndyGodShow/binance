@@ -12,10 +12,11 @@ interface StrategyCenterProps {
     data: TickerData[];
     signals: StrategySignal[]; // 从父组件接收
     dismissSignal: (id: string) => void; // 从父组件接收
+    clearAllSignals?: () => void; // 一键清除全部
     onSymbolClick?: (symbol: string) => void;
 }
 
-export default function StrategyCenter({ data, signals, dismissSignal, onSymbolClick }: StrategyCenterProps) {
+export default function StrategyCenter({ data, signals, dismissSignal, clearAllSignals, onSymbolClick }: StrategyCenterProps) {
     // 使用本地状态存储策略列表，以便响应式更新
     const [allStrategies, setAllStrategies] = useState(() => strategyRegistry.getAll());
 
@@ -88,8 +89,27 @@ export default function StrategyCenter({ data, signals, dismissSignal, onSymbolC
                     <h2 className={styles.sectionTitle}>
                         活跃信号 ({filteredStats.total})
                     </h2>
-                    <div className={styles.stats}>
-                        🟢 做多: {filteredStats.longCount} | 🔴 做空: {filteredStats.shortCount}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                        <div className={styles.stats}>
+                            🟢 做多: {filteredStats.longCount} | 🔴 做空: {filteredStats.shortCount}
+                        </div>
+                        {filteredSignals.length > 0 && clearAllSignals && (
+                            <button
+                                onClick={clearAllSignals}
+                                style={{
+                                    background: 'rgba(246,70,93,0.15)',
+                                    border: '1px solid rgba(246,70,93,0.3)',
+                                    color: '#F6465D',
+                                    borderRadius: 6,
+                                    padding: '4px 10px',
+                                    fontSize: 12,
+                                    fontWeight: 600,
+                                    cursor: 'pointer',
+                                }}
+                            >
+                                全部清除
+                            </button>
+                        )}
                     </div>
                 </div>
 

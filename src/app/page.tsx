@@ -121,7 +121,7 @@ export default function Home() {
   }, [rawData, oiData, frameData, rsrsData]);
 
   // Run strategy scanner
-  const { signals, dismissSignal } = useStrategyScanner(processedData);
+  const { signals, dismissSignal, clearAll: clearAllSignals } = useStrategyScanner(processedData);
 
   // 🔧 Shared state for chart drawer (shared between Dashboard and StrategyCenter)
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
@@ -179,6 +179,7 @@ export default function Home() {
           data={processedData}
           signals={signals}
           dismissSignal={dismissSignal}
+          clearAllSignals={clearAllSignals}
           onSymbolClick={handleSymbolClick}
         />
       </div>
