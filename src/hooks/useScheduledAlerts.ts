@@ -1,38 +1,24 @@
 "use client";
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { TickerData, ScheduledAlertRecord, FundingRateItem } from '@/lib/types';
 
 export function useScheduledAlerts(data: TickerData[], enabled: boolean) {
     const [scheduledAlerts, setScheduledAlerts] = useState<ScheduledAlertRecord[]>([]);
-    const [lastTriggeredMinute, setLastTriggeredMinute] = useState<number>(-1);
+    const lastTriggeredRef = useRef<number>(-1);
+    const dataRef = useRef<TickerData[]>(data);
 
+    // 保持 dataRef 最新
     useEffect(() => {
-        if (!enabled || data.length === 0) return;
+        dataRef.current = data;
+    }, [data]);
 
-        const checkSchedule = () => {
-            const now = new Date();
-            const minutes = now.getMinutes();
-            const seconds = now.getSeconds();
+    const triggerFundingRateAlert = useCallback(() => {
+        const currentData = dataRef.current;
+        if (currentData.length === 0) return;
 
-            // 在整点或半点的前3秒内触发（避免重复）
-            if ((minutes === 0 || minutes === 30) && seconds < 3) {
-                // 防止重复触发（使用分钟作为标识）
-                const currentIdentifier = now.getHours() * 100 + minutes;
-                if (lastTriggeredMinute !== currentIdentifier) {
-                    setLastTriggeredMinute(currentIdentifier);
-                    triggerFundingRateAlert();
-                }
-            }
-        };
-
-        const interval = setInterval(checkSchedule, 1000); // 每秒检查
-        return () => clearInterval(interval);
-    }, [enabled, data, lastTriggeredMinute]);
-
-    const triggerFundingRateAlert = () => {
         // 过滤并排序获取TOP3正负费率
-        const validData = data.filter(t => t.fundingRate && parseFloat(t.fundingRate) !== 0);
+        const validData = currentData.filter(t => t.fundingRate && parseFloat(t.fundingRate) !== 0);
 
         const sorted = [...validData].sort((a, b) =>
             parseFloat(b.fundingRate || '0') - parseFloat(a.fundingRate || '0')
@@ -48,7 +34,6 @@ export function useScheduledAlerts(data: TickerData[], enabled: boolean) {
             fundingRate: parseFloat(t.fundingRate || '0')
         }));
 
-        // 创建推送记录
         const alert: ScheduledAlertRecord = {
             id: `scheduled-${Date.now()}`,
             type: 'funding-rate',
@@ -57,14 +42,34 @@ export function useScheduledAlerts(data: TickerData[], enabled: boolean) {
             topNegative,
         };
 
-        setScheduledAlerts(prev => [alert, ...prev.slice(0, 9)]); // 只保留最近10条
-
-        // 显示浏览器通知
+        setScheduledAlerts(prev => [alert, ...prev.slice(0, 9)]);
         showFundingRateNotification(alert);
-
-        // 播放音效
         playAlertSound();
-    };
+    }, []);
+
+    useEffect(() => {
+        if (!enabled) return;
+
+        const checkSchedule = () => {
+            const now = new Date();
+            const minutes = now.getMinutes();
+            const seconds = now.getSeconds();
+
+            // 在整点或半点的前10秒内触发（加大窗口，防止错过）
+            if ((minutes === 0 || minutes === 30) && seconds < 10) {
+                const currentIdentifier = now.getHours() * 100 + minutes;
+                if (lastTriggeredRef.current !== currentIdentifier) {
+                    lastTriggeredRef.current = currentIdentifier;
+                    triggerFundingRateAlert();
+                }
+            }
+        };
+
+        const interval = setInterval(checkSchedule, 1000);
+        return () => clearInterval(interval);
+    }, [enabled, triggerFundingRateAlert]); // 不再依赖 data 和 lastTriggeredMinute
+
+
 
     const dismissAlert = (id: string) => {
         setScheduledAlerts(prev => prev.filter(a => a.id !== id));
