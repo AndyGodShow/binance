@@ -8,7 +8,9 @@ import { strategyRegistry } from '@/strategies/registry';
 import { TickerData } from '@/lib/types';
 import { logger } from '@/lib/logger';
 import { calculateDataQuality, DataQualityMetrics } from '@/lib/dataQuality';
+import { StrategyRiskConfig, DEFAULT_RISK_CONFIGS } from '@/lib/risk/riskConfig';
 import DataQualityCard from './DataQualityCard';
+import RiskConfigPanel from './RiskConfigPanel';
 import { EquityCurveChart, DrawdownChart, ProfitDistributionChart, HoldingTimeChart } from './BacktestCharts';
 import styles from './BacktestPanel.module.css';
 
@@ -18,9 +20,8 @@ export default function BacktestPanel() {
     const [preset, setPreset] = useState<'1d' | '7d' | '30d' | '90d' | '180d' | '1y'>('30d');
     const [selectedStrategy, setSelectedStrategy] = useState<string>('');
     const [initialCapital, setInitialCapital] = useState(10000);
-    const [stopLoss, setStopLoss] = useState(5);
-    const [takeProfit, setTakeProfit] = useState(10);
     const [commission, setCommission] = useState(0.04);
+    const [riskConfig, setRiskConfig] = useState<StrategyRiskConfig | null>(null);
 
     const [loading, setLoading] = useState(false);
     const [result, setResult] = useState<BacktestResult | null>(null);
@@ -117,13 +118,12 @@ export default function BacktestPanel() {
                 throw new Error('策略不存在');
             }
 
-            // 5. 配置回测引擎
+            // 5. 配置回测引擎（使用策略风控，不用简单%）
             const config: Partial<BacktestConfig> = {
                 initialCapital,
-                stopLoss: stopLoss > 0 ? stopLoss : undefined,
-                takeProfit: takeProfit > 0 ? takeProfit : undefined,
                 commission,
                 slippage: 0.05,
+                useStrategyRiskManagement: true, // 始终使用策略级风控
             };
 
             const engine = new BacktestEngine(config);
@@ -260,7 +260,7 @@ export default function BacktestPanel() {
                 </div>
 
                 <div className={styles.section}>
-                    <h3>⚙️ 风控参数</h3>
+                    <h3>⚙️ 基础参数</h3>
                     <div className={styles.fields}>
                         <div className={styles.field}>
                             <label>初始资金 (USDT)</label>
@@ -270,26 +270,6 @@ export default function BacktestPanel() {
                                 onChange={(e) => setInitialCapital(Number(e.target.value))}
                                 min="100"
                                 step="1000"
-                            />
-                        </div>
-                        <div className={styles.field}>
-                            <label>止损 (%)</label>
-                            <input
-                                type="number"
-                                value={stopLoss}
-                                onChange={(e) => setStopLoss(Number(e.target.value))}
-                                min="0"
-                                step="0.5"
-                            />
-                        </div>
-                        <div className={styles.field}>
-                            <label>止盈 (%)</label>
-                            <input
-                                type="number"
-                                value={takeProfit}
-                                onChange={(e) => setTakeProfit(Number(e.target.value))}
-                                min="0"
-                                step="0.5"
                             />
                         </div>
                         <div className={styles.field}>
@@ -304,6 +284,14 @@ export default function BacktestPanel() {
                         </div>
                     </div>
                 </div>
+
+                {/* 策略风控参数（选择策略后显示） */}
+                {selectedStrategy && (
+                    <RiskConfigPanel
+                        strategyId={selectedStrategy}
+                        onChange={setRiskConfig}
+                    />
+                )}
 
                 <button
                     className={styles.runBtn}
