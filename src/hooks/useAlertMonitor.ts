@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { TickerData, AlertConfig, AlertRecord, AlertLevel, HistoricalDataPoint } from '@/lib/types';
 
 // Alert level thresholds
@@ -34,8 +34,8 @@ const STORAGE_KEYS = {
 export function useAlertMonitor(data: TickerData[]) {
     const [alerts, setAlerts] = useState<AlertRecord[]>([]);
     const [config, setConfig] = useState<AlertConfig>(DEFAULT_CONFIG);
-    const [history, setHistory] = useState<HistoricalDataPoint[]>([]);
-    const [triggeredAlerts, setTriggeredAlerts] = useState<Set<string>>(new Set());
+    const [history, setHistory] = useState<Map<string, { oldest: HistoricalDataPoint; newest: HistoricalDataPoint }>>(new Map());
+    const triggeredAlertsRef = useRef<Set<string>>(new Set());
     const [isClient, setIsClient] = useState(false);
 
     // 标记客户端已挂载，避免 Hydration Mismatch
@@ -63,7 +63,7 @@ export function useAlertMonitor(data: TickerData[]) {
         if (stored) {
             try {
                 const parsed = JSON.parse(stored);
-                setTriggeredAlerts(new Set(parsed));
+                triggeredAlertsRef.current = new Set(parsed);
             } catch (e) {
                 console.error('Failed to parse triggered alerts:', e);
             }
@@ -79,7 +79,7 @@ export function useAlertMonitor(data: TickerData[]) {
         });
     }, []);
 
-    // Store historical data points
+    // Store historical data points (optimized: O(n) with Map)
     useEffect(() => {
         if (data.length === 0) return;
 
@@ -87,39 +87,30 @@ export function useAlertMonitor(data: TickerData[]) {
         const cutoffTime = now - config.timeWindow;
 
         setHistory(prev => {
-            // Add new data points
-            const newPoints: HistoricalDataPoint[] = data.map(ticker => ({
-                symbol: ticker.symbol,
-                price: parseFloat(ticker.lastPrice),
-                openInterestValue: parseFloat(ticker.openInterestValue || '0'),
-                timestamp: now,
-            }));
+            const newMap = new Map(prev);
 
-            // Merge with previous, remove old entries
-            const merged = [...prev, ...newPoints];
-            const filtered = merged.filter(point => point.timestamp > cutoffTime);
+            data.forEach(ticker => {
+                const point: HistoricalDataPoint = {
+                    symbol: ticker.symbol,
+                    price: parseFloat(ticker.lastPrice),
+                    openInterestValue: parseFloat(ticker.openInterestValue || '0'),
+                    timestamp: now,
+                };
 
-            // Keep only the oldest and newest for each symbol within the window
-            const symbolMap = new Map<string, HistoricalDataPoint[]>();
-            filtered.forEach(point => {
-                if (!symbolMap.has(point.symbol)) {
-                    symbolMap.set(point.symbol, []);
-                }
-                symbolMap.get(point.symbol)!.push(point);
-            });
-
-            const optimized: HistoricalDataPoint[] = [];
-            symbolMap.forEach((points, symbol) => {
-                if (points.length <= 2) {
-                    optimized.push(...points);
+                const existing = newMap.get(ticker.symbol);
+                if (!existing) {
+                    newMap.set(ticker.symbol, { oldest: point, newest: point });
                 } else {
-                    // Keep oldest and newest
-                    const sorted = points.sort((a, b) => a.timestamp - b.timestamp);
-                    optimized.push(sorted[0], sorted[sorted.length - 1]);
+                    // 如果最早的记录过期了，用当前值替代
+                    if (existing.oldest.timestamp < cutoffTime) {
+                        newMap.set(ticker.symbol, { oldest: point, newest: point });
+                    } else {
+                        newMap.set(ticker.symbol, { oldest: existing.oldest, newest: point });
+                    }
                 }
             });
 
-            return optimized;
+            return newMap;
         });
     }, [data, config.timeWindow]);
 
@@ -138,27 +129,23 @@ export function useAlertMonitor(data: TickerData[]) {
         return null;
     }, [config.enableInfo, config.enableWarning, config.enableCritical]);
 
-    // Check for alerts
+    // Check for alerts (uses ref for triggeredAlerts to avoid stale closures)
     useEffect(() => {
-        if (data.length === 0 || history.length === 0) return;
+        if (data.length === 0 || history.size === 0) return;
 
         const now = Date.now();
-        const cutoffTime = now - config.timeWindow;
         const newAlerts: AlertRecord[] = [];
+        const triggered = triggeredAlertsRef.current;
 
         data.forEach(ticker => {
             const symbol = ticker.symbol;
             const currentPrice = parseFloat(ticker.lastPrice);
             const currentOI = parseFloat(ticker.openInterestValue || '0');
 
-            // Find the oldest historical point for this symbol within time window
-            const symbolHistory = history
-                .filter(h => h.symbol === symbol && h.timestamp > cutoffTime)
-                .sort((a, b) => a.timestamp - b.timestamp);
+            const entry = history.get(symbol);
+            if (!entry) return;
 
-            if (symbolHistory.length === 0) return;
-
-            const basePoint = symbolHistory[0];
+            const basePoint = entry.oldest;
             const basePrice = basePoint.price;
             const baseOI = basePoint.openInterestValue;
 
@@ -167,13 +154,12 @@ export function useAlertMonitor(data: TickerData[]) {
                 const priceChange = ((currentPrice - basePrice) / basePrice) * 100;
                 const direction: 'up' | 'down' = priceChange >= 0 ? 'up' : 'down';
 
-                // 只有在启用跌幅监控或者是涨幅时才处理
                 if (direction === 'up' || config.monitorDecline) {
                     const priceLevel = getAlertLevel(priceChange);
 
                     if (priceLevel) {
                         const alertKey = `${symbol}-price-${direction}-${priceLevel}`;
-                        if (!triggeredAlerts.has(alertKey)) {
+                        if (!triggered.has(alertKey)) {
                             newAlerts.push({
                                 id: `${alertKey}-${now}`,
                                 symbol,
@@ -184,9 +170,9 @@ export function useAlertMonitor(data: TickerData[]) {
                                 timestamp: now,
                                 baseValue: basePrice,
                                 currentValue: currentPrice,
-                                baseTimestamp: basePoint.timestamp, // 记录基准时间
+                                baseTimestamp: basePoint.timestamp,
                             });
-                            triggeredAlerts.add(alertKey);
+                            triggered.add(alertKey);
                         }
                     }
                 }
@@ -197,13 +183,12 @@ export function useAlertMonitor(data: TickerData[]) {
                 const oiChange = ((currentOI - baseOI) / baseOI) * 100;
                 const direction: 'up' | 'down' = oiChange >= 0 ? 'up' : 'down';
 
-                // 只有在启用跌幅监控或者是涨幅时才处理
                 if (direction === 'up' || config.monitorDecline) {
                     const oiLevel = getAlertLevel(oiChange);
 
                     if (oiLevel) {
                         const alertKey = `${symbol}-oi-${direction}-${oiLevel}`;
-                        if (!triggeredAlerts.has(alertKey)) {
+                        if (!triggered.has(alertKey)) {
                             newAlerts.push({
                                 id: `${alertKey}-${now}`,
                                 symbol,
@@ -214,9 +199,9 @@ export function useAlertMonitor(data: TickerData[]) {
                                 timestamp: now,
                                 baseValue: baseOI,
                                 currentValue: currentOI,
-                                baseTimestamp: basePoint.timestamp, // 记录基准时间
+                                baseTimestamp: basePoint.timestamp,
                             });
-                            triggeredAlerts.add(alertKey);
+                            triggered.add(alertKey);
                         }
                     }
                 }
@@ -224,15 +209,13 @@ export function useAlertMonitor(data: TickerData[]) {
         });
 
         if (newAlerts.length > 0) {
-            setAlerts(prev => [...newAlerts, ...prev]);
-            localStorage.setItem(STORAGE_KEYS.TRIGGERED, JSON.stringify([...triggeredAlerts]));
+            setAlerts(prev => [...newAlerts, ...prev].slice(0, 50)); // Cap at 50
+            localStorage.setItem(STORAGE_KEYS.TRIGGERED, JSON.stringify([...triggered]));
 
-            // Play sound if enabled
             if (config.enableSound) {
                 playAlertSound();
             }
 
-            // Show browser notification if enabled
             if (config.enableNotification) {
                 newAlerts.forEach(alert => {
                     if (shouldShowNotification(alert.level, config.notificationMinLevel)) {
@@ -241,16 +224,13 @@ export function useAlertMonitor(data: TickerData[]) {
                 });
             }
         }
-    }, [data, history, config, triggeredAlerts, getAlertLevel]);
+    }, [data, history, config, getAlertLevel]);
 
     // Clean up old triggered alerts periodically
     useEffect(() => {
         const interval = setInterval(() => {
-            setTriggeredAlerts(prev => {
-                const newSet = new Set<string>();
-                localStorage.setItem(STORAGE_KEYS.TRIGGERED, JSON.stringify([...newSet]));
-                return newSet;
-            });
+            triggeredAlertsRef.current = new Set<string>();
+            localStorage.setItem(STORAGE_KEYS.TRIGGERED, JSON.stringify([]));
         }, config.timeWindow);
 
         return () => clearInterval(interval);

@@ -5,11 +5,7 @@ import DataFetchTest from './DataFetchTest';
 import BacktestPanel from './BacktestPanel';
 import styles from './SimulatedTrading.module.css';
 
-interface SimulatedTradingProps {
-    data?: any[];
-}
-
-export default function SimulatedTrading({ data }: SimulatedTradingProps) {
+export default function SimulatedTrading() {
     const [activeSubTab, setActiveSubTab] = useState<'backtest' | 'data-test'>('backtest');
 
     return (

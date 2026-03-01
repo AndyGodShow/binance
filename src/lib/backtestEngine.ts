@@ -1,6 +1,7 @@
 import { KlineData } from '@/app/api/backtest/klines/route';
 import { TickerData } from './types';
 import { RiskManagement } from './risk/types';
+import { TechnicalIndicators } from './technicalIndicators';
 
 /**
  * 回测结果接口
@@ -83,8 +84,6 @@ export interface EquityPoint {
  */
 export interface BacktestConfig {
     initialCapital: number; // 初始资金
-    stopLoss?: number; // 止损百分比 (%)
-    takeProfit?: number; // 止盈百分比 (%)
     commission: number; // 手续费 (%)
     slippage: number; // 滑点 (%)
     useStrategyRiskManagement?: boolean; // 是否使用策略自带的风控参数
@@ -113,11 +112,9 @@ export class BacktestEngine {
     constructor(config: Partial<BacktestConfig> = {}) {
         this.config = {
             initialCapital: config.initialCapital || 10000,
-            stopLoss: config.stopLoss,
-            takeProfit: config.takeProfit,
-            commission: config.commission || 0.04, // 0.04% 默认手续费
-            slippage: config.slippage || 0.05, // 0.05% 默认滑点
-            useStrategyRiskManagement: config.useStrategyRiskManagement ?? true, // 默认启用策略风控
+            commission: config.commission || 0.04,
+            slippage: config.slippage || 0.05,
+            useStrategyRiskManagement: config.useStrategyRiskManagement ?? true,
         };
     }
 
@@ -154,10 +151,6 @@ export class BacktestEngine {
         let peakEquity = 100;
         let maxDrawdown = 0;
 
-        // 导入技术指标计算器
-        const { TechnicalIndicators } = require('./technicalIndicators');
-
-        // 确保有足够的数据用于计算指标（至少需要100根K线）
         const startIndex = Math.max(100, 0);
 
         // 遍历所有K线
@@ -328,9 +321,7 @@ export class BacktestEngine {
                     }
 
                 } else {
-                    // --- 默认固定百分比逻辑 ---
-                    // 计算当前浮动盈亏（基于收盘价）
-                    // 注意：这里仍然存在"收盘价滞后"问题，但为了保持兼容性暂不改动旧逻辑的High/Low检测，仅在策略风控中启用高级检测
+                    // --- 默认固定百分比逻辑（无策略风控时的兜底） ---
                     let profitPercent = 0;
                     if (direction === 'long') {
                         profitPercent = ((currentClose - entryPrice) / entryPrice) * 100;
@@ -338,15 +329,17 @@ export class BacktestEngine {
                         profitPercent = ((entryPrice - currentClose) / entryPrice) * 100;
                     }
 
-                    // 检查止损
-                    if (this.config.stopLoss && profitPercent <= -this.config.stopLoss) {
+                    // 兜底止损 5%
+                    const fallbackStopLoss = 5;
+                    if (profitPercent <= -fallbackStopLoss) {
                         shouldExit = true;
                         exitReason = 'stop_loss';
-                        exitPrice = currentClose; // 简化处理
+                        exitPrice = currentClose;
                     }
 
-                    // 检查止盈
-                    if (this.config.takeProfit && profitPercent >= this.config.takeProfit) {
+                    // 兜底止盈 10%
+                    const fallbackTakeProfit = 10;
+                    if (profitPercent >= fallbackTakeProfit) {
                         shouldExit = true;
                         exitReason = 'take_profit';
                         exitPrice = currentClose;

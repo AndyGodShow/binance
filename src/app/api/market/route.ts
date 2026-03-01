@@ -14,34 +14,38 @@ export async function GET() {
             fetch('https://fapi.binance.com/fapi/v1/exchangeInfo', { next: { revalidate: 86400 } }), // Cache for 24 hours (exchange info rarely changes)
         ]);
 
-        // Check if critical endpoints succeeded
-        if (results[0].status === 'rejected' || results[1].status === 'rejected' || results[2].status === 'rejected') {
-            logger.error('Failed to fetch data from Binance', new Error('One or more endpoints failed'));
+        // Check if critical endpoints succeeded (ticker + premium are required)
+        if (results[0].status === 'rejected' || results[1].status === 'rejected') {
+            logger.error('Failed to fetch critical data from Binance', new Error('Ticker or premium index endpoint failed'));
             throw new Error('Failed to fetch data from Binance');
         }
 
         const tickerRes = results[0].value;
         const premiumRes = results[1].value;
-        const exchangeInfoRes = results[2].value;
 
-        if (!tickerRes.ok || !premiumRes.ok || !exchangeInfoRes.ok) {
+        if (!tickerRes.ok || !premiumRes.ok) {
             throw new Error('Failed to fetch data from Binance');
         }
 
         const tickers: TickerData[] = await tickerRes.json();
         const premiums: PremiumIndex[] = await premiumRes.json();
-        const exchangeInfo = await exchangeInfoRes.json();
 
-        // Get list of PERPETUAL contract symbols (Strict Filtering)
-        const perpetualSymbols = new Set(
-            exchangeInfo.symbols
-                .filter((s: any) => {
-                    return s.contractType === 'PERPETUAL' &&
-                        s.status === 'TRADING' &&
-                        s.symbol.endsWith('USDT');
-                })
-                .map((s: any) => s.symbol)
-        );
+        // exchangeInfo is optional (cached 24h, rarely fails but shouldn't break everything)
+        let perpetualSymbols: Set<string> | null = null;
+        if (results[2].status === 'fulfilled' && results[2].value.ok) {
+            const exchangeInfo = await results[2].value.json();
+            perpetualSymbols = new Set(
+                exchangeInfo.symbols
+                    .filter((s: any) => {
+                        return s.contractType === 'PERPETUAL' &&
+                            s.status === 'TRADING' &&
+                            s.symbol.endsWith('USDT');
+                    })
+                    .map((s: any) => s.symbol)
+            );
+        } else {
+            logger.warn('exchangeInfo fetch failed, skipping perpetual filter');
+        }
 
         // Map funding rate to tickers
         const fundingMap = new Map<string, string>();
@@ -49,9 +53,9 @@ export async function GET() {
             fundingMap.set(p.symbol, p.lastFundingRate);
         });
 
-        // Filter only PERPETUAL contracts and merge data
+        // Filter only PERPETUAL contracts (if exchangeInfo available) and merge data
         let merged = tickers
-            .filter((t: TickerData) => perpetualSymbols.has(t.symbol))
+            .filter((t: TickerData) => perpetualSymbols ? perpetualSymbols.has(t.symbol) : t.symbol.endsWith('USDT'))
             .map((t: TickerData) => ({
                 ...t,
                 fundingRate: fundingMap.get(t.symbol) || '0',

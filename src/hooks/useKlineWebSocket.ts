@@ -26,8 +26,8 @@ export function useKlineWebSocket(symbols: string[]) {
     const ws15mRef = useRef<WebSocket | null>(null);
     const ws1hRef = useRef<WebSocket | null>(null);
     const ws4hRef = useRef<WebSocket | null>(null);
-    const reconnectTimeoutRef = useRef<NodeJS.Timeout | undefined>(undefined);
-    const reconnectAttemptsRef = useRef<Map<string, number>>(new Map()); // 记录每个间隔的重连次数
+    const reconnectTimeoutsRef = useRef<Map<string, NodeJS.Timeout>>(new Map()); // 每个 interval 独立的重连定时器
+    const reconnectAttemptsRef = useRef<Map<string, number>>(new Map());
 
     // 首次加载：使用 REST API 获取初始数据
     useEffect(() => {
@@ -179,14 +179,14 @@ export function useKlineWebSocket(symbols: string[]) {
                     const maxAttempts = 10;
 
                     if (attempts < maxAttempts) {
-                        // 计算退避时间：基础 1秒 + 指数增长，最多 30秒
                         const backoffTime = Math.min(1000 * Math.pow(2, attempts), 30000);
 
                         reconnectAttemptsRef.current.set(interval, attempts + 1);
 
-                        reconnectTimeoutRef.current = setTimeout(() => {
+                        const timeout = setTimeout(() => {
                             connect(interval, wsRef, setData);
                         }, backoffTime);
+                        reconnectTimeoutsRef.current.set(interval, timeout);
                     } else {
                         console.warn(`WebSocket ${interval} 超过最大重连次数，停止重连`);
                     }
@@ -203,11 +203,9 @@ export function useKlineWebSocket(symbols: string[]) {
 
         // 清理函数
         return () => {
-            // 清理重连定时器
-            if (reconnectTimeoutRef.current) {
-                clearTimeout(reconnectTimeoutRef.current);
-                reconnectTimeoutRef.current = undefined;
-            }
+            // 清理所有重连定时器
+            reconnectTimeoutsRef.current.forEach(timeout => clearTimeout(timeout));
+            reconnectTimeoutsRef.current.clear();
 
             // 关闭所有 WebSocket 连接
             [ws15mRef, ws1hRef, ws4hRef].forEach(ref => {

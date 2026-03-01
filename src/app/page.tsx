@@ -184,7 +184,7 @@ export default function Home() {
         />
       </div>
       <div style={{ display: activeTab === 'trading' ? 'block' : 'none' }}>
-        <SimulatedTrading data={processedData} />
+        <SimulatedTrading />
         <div className="mt-8 border-t border-gray-800 pt-8">
           <DataManager />
         </div>
