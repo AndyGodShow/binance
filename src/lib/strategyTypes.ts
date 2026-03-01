@@ -1,4 +1,5 @@
 import { TickerData } from './types';
+import { RiskManagement } from './risk/types';
 
 // 策略接口
 export interface TradingStrategy {
@@ -43,33 +44,7 @@ export interface StrategySignal {
     totalConditions?: number;        // 总条件数量
 
     // 🔥 风险管理相关
-    risk?: {
-        stopLoss: {
-            price: number;
-            percentage: number;
-            reason: string;
-        };
-        takeProfit: {
-            targets: Array<{
-                price: number;
-                percentage: number;
-                closePercentage: number;
-                reason: string;
-            }>;
-            riskRewardRatio: number;
-        };
-        positionSizing: {
-            percentage: number;
-            leverage: number;
-            maxRiskAmount: number;
-            reasoning: string;
-        };
-        metrics: {
-            entryPrice: number;
-            riskAmount: number;
-            potentialProfit: number;
-        };
-    };
+    risk?: RiskManagement;
 }
 
 // 策略配置（预留）

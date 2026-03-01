@@ -137,6 +137,7 @@ export default function BacktestPanel() {
                     return {
                         signal: signal.direction,
                         confidence: signal.confidence,
+                        risk: signal.risk, // 🔥 传递策略风控（多级止盈/跟踪止损/保本）
                     };
                 },
                 strategy.name,
