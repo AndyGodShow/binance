@@ -9,6 +9,27 @@
     pointer-events: none;
 }
 
+.clearAllBtn {
+    pointer-events: all;
+    align-self: flex-end;
+    background: rgba(246, 70, 93, 0.2);
+    border: 1px solid rgba(246, 70, 93, 0.4);
+    color: #F6465D;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 6px 14px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    backdrop-filter: blur(10px);
+}
+
+.clearAllBtn:hover {
+    background: rgba(246, 70, 93, 0.35);
+    border-color: rgba(246, 70, 93, 0.6);
+    transform: scale(1.02);
+}
+
 .card {
     position: relative;
     width: 320px;

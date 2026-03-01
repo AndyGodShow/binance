@@ -8,10 +8,11 @@ import styles from './AlertNotification.module.css';
 interface AlertNotificationProps {
     alerts: AlertRecord[];
     onDismiss: (id: string) => void;
+    onClearAll?: () => void;
     onSymbolClick?: (symbol: string) => void;
 }
 
-export default function AlertNotification({ alerts, onDismiss, onSymbolClick }: AlertNotificationProps) {
+export default function AlertNotification({ alerts, onDismiss, onClearAll, onSymbolClick }: AlertNotificationProps) {
     if (alerts.length === 0) return null;
 
     // Sort alerts by level (critical first) and timestamp
@@ -34,6 +35,14 @@ export default function AlertNotification({ alerts, onDismiss, onSymbolClick }: 
 
     return (
         <div className={styles.container}>
+            {alerts.length > 1 && onClearAll && (
+                <button
+                    className={styles.clearAllBtn}
+                    onClick={onClearAll}
+                >
+                    全部清除 ({alerts.length})
+                </button>
+            )}
             {sortedAlerts.slice(0, 5).map((alert) => (
                 <AlertCard
                     key={alert.id}

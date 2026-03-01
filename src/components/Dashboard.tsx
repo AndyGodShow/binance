@@ -89,7 +89,7 @@ export default function Dashboard({ processedData: externalData, onSymbolClick }
     }, [externalData, search, volumeFilter, sortConfig]);
 
     // Alert Monitor Hook
-    const { alerts, config: alertConfig, updateConfig: updateAlertConfig, dismissAlert } = useAlertMonitor(filteredData);
+    const { alerts, config: alertConfig, updateConfig: updateAlertConfig, dismissAlert, clearAllAlerts } = useAlertMonitor(filteredData);
 
     // Scheduled Alerts Hook
     const { scheduledAlerts, dismissAlert: dismissScheduledAlert } = useScheduledAlerts(
@@ -142,6 +142,7 @@ export default function Dashboard({ processedData: externalData, onSymbolClick }
                 <AlertNotification
                     alerts={alerts}
                     onDismiss={dismissAlert}
+                    onClearAll={clearAllAlerts}
                 />
             )}
 
