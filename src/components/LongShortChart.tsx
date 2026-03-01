@@ -2,8 +2,8 @@
 
 import { useMemo } from 'react';
 import {
-    AreaChart,
-    Area,
+    LineChart,
+    Line,
     XAxis,
     YAxis,
     CartesianGrid,
@@ -100,13 +100,7 @@ export default function LongShortChart({ title, subtitle, data, period, accentCo
             {/* Area Chart */}
             <div className={styles.chartContainer}>
                 <ResponsiveContainer width="100%" height={200}>
-                    <AreaChart data={chartData} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
-                        <defs>
-                            <linearGradient id={`longGrad-${title}`} x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="0%" stopColor="#0ECB81" stopOpacity={0.35} />
-                                <stop offset="100%" stopColor="#0ECB81" stopOpacity={0.05} />
-                            </linearGradient>
-                        </defs>
+                    <LineChart data={chartData} margin={{ top: 8, right: 8, left: -10, bottom: 0 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="rgba(43,49,57,0.6)" />
                         <XAxis
                             dataKey="time"
@@ -120,7 +114,7 @@ export default function LongShortChart({ title, subtitle, data, period, accentCo
                             tickLine={false}
                             axisLine={false}
                             domain={['auto', 'auto']}
-                            tickFormatter={(v: number) => `${v}%`}
+                            tickFormatter={(v: number) => v.toFixed(2)}
                         />
                         <Tooltip
                             contentStyle={{
@@ -132,23 +126,22 @@ export default function LongShortChart({ title, subtitle, data, period, accentCo
                             }}
                             // eslint-disable-next-line @typescript-eslint/no-explicit-any
                             formatter={((value: any) => [
-                                `多 ${Number(value ?? 0).toFixed(2)}% / 空 ${(100 - Number(value ?? 0)).toFixed(2)}%`,
-                                '多头占比'
+                                `${Number(value ?? 0).toFixed(4)}`,
+                                '多空比值'
                             ]) as any}
                             labelStyle={{ color: '#848E9C' }}
                         />
-                        <ReferenceLine y={50} stroke="#F6465D" strokeDasharray="4 4" strokeWidth={1.5} label={{ value: '50%', position: 'right', fill: '#848E9C', fontSize: 10 }} />
-                        <Area
+                        <ReferenceLine y={1} stroke="#F6465D" strokeDasharray="4 4" strokeWidth={1.5} label={{ value: '1.0', position: 'right', fill: '#848E9C', fontSize: 10 }} />
+                        <Line
                             type="monotone"
-                            dataKey="long"
+                            dataKey="ratio"
                             stroke="#0ECB81"
                             strokeWidth={2}
-                            fill={`url(#longGrad-${title})`}
-                            animationDuration={600}
                             dot={false}
                             activeDot={{ r: 4, fill: '#0ECB81', stroke: '#1E2329', strokeWidth: 2 }}
+                            animationDuration={600}
                         />
-                    </AreaChart>
+                    </LineChart>
                 </ResponsiveContainer>
             </div>
         </div>
