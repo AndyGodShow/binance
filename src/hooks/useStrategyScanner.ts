@@ -105,7 +105,7 @@ export function useStrategyScanner(data: TickerData[]) {
         prevDataDigest.current = currentDataDigest;
 
         // 第2步：计算叠加加成并合并信号
-        const currentSignals: StrategySignal[] = []; // Renamed from newSignals
+        const currentSignals: StrategySignal[] = [];
 
         signalsBySymbol.forEach((symbolSignals, symbol) => {
             const stackCount = symbolSignals.length;
@@ -123,11 +123,6 @@ export function useStrategyScanner(data: TickerData[]) {
                 s.confidence > max.confidence ? s : max
             );
 
-            // 生成唯一key用于去重 // Removed
-            // const signalKey = `${symbol}`; // Removed
-
-            // 检查是否在5分钟内已触发过（防止重复） // Removed
-            // if (!triggeredSet.has(signalKey)) { // Removed
             // 创建增强的信号（带叠加信息）
             const boostedSignal: StrategySignal = {
                 ...mainSignal,
@@ -137,9 +132,7 @@ export function useStrategyScanner(data: TickerData[]) {
                 comboBonus,
             };
 
-            currentSignals.push(boostedSignal); // Pushed to currentSignals
-            // triggeredSet.add(signalKey); // Removed
-            // } // Removed
+            currentSignals.push(boostedSignal);
         });
 
         // 第3步：更新信号列表（保持现有信号，只添加新的）
@@ -189,9 +182,8 @@ export function useStrategyScanner(data: TickerData[]) {
                 .slice(0, 50);
         });
 
-        // 清理过期的触发记录和时间戳（5分钟） // Modified
+        // 清理过期的触发记录和时间戳（5分钟）
         const cleanupTimer = setTimeout(() => {
-            // setTriggeredSet(new Set()); // Removed
             signalTimestamps.current = new Map();
         }, 5 * 60 * 1000);
 
