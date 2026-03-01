@@ -46,6 +46,8 @@ export default function LongShortPanel() {
         refreshInterval,
         revalidateOnFocus: true,
         dedupingInterval: 10000,
+        keepPreviousData: true,
+        revalidateIfStale: true,
     });
 
     const handleSymbol = useCallback((val: string) => setSymbol(val), []);
