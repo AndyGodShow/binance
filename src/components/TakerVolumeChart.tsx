@@ -2,15 +2,14 @@
 
 import { useMemo } from 'react';
 import {
-    BarChart,
-    Bar,
+    LineChart,
+    Line,
     XAxis,
     YAxis,
     CartesianGrid,
     Tooltip,
     ResponsiveContainer,
     ReferenceLine,
-    Cell,
 } from 'recharts';
 import { TakerVolumeEntry } from '@/lib/types';
 import styles from './LongShortPanel.module.css';
@@ -50,8 +49,6 @@ export default function TakerVolumeChart({ title, subtitle, data, period }: Take
     const chartData = useMemo(() =>
         data.map(d => ({
             time: formatTime(d.ts, period),
-            // Net = buy - sell (positive = buy dominant, negative = sell dominant)
-            net: d.buyVol - d.sellVol,
             ratio: d.ratio,
             buyVol: d.buyVol,
             sellVol: d.sellVol,
@@ -104,10 +101,10 @@ export default function TakerVolumeChart({ title, subtitle, data, period }: Take
                 </div>
             </div>
 
-            {/* Net Volume Bar Chart */}
+            {/* Line Chart - Ratio */}
             <div className={styles.chartContainer}>
                 <ResponsiveContainer width="100%" height={200}>
-                    <BarChart data={chartData} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
+                    <LineChart data={chartData} margin={{ top: 8, right: 8, left: -10, bottom: 0 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="rgba(43,49,57,0.6)" />
                         <XAxis
                             dataKey="time"
@@ -120,7 +117,8 @@ export default function TakerVolumeChart({ title, subtitle, data, period }: Take
                             tick={{ fontSize: 10, fill: '#848E9C' }}
                             tickLine={false}
                             axisLine={false}
-                            tickFormatter={(v: number) => formatVolume(Math.abs(v))}
+                            domain={['auto', 'auto']}
+                            tickFormatter={(v: number) => v.toFixed(2)}
                         />
                         <Tooltip
                             contentStyle={{
@@ -134,26 +132,23 @@ export default function TakerVolumeChart({ title, subtitle, data, period }: Take
                             formatter={((value: any, _name: any, payload: any) => {
                                 const d = payload.payload;
                                 return [
-                                    `买: ${formatVolume(d.buyVol)} / 卖: ${formatVolume(d.sellVol)}`,
-                                    '净量'
+                                    `${Number(value ?? 0).toFixed(4)}  (买${formatVolume(d.buyVol)} / 卖${formatVolume(d.sellVol)})`,
+                                    '买卖比'
                                 ];
                             }) as any}
                             labelStyle={{ color: '#848E9C' }}
                         />
-                        <ReferenceLine y={0} stroke="#474D57" />
-                        <Bar
-                            dataKey="net"
-                            radius={[2, 2, 0, 0]}
+                        <ReferenceLine y={1} stroke="#F6465D" strokeDasharray="4 4" strokeWidth={1.5} label={{ value: '1.0', position: 'right', fill: '#848E9C', fontSize: 10 }} />
+                        <Line
+                            type="monotone"
+                            dataKey="ratio"
+                            stroke="#3B82F6"
+                            strokeWidth={2}
+                            dot={false}
+                            activeDot={{ r: 4, fill: '#3B82F6', stroke: '#1E2329', strokeWidth: 2 }}
                             animationDuration={600}
-                        >
-                            {chartData.map((entry, index) => (
-                                <Cell
-                                    key={`cell-${index}`}
-                                    fill={entry.net >= 0 ? 'rgba(14,203,129,0.7)' : 'rgba(246,70,93,0.7)'}
-                                />
-                            ))}
-                        </Bar>
-                    </BarChart>
+                        />
+                    </LineChart>
                 </ResponsiveContainer>
             </div>
         </div>
