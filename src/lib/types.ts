@@ -169,3 +169,17 @@ export interface FundingRateItem {
     symbol: string;
     fundingRate: number;
 }
+
+// Long/Short Ratio Types
+export interface LongShortEntry {
+    ratio: number;
+    longPct: number;
+    shortPct: number;
+    ts: number;
+}
+
+export interface LongShortData {
+    global: LongShortEntry[];
+    topAccount: LongShortEntry[];
+    topPosition: LongShortEntry[];
+}

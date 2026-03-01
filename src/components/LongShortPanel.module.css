@@ -1,0 +1,396 @@
+/* ===== Panel Layout ===== */
+.panel {
+    padding-bottom: 40px;
+}
+
+/* ===== Control Bar ===== */
+.controlBar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 16px;
+    padding: 16px;
+    background: var(--surface);
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    margin-bottom: 20px;
+}
+
+.controlSection {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.controlLabel {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+}
+
+.chipGroup {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    background: var(--background);
+    padding: 3px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+}
+
+.chip {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    padding: 6px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    border-radius: 4px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.2s ease;
+    font-family: 'Inter', sans-serif;
+}
+
+.chip:hover {
+    color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.chipActive {
+    background: var(--surface-hover);
+    color: var(--primary);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+/* Live indicator */
+.liveIndicator {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+    padding: 4px 12px;
+    background: rgba(14, 203, 129, 0.08);
+    border: 1px solid rgba(14, 203, 129, 0.2);
+    border-radius: 20px;
+}
+
+.liveDot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--green);
+    animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.3;
+    }
+}
+
+.liveText {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--green);
+    letter-spacing: 0.5px;
+}
+
+/* ===== Error Banner ===== */
+.errorBanner {
+    padding: 12px 16px;
+    background: var(--red-bg);
+    border: 1px solid rgba(246, 70, 93, 0.3);
+    border-radius: 8px;
+    color: var(--red);
+    font-size: 13px;
+    font-weight: 500;
+    margin-bottom: 20px;
+}
+
+/* ===== Chart Grid ===== */
+.chartGrid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    margin-bottom: 20px;
+}
+
+@media (max-width: 1200px) {
+    .chartGrid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+@media (max-width: 768px) {
+    .chartGrid {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* ===== Chart Card ===== */
+.chartCard {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    transition: all 0.3s ease;
+    position: relative;
+    overflow: hidden;
+}
+
+.chartCard::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--primary), transparent);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.chartCard:hover {
+    border-color: var(--surface-highlight);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}
+
+.chartCard:hover::before {
+    opacity: 1;
+}
+
+.chartHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 16px;
+}
+
+.chartTitle {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text-primary);
+    letter-spacing: -0.3px;
+}
+
+.chartSubtitle {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-top: 2px;
+}
+
+.accentDot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    margin-top: 4px;
+}
+
+/* ===== Ratio Display ===== */
+.ratioSection {
+    margin-bottom: 12px;
+}
+
+.ratioValue {
+    font-size: 32px;
+    font-weight: 800;
+    font-family: 'Roboto Mono', monospace;
+    line-height: 1;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+}
+
+.trendArrow {
+    font-size: 14px;
+    opacity: 0.8;
+}
+
+.ratioPcts {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 6px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.longPct {
+    color: var(--green);
+}
+
+.vsText {
+    color: var(--text-tertiary);
+    font-size: 10px;
+}
+
+.shortPct {
+    color: var(--red);
+}
+
+/* ===== Stacked Bar ===== */
+.stackedBar {
+    display: flex;
+    height: 24px;
+    border-radius: 6px;
+    overflow: hidden;
+    margin-bottom: 16px;
+    font-size: 10px;
+    font-weight: 600;
+    font-family: 'Roboto Mono', monospace;
+}
+
+.longBar {
+    background: linear-gradient(90deg, rgba(14, 203, 129, 0.6), rgba(14, 203, 129, 0.3));
+    color: var(--green);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+    min-width: 30px;
+}
+
+.shortBar {
+    background: linear-gradient(90deg, rgba(246, 70, 93, 0.3), rgba(246, 70, 93, 0.6));
+    color: var(--red);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+    min-width: 30px;
+}
+
+/* ===== Chart Container ===== */
+.chartContainer {
+    margin: 0 -8px;
+}
+
+/* ===== Summary Bar ===== */
+.summaryBar {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+}
+
+.summaryTitle {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 16px;
+}
+
+.summaryGrid {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.summaryItem {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.summaryLabel {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    width: 70px;
+    flex-shrink: 0;
+}
+
+.summaryBarContainer {
+    flex: 1;
+    height: 14px;
+    background: rgba(246, 70, 93, 0.15);
+    border-radius: 7px;
+    overflow: hidden;
+    position: relative;
+}
+
+.summaryLongFill {
+    height: 100%;
+    background: linear-gradient(90deg, rgba(14, 203, 129, 0.4), rgba(14, 203, 129, 0.6));
+    border-radius: 7px;
+    transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+}
+
+.summaryLongFill::after {
+    content: '';
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--green);
+    border-radius: 1px;
+}
+
+.summaryRatio {
+    font-size: 13px;
+    font-weight: 700;
+    font-family: 'Roboto Mono', monospace;
+    width: 60px;
+    text-align: right;
+    flex-shrink: 0;
+}
+
+.summaryHint {
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+
+/* ===== Loading Skeleton ===== */
+.skeleton {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    overflow: hidden;
+}
+
+.skeletonHeader {
+    width: 60%;
+    height: 18px;
+    background: linear-gradient(90deg, var(--surface-hover) 25%, var(--surface-highlight) 50%, var(--surface-hover) 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+    border-radius: 4px;
+    margin-bottom: 20px;
+}
+
+.skeletonChart {
+    width: 100%;
+    height: 200px;
+    background: linear-gradient(90deg, var(--surface-hover) 25%, var(--surface-highlight) 50%, var(--surface-hover) 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+    border-radius: 8px;
+}
+
+@keyframes shimmer {
+    0% {
+        background-position: 200% 0;
+    }
+
+    100% {
+        background-position: -200% 0;
+    }
+}

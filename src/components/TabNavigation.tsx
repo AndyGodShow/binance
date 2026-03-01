@@ -2,9 +2,11 @@
 
 import styles from './TabNavigation.module.css';
 
+type TabType = 'dashboard' | 'longshort' | 'strategies' | 'trading';
+
 interface TabNavigationProps {
-    activeTab: 'dashboard' | 'strategies' | 'trading';
-    onChange: (tab: 'dashboard' | 'strategies' | 'trading') => void;
+    activeTab: TabType;
+    onChange: (tab: TabType) => void;
 }
 
 export default function TabNavigation({ activeTab, onChange }: TabNavigationProps) {
@@ -15,6 +17,12 @@ export default function TabNavigation({ activeTab, onChange }: TabNavigationProp
                 onClick={() => onChange('dashboard')}
             >
                 📊 数据面板
+            </button>
+            <button
+                className={`${styles.tabBtn} ${activeTab === 'longshort' ? styles.active : ''}`}
+                onClick={() => onChange('longshort')}
+            >
+                📈 多空比
             </button>
             <button
                 className={`${styles.tabBtn} ${activeTab === 'strategies' ? styles.active : ''}`}

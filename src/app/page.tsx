@@ -8,6 +8,7 @@ import { useKlineWebSocket } from '@/hooks/useKlineWebSocket';
 import Dashboard from '@/components/Dashboard';
 import StrategyCenter from '@/components/StrategyCenter';
 import SimulatedTrading from '@/components/SimulatedTrading';
+import LongShortPanel from '@/components/LongShortPanel';
 import TabNavigation from '@/components/TabNavigation';
 import ChartDrawer from '@/components/ChartDrawer';
 import { useStrategyScanner } from '@/hooks/useStrategyScanner';
@@ -16,7 +17,7 @@ import DataManager from '@/components/DataManager';
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'strategies' | 'trading'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'longshort' | 'strategies' | 'trading'>('dashboard');
   const isPageVisible = usePageVisibility();
 
   // Smart refresh: slower when page is hidden to save resources
@@ -169,6 +170,9 @@ export default function Home() {
 
       <div style={{ display: activeTab === 'dashboard' ? 'block' : 'none' }}>
         <Dashboard processedData={processedData} onSymbolClick={handleSymbolClick} />
+      </div>
+      <div style={{ display: activeTab === 'longshort' ? 'block' : 'none' }}>
+        <LongShortPanel />
       </div>
       <div style={{ display: activeTab === 'strategies' ? 'block' : 'none' }}>
         <StrategyCenter
