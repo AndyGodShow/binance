@@ -5,6 +5,7 @@ import useSWR from 'swr';
 import { LongShortData } from '@/lib/types';
 import { usePageVisibility } from '@/hooks/usePageVisibility';
 import LongShortChart from './LongShortChart';
+import TakerVolumeChart from './TakerVolumeChart';
 import styles from './LongShortPanel.module.css';
 
 const fetcher = (url: string) => fetch(url).then(r => r.json());
@@ -136,6 +137,12 @@ export default function LongShortPanel() {
                         period={period}
                         accentColor="#F6465D"
                     />
+                    <TakerVolumeChart
+                        title="主动买卖量"
+                        subtitle={`${symbolLabel} · 资金流动方向`}
+                        data={data.takerVolume}
+                        period={period}
+                    />
                 </div>
             )}
 
@@ -155,6 +162,10 @@ export default function LongShortPanel() {
                         <SummaryItem
                             label="大户持仓"
                             ratio={data.topPosition[data.topPosition.length - 1]?.ratio}
+                        />
+                        <SummaryItem
+                            label="主动买卖"
+                            ratio={data.takerVolume[data.takerVolume.length - 1]?.ratio}
                         />
                     </div>
                     <p className={styles.summaryHint}>
@@ -194,13 +205,16 @@ function getSentimentHint(data: LongShortData): string {
     const g = data.global[data.global.length - 1]?.ratio ?? 1;
     const ta = data.topAccount[data.topAccount.length - 1]?.ratio ?? 1;
     const tp = data.topPosition[data.topPosition.length - 1]?.ratio ?? 1;
+    const tv = data.takerVolume[data.takerVolume.length - 1]?.ratio ?? 1;
 
-    const allLong = g > 1 && ta > 1 && tp > 1;
-    const allShort = g < 1 && ta < 1 && tp < 1;
+    const allLong = g > 1 && ta > 1 && tp > 1 && tv > 1;
+    const allShort = g < 1 && ta < 1 && tp < 1 && tv < 1;
     const divergence = (g > 1 && tp < 1) || (g < 1 && tp > 1);
+    const takerConfirm = (tp > 1 && tv > 1) || (tp < 1 && tv < 1);
 
-    if (allLong) return '💡 三项指标均偏多头，市场情绪偏乐观';
-    if (allShort) return '💡 三项指标均偏空头，市场情绪偏谨慎';
+    if (allLong) return '🚀 四项指标全部偏多，多头情绪强烈';
+    if (allShort) return '🔻 四项指标全部偏空，空头情绪浓厚';
+    if (divergence && !takerConfirm) return '⚡ 大户与散户方向分歧，且资金流不确认，注意可能出现剧烈波动';
     if (divergence) return '⚡ 大户与散户方向分歧，注意可能出现方向性行情';
     return '💡 多空力量相对均衡，关注后续变化';
 }

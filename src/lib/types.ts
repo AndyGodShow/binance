@@ -178,8 +178,16 @@ export interface LongShortEntry {
     ts: number;
 }
 
+export interface TakerVolumeEntry {
+    ratio: number;
+    buyVol: number;
+    sellVol: number;
+    ts: number;
+}
+
 export interface LongShortData {
     global: LongShortEntry[];
     topAccount: LongShortEntry[];
     topPosition: LongShortEntry[];
+    takerVolume: TakerVolumeEntry[];
 }
