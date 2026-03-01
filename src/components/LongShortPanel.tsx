@@ -16,8 +16,8 @@ const SYMBOLS = [
     { label: 'XRP', value: 'XRPUSDT' },
     { label: 'DOGE', value: 'DOGEUSDT' },
     { label: 'BNB', value: 'BNBUSDT' },
-    { label: 'ADA', value: 'ADAUSDT' },
-    { label: 'LINK', value: 'LINKUSDT' },
+    { label: 'HYPE', value: 'HYPEUSDT' },
+    { label: 'ZEC', value: 'ZECUSDT' },
 ];
 
 const PERIODS = [
