@@ -103,12 +103,8 @@ export default function LongShortChart({ title, subtitle, data, period, accentCo
                     <AreaChart data={chartData} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
                         <defs>
                             <linearGradient id={`longGrad-${title}`} x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="0%" stopColor="#0ECB81" stopOpacity={0.4} />
+                                <stop offset="0%" stopColor="#0ECB81" stopOpacity={0.35} />
                                 <stop offset="100%" stopColor="#0ECB81" stopOpacity={0.05} />
-                            </linearGradient>
-                            <linearGradient id={`shortGrad-${title}`} x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="0%" stopColor="#F6465D" stopOpacity={0.4} />
-                                <stop offset="100%" stopColor="#F6465D" stopOpacity={0.05} />
                             </linearGradient>
                         </defs>
                         <CartesianGrid strokeDasharray="3 3" stroke="rgba(43,49,57,0.6)" />
@@ -123,7 +119,7 @@ export default function LongShortChart({ title, subtitle, data, period, accentCo
                             tick={{ fontSize: 10, fill: '#848E9C' }}
                             tickLine={false}
                             axisLine={false}
-                            domain={[0, 100]}
+                            domain={['auto', 'auto']}
                             tickFormatter={(v: number) => `${v}%`}
                         />
                         <Tooltip
@@ -135,30 +131,22 @@ export default function LongShortChart({ title, subtitle, data, period, accentCo
                                 color: '#EAECEF',
                             }}
                             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                            formatter={((value: any, name: any) => [
-                                `${Number(value ?? 0).toFixed(2)}%`,
-                                name === 'long' ? '多头' : '空头'
+                            formatter={((value: any) => [
+                                `多 ${Number(value ?? 0).toFixed(2)}% / 空 ${(100 - Number(value ?? 0)).toFixed(2)}%`,
+                                '多头占比'
                             ]) as any}
                             labelStyle={{ color: '#848E9C' }}
                         />
-                        <ReferenceLine y={50} stroke="#474D57" strokeDasharray="4 4" />
+                        <ReferenceLine y={50} stroke="#F6465D" strokeDasharray="4 4" strokeWidth={1.5} label={{ value: '50%', position: 'right', fill: '#848E9C', fontSize: 10 }} />
                         <Area
                             type="monotone"
                             dataKey="long"
-                            stackId="1"
                             stroke="#0ECB81"
                             strokeWidth={2}
                             fill={`url(#longGrad-${title})`}
                             animationDuration={600}
-                        />
-                        <Area
-                            type="monotone"
-                            dataKey="short"
-                            stackId="1"
-                            stroke="#F6465D"
-                            strokeWidth={2}
-                            fill={`url(#shortGrad-${title})`}
-                            animationDuration={600}
+                            dot={false}
+                            activeDot={{ r: 4, fill: '#0ECB81', stroke: '#1E2329', strokeWidth: 2 }}
                         />
                     </AreaChart>
                 </ResponsiveContainer>
