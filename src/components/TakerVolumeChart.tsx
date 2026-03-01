@@ -2,7 +2,8 @@
 
 import { useMemo } from 'react';
 import {
-    LineChart,
+    ComposedChart,
+    Bar,
     Line,
     XAxis,
     YAxis,
@@ -10,6 +11,7 @@ import {
     Tooltip,
     ResponsiveContainer,
     ReferenceLine,
+    Cell,
 } from 'recharts';
 import { TakerVolumeEntry } from '@/lib/types';
 import styles from './LongShortPanel.module.css';
@@ -29,9 +31,10 @@ function formatTime(ts: number, period: string) {
 }
 
 function formatVolume(vol: number): string {
-    if (vol >= 1e9) return `${(vol / 1e9).toFixed(2)}B`;
-    if (vol >= 1e6) return `${(vol / 1e6).toFixed(2)}M`;
-    if (vol >= 1e3) return `${(vol / 1e3).toFixed(1)}K`;
+    const abs = Math.abs(vol);
+    if (abs >= 1e9) return `${(vol / 1e9).toFixed(2)}B`;
+    if (abs >= 1e6) return `${(vol / 1e6).toFixed(2)}M`;
+    if (abs >= 1e3) return `${(vol / 1e3).toFixed(1)}K`;
     return vol.toFixed(0);
 }
 
@@ -46,15 +49,24 @@ export default function TakerVolumeChart({ title, subtitle, data, period }: Take
         return data[data.length - 1].ratio - data[data.length - 2].ratio;
     }, [data]);
 
-    const chartData = useMemo(() =>
-        data.map(d => ({
-            time: formatTime(d.ts, period),
-            ratio: d.ratio,
-            buyVol: d.buyVol,
-            sellVol: d.sellVol,
-        })),
-        [data, period]
-    );
+    // Build chart data with net volume + CVD
+    const chartData = useMemo(() => {
+        let cvd = 0;
+        return data.map(d => {
+            const net = d.buyVol - d.sellVol;
+            cvd += net;
+            return {
+                time: formatTime(d.ts, period),
+                net,
+                cvd,
+                ratio: d.ratio,
+                buyVol: d.buyVol,
+                sellVol: d.sellVol,
+            };
+        });
+    }, [data, period]);
+
+    const lastCvd = chartData.length > 0 ? chartData[chartData.length - 1].cvd : 0;
 
     // Calculate buy percentage for stacked bar
     const totalVol = currentBuy + currentSell;
@@ -72,13 +84,18 @@ export default function TakerVolumeChart({ title, subtitle, data, period }: Take
                 <div className={styles.accentDot} style={{ background: '#3B82F6' }} />
             </div>
 
-            {/* Ratio Display */}
+            {/* Ratio + CVD Display */}
             <div className={styles.ratioSection}>
-                <div className={styles.ratioValue} style={{ color: isBuyDominant ? 'var(--green)' : 'var(--red)' }}>
-                    {currentRatio.toFixed(4)}
-                    <span className={styles.trendArrow}>
-                        {trend > 0 ? '▲' : trend < 0 ? '▼' : '—'}
-                    </span>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: '16px' }}>
+                    <div className={styles.ratioValue} style={{ color: isBuyDominant ? 'var(--green)' : 'var(--red)' }}>
+                        {currentRatio.toFixed(4)}
+                        <span className={styles.trendArrow}>
+                            {trend > 0 ? '▲' : trend < 0 ? '▼' : '—'}
+                        </span>
+                    </div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: lastCvd >= 0 ? 'var(--green)' : 'var(--red)', fontFamily: "'Roboto Mono', monospace" }}>
+                        CVD {formatVolume(lastCvd)}
+                    </div>
                 </div>
                 <div className={styles.ratioPcts}>
                     <span className={styles.longPct}>
@@ -101,10 +118,10 @@ export default function TakerVolumeChart({ title, subtitle, data, period }: Take
                 </div>
             </div>
 
-            {/* Line Chart - Ratio */}
+            {/* Combo Chart: Net Volume Bars + CVD Line */}
             <div className={styles.chartContainer}>
                 <ResponsiveContainer width="100%" height={200}>
-                    <LineChart data={chartData} margin={{ top: 8, right: 8, left: -10, bottom: 0 }}>
+                    <ComposedChart data={chartData} margin={{ top: 8, right: 40, left: -10, bottom: 0 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="rgba(43,49,57,0.6)" />
                         <XAxis
                             dataKey="time"
@@ -113,12 +130,22 @@ export default function TakerVolumeChart({ title, subtitle, data, period }: Take
                             axisLine={{ stroke: '#2B3139' }}
                             interval="preserveStartEnd"
                         />
+                        {/* Left Y: Net Volume (Bars) */}
                         <YAxis
+                            yAxisId="net"
                             tick={{ fontSize: 10, fill: '#848E9C' }}
                             tickLine={false}
                             axisLine={false}
-                            domain={['auto', 'auto']}
-                            tickFormatter={(v: number) => v.toFixed(2)}
+                            tickFormatter={(v: number) => formatVolume(v)}
+                        />
+                        {/* Right Y: CVD (Line) */}
+                        <YAxis
+                            yAxisId="cvd"
+                            orientation="right"
+                            tick={{ fontSize: 10, fill: '#F0B90B' }}
+                            tickLine={false}
+                            axisLine={false}
+                            tickFormatter={(v: number) => formatVolume(v)}
                         />
                         <Tooltip
                             contentStyle={{
@@ -129,26 +156,41 @@ export default function TakerVolumeChart({ title, subtitle, data, period }: Take
                                 color: '#EAECEF',
                             }}
                             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                            formatter={((value: any, _name: any, payload: any) => {
-                                const d = payload.payload;
-                                return [
-                                    `${Number(value ?? 0).toFixed(4)}  (买${formatVolume(d.buyVol)} / 卖${formatVolume(d.sellVol)})`,
-                                    '买卖比'
-                                ];
+                            formatter={((value: any, name: any) => {
+                                if (name === 'net') return [`${formatVolume(Number(value))}`, '净买入量'];
+                                if (name === 'cvd') return [`${formatVolume(Number(value))}`, 'CVD 累计'];
+                                return [value, name];
                             }) as any}
                             labelStyle={{ color: '#848E9C' }}
                         />
-                        <ReferenceLine y={1} stroke="#F6465D" strokeDasharray="4 4" strokeWidth={1.5} label={{ value: '1.0', position: 'right', fill: '#848E9C', fontSize: 10 }} />
+                        <ReferenceLine yAxisId="net" y={0} stroke="#474D57" />
+                        {/* Net Volume Bars */}
+                        <Bar
+                            yAxisId="net"
+                            dataKey="net"
+                            radius={[2, 2, 2, 2]}
+                            animationDuration={600}
+                            barSize={12}
+                        >
+                            {chartData.map((entry, index) => (
+                                <Cell
+                                    key={`cell-${index}`}
+                                    fill={entry.net >= 0 ? 'rgba(14,203,129,0.6)' : 'rgba(246,70,93,0.6)'}
+                                />
+                            ))}
+                        </Bar>
+                        {/* CVD Cumulative Line */}
                         <Line
+                            yAxisId="cvd"
                             type="monotone"
-                            dataKey="ratio"
-                            stroke="#3B82F6"
+                            dataKey="cvd"
+                            stroke="#F0B90B"
                             strokeWidth={2}
                             dot={false}
-                            activeDot={{ r: 4, fill: '#3B82F6', stroke: '#1E2329', strokeWidth: 2 }}
+                            activeDot={{ r: 4, fill: '#F0B90B', stroke: '#1E2329', strokeWidth: 2 }}
                             animationDuration={600}
                         />
-                    </LineChart>
+                    </ComposedChart>
                 </ResponsiveContainer>
             </div>
         </div>
