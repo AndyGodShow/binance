@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { X } from 'lucide-react';
 import styles from './ChartDrawer.module.css';
 
@@ -10,6 +10,8 @@ interface ChartDrawerProps {
 }
 
 export default function ChartDrawer({ symbol, onClose }: ChartDrawerProps) {
+    const containerRef = useRef<HTMLDivElement>(null);
+
     // Close on ESC key
     useEffect(() => {
         const handleEsc = (e: KeyboardEvent) => {
@@ -31,24 +33,62 @@ export default function ChartDrawer({ symbol, onClose }: ChartDrawerProps) {
         };
     }, [symbol]);
 
+    // Load TradingView widget using official script API
+    useEffect(() => {
+        if (!symbol || !containerRef.current) return;
+
+        // Clear previous widget
+        const container = containerRef.current;
+        container.innerHTML = '';
+
+        // TradingView symbol format for Binance USDT perpetual futures
+        // Use BINANCE:BTCUSDT.P format (the .P suffix indicates perpetual)
+        const tvSymbol = `BINANCE:${symbol}.P`;
+
+        // Create the TradingView widget container
+        const widgetContainer = document.createElement('div');
+        widgetContainer.className = 'tradingview-widget-container';
+        widgetContainer.style.height = '100%';
+        widgetContainer.style.width = '100%';
+
+        const widgetInner = document.createElement('div');
+        widgetInner.className = 'tradingview-widget-container__widget';
+        widgetInner.style.height = 'calc(100% - 32px)';
+        widgetInner.style.width = '100%';
+        widgetContainer.appendChild(widgetInner);
+
+        container.appendChild(widgetContainer);
+
+        // Create and load the TradingView Advanced Chart Widget script
+        const script = document.createElement('script');
+        script.type = 'text/javascript';
+        script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
+        script.async = true;
+        script.innerHTML = JSON.stringify({
+            autosize: true,
+            symbol: tvSymbol,
+            interval: "15",
+            timezone: "Asia/Shanghai",
+            theme: "dark",
+            style: "1",
+            locale: "zh_CN",
+            allow_symbol_change: false,
+            save_image: false,
+            hide_side_toolbar: false,
+            calendar: false,
+            hide_volume: false,
+            support_host: "https://www.tradingview.com",
+        });
+
+        widgetContainer.appendChild(script);
+
+        return () => {
+            // Cleanup
+            container.innerHTML = '';
+        };
+    }, [symbol]);
+
     if (!symbol) return null;
-
-    // Convert symbol format: "BTCUSDT" -> "BINANCE:BTCUSDT.P"
-    const tradingViewSymbol = `BINANCE:${symbol.replace('USDT', '')}USDT.P`;
-
-    // Build TradingView widget URL using the embeddable domain
-    const widgetUrl = new URL('https://s.tradingview.com/widgetembed/');
-    widgetUrl.searchParams.set('frameElementId', 'tradingview_chart');
-    widgetUrl.searchParams.set('symbol', tradingViewSymbol);
-    widgetUrl.searchParams.set('interval', '15'); // 15 minutes
-    widgetUrl.searchParams.set('theme', 'dark');
-    widgetUrl.searchParams.set('style', '1'); // Candle style
-    widgetUrl.searchParams.set('timezone', 'Asia/Shanghai');
-    widgetUrl.searchParams.set('withdateranges', 'true');
-    widgetUrl.searchParams.set('hide_side_toolbar', 'true');
-    widgetUrl.searchParams.set('allow_symbol_change', 'false');
-    widgetUrl.searchParams.set('save_image', 'false');
-    widgetUrl.searchParams.set('locale', 'zh_CN');
 
     return (
         <>
@@ -76,16 +116,7 @@ export default function ChartDrawer({ symbol, onClose }: ChartDrawerProps) {
                 </div>
 
                 {/* TradingView Chart */}
-                <div className={styles.chartContainer}>
-                    <iframe
-                        src={widgetUrl.toString()}
-                        className={styles.iframe}
-                        frameBorder="0"
-                        allowTransparency
-                        scrolling="no"
-                        title={`${symbol} Chart`}
-                    />
-                </div>
+                <div className={styles.chartContainer} ref={containerRef} />
             </div>
         </>
     );

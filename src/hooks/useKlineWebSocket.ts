@@ -119,6 +119,10 @@ export function useKlineWebSocket(symbols: string[]) {
                     reconnectAttemptsRef.current.set(interval, 0);
                 };
 
+                // Add buffer for batching updates to prevent excessive re-renders
+                const bufferRef = { current: new Map<string, KlineData>() };
+                let flushInterval: NodeJS.Timeout;
+
                 ws.onmessage = (event) => {
                     try {
                         const message = JSON.parse(event.data);
@@ -135,16 +139,31 @@ export function useKlineWebSocket(symbols: string[]) {
                                 isFinal: k.x,
                             };
 
-                            setData(prev => {
-                                const newMap = new Map(prev);
-                                newMap.set(symbol, kline);
-                                return newMap;
-                            });
+                            // Accumulate in buffer instead of calling setData immediately
+                            bufferRef.current.set(symbol, kline);
                         }
                     } catch (error) {
                         console.error(`Error parsing ${interval} message:`, error);
                     }
                 };
+
+                // Flush buffer to state every 250ms
+                flushInterval = setInterval(() => {
+                    if (bufferRef.current.size > 0) {
+                        // Creates a shallow copy of the current buffered data
+                        const updates = new Map(bufferRef.current);
+                        bufferRef.current.clear();
+
+                        // Update React state in bulk
+                        setData(prev => {
+                            const newMap = new Map(prev);
+                            updates.forEach((kline, symbol) => {
+                                newMap.set(symbol, kline);
+                            });
+                            return newMap;
+                        });
+                    }
+                }, 250);
 
                 ws.onerror = (error) => {
                     console.error(`WebSocket ${interval} error:`, error);
@@ -153,6 +172,7 @@ export function useKlineWebSocket(symbols: string[]) {
                 ws.onclose = (event) => {
                     setIsConnected(false);
                     wsRef.current = null;
+                    if (flushInterval) clearInterval(flushInterval);
 
                     // 指数退避重连
                     const attempts = reconnectAttemptsRef.current.get(interval) || 0;

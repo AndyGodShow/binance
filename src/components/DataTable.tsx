@@ -15,6 +15,124 @@ interface DataTableProps {
     onSymbolClick?: (symbol: string) => void;
 }
 
+interface TableRowProps {
+    row: TickerData;
+    index: number;
+    maxVolume: number;
+    onSymbolClick?: (symbol: string) => void;
+}
+
+const MemoizedTableRow = memo(({ row, index, maxVolume, onSymbolClick }: TableRowProps) => {
+    const quoteVol = parseFloat(row.quoteVolume);
+    const volumePercent = maxVolume > 0 ? (quoteVol / maxVolume) * 100 : 0;
+    const funding = parseFloat(row.fundingRate || '0');
+    const isFundingHigh = Math.abs(funding) > 0.0005;
+
+    return (
+        <tr
+            className={cn(styles.row, onSymbolClick && styles.clickable)}
+            onClick={() => onSymbolClick?.(row.symbol)}
+        >
+            <td className={styles.rank}>
+                <span className={cn(
+                    "text-xs font-mono opacity-50",
+                    index < 3 && "text-yellow opacity-100 font-bold"
+                )}>
+                    {index + 1}
+                </span>
+            </td>
+
+            <td className={styles.symbol}>
+                <div className={styles.symbolContainer}>
+                    <div className={styles.symbolText}>{row.symbol.replace('USDT', '')}</div>
+                    <div className={styles.perpText}>PERP</div>
+                </div>
+            </td>
+
+            <td className={cn(styles.price, styles.alignRight)}>
+                {parseFloat(row.lastPrice) > 10
+                    ? parseFloat(row.lastPrice).toFixed(2)
+                    : parseFloat(row.lastPrice).toFixed(4)}
+            </td>
+
+            <td className={styles.alignRight}>
+                {row.change15m !== undefined ? (
+                    <span className={row.change15m > 0 ? 'text-green' : (row.change15m < 0 ? 'text-red' : '')}>
+                        {row.change15m > 0 ? '+' : ''}{row.change15m.toFixed(2)}%
+                    </span>
+                ) : <span className="text-secondary">-</span>}
+            </td>
+
+            <td className={styles.alignRight}>
+                {row.change1h !== undefined ? (
+                    <span className={row.change1h > 0 ? 'text-green' : (row.change1h < 0 ? 'text-red' : '')}>
+                        {row.change1h > 0 ? '+' : ''}{row.change1h.toFixed(2)}%
+                    </span>
+                ) : <span className="text-secondary">-</span>}
+            </td>
+
+            <td className={styles.alignRight}>
+                {row.change4h !== undefined ? (
+                    <span className={row.change4h > 0 ? 'text-green' : (row.change4h < 0 ? 'text-red' : '')}>
+                        {row.change4h > 0 ? '+' : ''}{row.change4h.toFixed(2)}%
+                    </span>
+                ) : <span className="text-secondary">-</span>}
+            </td>
+
+            <td className={cn(styles.alignRight,
+                parseFloat(row.priceChangePercent) > 0 ? 'text-green' :
+                    (parseFloat(row.priceChangePercent) < 0 ? 'text-red' : '')
+            )}>
+                {parseFloat(row.priceChangePercent) > 0 ? '+' : ''}{parseFloat(row.priceChangePercent).toFixed(2)}%
+            </td>
+
+            <td className={styles.alignRight}>
+                <div className={cn(
+                    styles.fundingCell,
+                    isFundingHigh && (funding > 0 ? styles.bgGreenSoft : styles.bgRedSoft),
+                    funding > 0 ? 'text-green' : (funding < 0 ? 'text-red' : '')
+                )}>
+                    {(funding * 100).toFixed(4)}%
+                </div>
+            </td>
+
+            <td className={styles.alignRight}>
+                <div className={styles.barContainer}>
+                    <div
+                        className={styles.progressBar}
+                        style={{ width: `${Math.min(volumePercent, 100)}%` }}
+                    />
+                    <span className={styles.barValue}>{formatCompact(row.quoteVolume)}</span>
+                </div>
+            </td>
+
+            <td className={styles.alignRight}>
+                {(row.openInterestValue && row.openInterestValue !== '0') ? (
+                    <span className="text-primary font-mono">
+                        {formatCompact(row.openInterestValue)}
+                    </span>
+                ) : (
+                    <span className="text-secondary">-</span>
+                )}
+            </td>
+        </tr>
+    );
+}, (prev, next) => {
+    // 深度对比：只有当这些直接影响渲染的属性发生变化时，这一行才重新渲染
+    return (
+        prev.index === next.index &&
+        prev.maxVolume === next.maxVolume &&
+        prev.row.lastPrice === next.row.lastPrice &&
+        prev.row.change15m === next.row.change15m &&
+        prev.row.change1h === next.row.change1h &&
+        prev.row.change4h === next.row.change4h &&
+        prev.row.priceChangePercent === next.row.priceChangePercent &&
+        prev.row.fundingRate === next.row.fundingRate &&
+        prev.row.quoteVolume === next.row.quoteVolume &&
+        prev.row.openInterestValue === next.row.openInterestValue
+    );
+});
+
 function DataTable({
     data,
     sortConfig,
@@ -65,113 +183,15 @@ function DataTable({
                     </tr>
                 </thead>
                 <tbody>
-                    {data.map((row, index) => {
-                        const quoteVol = parseFloat(row.quoteVolume);
-                        const volumePercent = maxVolume > 0 ? (quoteVol / maxVolume) * 100 : 0;
-                        const funding = parseFloat(row.fundingRate || '0');
-                        const isFundingHigh = Math.abs(funding) > 0.0005; // 0.05%
-
-                        return (
-                            <tr
-                                key={row.symbol}
-                                className={cn(styles.row, onSymbolClick && styles.clickable)}
-                                onClick={() => onSymbolClick?.(row.symbol)}
-                            >
-                                {/* Rank */}
-                                <td className={styles.rank}>
-                                    <span className={cn(
-                                        "text-xs font-mono opacity-50",
-                                        index < 3 && "text-yellow opacity-100 font-bold"
-                                    )}>
-                                        {index + 1}
-                                    </span>
-                                </td>
-
-                                {/* Symbol */}
-                                <td className={styles.symbol}>
-                                    <div className={styles.symbolContainer}>
-                                        <div className={styles.symbolText}>{row.symbol.replace('USDT', '')}</div>
-                                        <div className={styles.perpText}>PERP</div>
-                                    </div>
-                                </td>
-
-                                {/* Price */}
-                                <td className={cn(styles.price, styles.alignRight)}>
-                                    {parseFloat(row.lastPrice) > 10
-                                        ? parseFloat(row.lastPrice).toFixed(2)
-                                        : parseFloat(row.lastPrice).toFixed(4)}
-                                </td>
-
-                                {/* 15m Change */}
-                                <td className={styles.alignRight}>
-                                    {row.change15m !== undefined ? (
-                                        <span className={row.change15m > 0 ? 'text-green' : (row.change15m < 0 ? 'text-red' : '')}>
-                                            {row.change15m > 0 ? '+' : ''}{row.change15m.toFixed(2)}%
-                                        </span>
-                                    ) : <span className="text-secondary">-</span>}
-                                </td>
-
-                                {/* 1h Change */}
-                                <td className={styles.alignRight}>
-                                    {row.change1h !== undefined ? (
-                                        <span className={row.change1h > 0 ? 'text-green' : (row.change1h < 0 ? 'text-red' : '')}>
-                                            {row.change1h > 0 ? '+' : ''}{row.change1h.toFixed(2)}%
-                                        </span>
-                                    ) : <span className="text-secondary">-</span>}
-                                </td>
-
-                                {/* 4h Change */}
-                                <td className={styles.alignRight}>
-                                    {row.change4h !== undefined ? (
-                                        <span className={row.change4h > 0 ? 'text-green' : (row.change4h < 0 ? 'text-red' : '')}>
-                                            {row.change4h > 0 ? '+' : ''}{row.change4h.toFixed(2)}%
-                                        </span>
-                                    ) : <span className="text-secondary">-</span>}
-                                </td>
-
-                                {/* 24h Change */}
-                                <td className={cn(styles.alignRight,
-                                    parseFloat(row.priceChangePercent) > 0 ? 'text-green' :
-                                        (parseFloat(row.priceChangePercent) < 0 ? 'text-red' : '')
-                                )}>
-                                    {parseFloat(row.priceChangePercent) > 0 ? '+' : ''}{parseFloat(row.priceChangePercent).toFixed(2)}%
-                                </td>
-
-                                {/* Funding Rate */}
-                                <td className={styles.alignRight}>
-                                    <div className={cn(
-                                        styles.fundingCell,
-                                        isFundingHigh && (funding > 0 ? styles.bgGreenSoft : styles.bgRedSoft),
-                                        funding > 0 ? 'text-green' : (funding < 0 ? 'text-red' : '')
-                                    )}>
-                                        {(funding * 100).toFixed(4)}%
-                                    </div>
-                                </td>
-
-                                {/* Volume with Progress Bar */}
-                                <td className={styles.alignRight}>
-                                    <div className={styles.barContainer}>
-                                        <div
-                                            className={styles.progressBar}
-                                            style={{ width: `${Math.min(volumePercent, 100)}%` }}
-                                        />
-                                        <span className={styles.barValue}>{formatCompact(row.quoteVolume)}</span>
-                                    </div>
-                                </td>
-
-                                {/* Open Interest */}
-                                <td className={styles.alignRight}>
-                                    {(row.openInterestValue && row.openInterestValue !== '0') ? (
-                                        <span className="text-primary font-mono">
-                                            {formatCompact(row.openInterestValue)}
-                                        </span>
-                                    ) : (
-                                        <span className="text-secondary">-</span>
-                                    )}
-                                </td>
-                            </tr>
-                        );
-                    })}
+                    {data.map((row, index) => (
+                        <MemoizedTableRow
+                            key={row.symbol}
+                            row={row}
+                            index={index}
+                            maxVolume={maxVolume}
+                            onSymbolClick={onSymbolClick}
+                        />
+                    ))}
                 </tbody>
             </table>
         </div>

@@ -127,7 +127,7 @@ export default function Home() {
 
   // 使用useCallback优化回调函数
   const handleSymbolClick = useCallback((symbol: string) => {
-    setSelectedSymbol(symbol);
+    setSelectedSymbol(prev => prev === symbol ? null : symbol);
   }, []);
 
   const handleCloseChart = useCallback(() => {
