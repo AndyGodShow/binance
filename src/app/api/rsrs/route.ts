@@ -12,9 +12,14 @@ export async function GET() {
 
         // Filter USDT pairs and sort by Quote Volume (descending)
         // Limit to top 30 to avoid timeout/rate limits
+        interface BinanceTicker24h {
+            symbol: string;
+            quoteVolume: string;
+        }
+
         const topTickers = allTickers
-            .filter((t: any) => t.symbol.endsWith('USDT'))
-            .sort((a: any, b: any) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
+            .filter((t: BinanceTicker24h) => t.symbol.endsWith('USDT'))
+            .sort((a: BinanceTicker24h, b: BinanceTicker24h) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
             .slice(0, 30);
 
         const rsrsMap: Record<string, {
@@ -42,7 +47,7 @@ export async function GET() {
         const batchSize = 5;
         for (let i = 0; i < topTickers.length; i += batchSize) {
             const batch = topTickers.slice(i, i + batchSize);
-            const promises = batch.map(async (t: any) => {
+            const promises = batch.map(async (t: BinanceTicker24h) => {
                 try {
                     const klinesRes = await fetch(
                         `https://fapi.binance.com/fapi/v1/klines?symbol=${t.symbol}&interval=1d&limit=${TOTAL_CANDLES}`,

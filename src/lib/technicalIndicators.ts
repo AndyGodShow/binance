@@ -1,5 +1,15 @@
 import { KlineData } from '@/app/api/backtest/klines/route';
 import { TickerData } from './types';
+import {
+    calculateBollingerBands,
+    calculateKeltnerChannels,
+    detectSqueeze,
+    calculateMomentumHistogram,
+    calculateADX,
+    calculateBandwidthPercentile,
+    OHLC
+} from './indicators';
+import { calculateVolumeProfile } from './volumeProfile';
 
 /**
  * 从K线数据计算技术指标
@@ -123,21 +133,8 @@ export class TechnicalIndicators {
         const volumeMA = this.calculateVolumeMA(historyForIndicators);
         const { cvd, cvdSlope } = this.calculateCVD(historyForIndicators);
 
-        // 🔥 导入高级指标计算函数
-        const {
-            calculateBollingerBands,
-            calculateKeltnerChannels,
-            detectSqueeze,
-            calculateMomentumHistogram,
-            calculateADX,
-            calculateBandwidthPercentile,
-            OHLC
-        } = require('./indicators');
-
-        const { calculateVolumeProfile } = require('./volumeProfile');
-
         // 准备 OHLC 数据格式
-        const ohlcData: typeof OHLC[] = historyForIndicators.map(k => ({
+        const ohlcData: OHLC[] = historyForIndicators.map(k => ({
             time: k.openTime,
             open: parseFloat(k.open),
             high: parseFloat(k.high),

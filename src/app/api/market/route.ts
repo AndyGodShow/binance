@@ -33,15 +33,20 @@ export async function GET() {
         // exchangeInfo is optional (cached 24h, rarely fails but shouldn't break everything)
         let perpetualSymbols: Set<string> | null = null;
         if (results[2].status === 'fulfilled' && results[2].value.ok) {
+            interface BinanceExchangeInfoSymbol {
+                symbol: string;
+                contractType: string;
+                status: string;
+            }
             const exchangeInfo = await results[2].value.json();
             perpetualSymbols = new Set(
                 exchangeInfo.symbols
-                    .filter((s: any) => {
+                    .filter((s: BinanceExchangeInfoSymbol) => {
                         return s.contractType === 'PERPETUAL' &&
                             s.status === 'TRADING' &&
                             s.symbol.endsWith('USDT');
                     })
-                    .map((s: any) => s.symbol)
+                    .map((s: BinanceExchangeInfoSymbol) => s.symbol)
             );
         } else {
             logger.warn('exchangeInfo fetch failed, skipping perpetual filter');

@@ -414,6 +414,7 @@ export class BacktestEngine {
                     });
 
                     currentPosition = null;
+                    continue; // 🔥 FIXED: Skip to the next K-line. Do not evaluate entry signals on the same candle we just closed on.
                 }
             }
 

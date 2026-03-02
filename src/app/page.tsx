@@ -136,14 +136,14 @@ export default function Home() {
   }, []);
 
   // Dynamic title update when there are active signals
+  // 🔥 Fixed infinite loop: only depend on signals and raw price extraction, not the entire processedData object
   useEffect(() => {
     if (signals.length > 0) {
       const topSignal = signals[0];
       const cleanSymbol = topSignal.symbol.replace('USDT', '');
 
-      // Find current price from processedData
-      const ticker = processedData.find(t => t.symbol === topSignal.symbol);
-      const price = ticker ? parseFloat(ticker.lastPrice) : 0;
+      // Get current price
+      const price = topSignal.price || 0; // Use the price snapshotted at signal time (or could lookup from rawData)
       const priceStr = price < 1 ? price.toFixed(4) : price.toFixed(2);
 
       document.title = `🔔 ${cleanSymbol} $${priceStr} | 币安数据面板`;
@@ -162,7 +162,7 @@ export default function Home() {
     } else {
       document.title = 'Binance Data Dashboard';
     }
-  }, [signals, processedData]);
+  }, [signals]);
 
   return (
     <main className="container">

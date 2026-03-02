@@ -2,6 +2,7 @@ import { TradingStrategy, StrategySignal, CompositeCondition } from '../lib/stra
 import { TickerData } from '../lib/types';
 import { cooldownManager } from '../lib/cooldownManager';
 import { logger } from '../lib/logger';
+import { calculateRiskManagement } from '@/lib/risk/riskCalculator';
 
 // 辅助函数：检查条件并创建条件对象
 function checkCondition(
@@ -135,8 +136,6 @@ export const strongBreakoutStrategy: TradingStrategy = {
             // 🔥 计算风险管理参数
             let riskManagement;
             try {
-                const { calculateRiskManagement } = require('@/lib/risk/riskCalculator');
-
                 const atr = ticker.atr || 0;
                 riskManagement = calculateRiskManagement('strong-breakout', {
                     entryPrice: parseFloat(ticker.lastPrice),
@@ -307,7 +306,6 @@ export const trendConfirmationStrategy: TradingStrategy = {
             // 🔥 计算风险管理参数
             let riskManagement;
             try {
-                const { calculateRiskManagement } = require('@/lib/risk/riskCalculator');
                 riskManagement = calculateRiskManagement('trend-confirmation', {
                     entryPrice: parseFloat(ticker.lastPrice),
                     direction,
@@ -465,7 +463,6 @@ export const capitalInflowStrategy: TradingStrategy = {
             // 🔥 计算风险管理参数
             let riskManagement;
             try {
-                const { calculateRiskManagement } = require('@/lib/risk/riskCalculator');
                 riskManagement = calculateRiskManagement('capital-inflow', {
                     entryPrice: parseFloat(ticker.lastPrice),
                     direction: 'long',

@@ -15,6 +15,7 @@ export function useStrategyScanner(data: TickerData[]) {
 
     // 🔧 修复 Hydration Mismatch：初始化为空，然后在客户端加载
     const [dismissedSignals, setDismissedSignals] = useState<Set<string>>(new Set());
+    const dismissedSignalsRef = useRef<Set<string>>(new Set());
 
     // 在客户端加载后从 localStorage 读取
     useEffect(() => {
@@ -22,7 +23,9 @@ export function useStrategyScanner(data: TickerData[]) {
             const saved = localStorage.getItem('dismissedSignals');
             if (saved) {
                 try {
-                    setDismissedSignals(new Set(JSON.parse(saved)));
+                    const parsed = new Set<string>(JSON.parse(saved));
+                    setDismissedSignals(parsed);
+                    dismissedSignalsRef.current = parsed;
                 } catch (err) {
                     console.error('Failed to load dismissed signals:', err);
                 }
@@ -150,7 +153,7 @@ export function useStrategyScanner(data: TickerData[]) {
             // 处理当前检测到的信号
             currentSignals.forEach(newSig => {
                 // 🔧 跳过用户已手动关闭的信号
-                if (dismissedSignals.has(newSig.symbol)) {
+                if (dismissedSignalsRef.current.has(newSig.symbol)) {
                     return;
                 }
 
@@ -188,7 +191,7 @@ export function useStrategyScanner(data: TickerData[]) {
         }, 5 * 60 * 1000);
 
         return () => clearTimeout(cleanupTimer);
-    }, [data, dismissedSignals]); // 添加 dismissedSignals 依赖
+    }, [data]); // 🔥 Removed dismissedSignals to prevent full data re-scan on single dismiss
 
     // 按时间戳倒序排序的活跃信号（最新的在上面）
     const sortedSignals = useMemo(() => {
@@ -210,6 +213,7 @@ export function useStrategyScanner(data: TickerData[]) {
         setDismissedSignals(prev => {
             const newSet = new Set(prev);
             newSet.add(id);
+            dismissedSignalsRef.current = newSet;
             // 🔧 保存到 localStorage
             localStorage.setItem('dismissedSignals', JSON.stringify(Array.from(newSet)));
             return newSet;
@@ -221,6 +225,7 @@ export function useStrategyScanner(data: TickerData[]) {
         setSignals([]);
         signalTimestamps.current = new Map();
         setDismissedSignals(new Set()); // 🔧 清空黑名单
+        dismissedSignalsRef.current = new Set();
         localStorage.removeItem('dismissedSignals'); // 🔧 清空 localStorage
     };
 
