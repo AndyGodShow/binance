@@ -81,24 +81,7 @@ export async function GET(request: Request) {
                 const signal = strategy.detect(data);
 
                 // Filter: we only want to push high confidence signals to Telegram
-                if (signal && signal.score !== undefined && signal.score >= 85) {
-                    newSignalsCount++;
-
-                    const directionIcon = signal.direction === 'long' ? '🟢 做多' : '🔴 做空';
-                    const symbolClean = signal.symbol.replace('USDT', '');
-                    const priceFormatted = signal.price !== undefined ? parseFloat(String(signal.price)).toFixed(4) : 'N/A';
-
-                    const message = `
-<b>🔔 战术雷达报警 | ${symbolClean}</b>
-
-<b>策略:</b> ${signal.strategyName}
-<b>方向:</b> ${directionIcon} (置信度 ${signal.score}分)
-<b>触发价格:</b> $${priceFormatted}`;
-
-                    const sent = await sendTelegramMessage(message);
-                    if (sent) telegramMessagesSent++;
-                } else if (signal && signal.confidence !== undefined && signal.confidence >= 80) {
-                    // For composite strategies using 'confidence' instead of 'score'
+                if (signal && signal.confidence !== undefined && signal.confidence >= 80) {
                     newSignalsCount++;
 
                     const directionIcon = signal.direction === 'long' ? '🟢 做多' : '🔴 做空';
