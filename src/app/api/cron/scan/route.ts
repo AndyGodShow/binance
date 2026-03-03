@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server';
 import { strategyRegistry } from '@/strategies/registry';
 import { sendTelegramMessage } from '@/lib/services/telegram';
+import { GET as getMarket } from '@/app/api/market/route';
+import { GET as getMultiframe } from '@/app/api/market/multiframe/route';
+import { GET as getOi } from '@/app/api/oi/all/route';
+import { GET as getRsrs } from '@/app/api/rsrs/route';
 
 // Vercel Cron will send a GET request
 export async function GET(request: Request) {
