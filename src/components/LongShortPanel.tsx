@@ -8,7 +8,13 @@ import LongShortChart from './LongShortChart';
 import TakerVolumeChart from './TakerVolumeChart';
 import styles from './LongShortPanel.module.css';
 
-const fetcher = (url: string) => fetch(url).then(r => r.json());
+const fetcher = async (url: string) => {
+    const res = await fetch(url);
+    if (!res.ok) {
+        throw new Error('Failed to fetch data: ' + res.status);
+    }
+    return res.json();
+};
 
 const SYMBOLS = [
     { label: 'BTC', value: 'BTCUSDT' },

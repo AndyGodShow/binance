@@ -14,7 +14,13 @@ import ChartDrawer from '@/components/ChartDrawer';
 import { useStrategyScanner } from '@/hooks/useStrategyScanner';
 import DataManager from '@/components/DataManager';
 
-const fetcher = (url: string) => fetch(url).then((r) => r.json());
+const fetcher = async (url: string) => {
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new Error('Failed to fetch data: ' + res.status);
+  }
+  return res.json();
+};
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'longshort' | 'strategies' | 'trading'>('dashboard');
@@ -35,7 +41,8 @@ export default function Home() {
 
   // Get symbol list for WebSocket subscription
   const symbols = useMemo(() => {
-    return rawData?.map(t => t.symbol.toLowerCase()) || [];
+    if (!rawData || !Array.isArray(rawData)) return [];
+    return rawData.map(t => t.symbol.toLowerCase());
   }, [rawData]);
 
   // Use WebSocket for multi-timeframe data (replaces REST API)
@@ -62,7 +69,7 @@ export default function Home() {
 
   // Process and merge all data
   const processedData = useMemo(() => {
-    if (!rawData) return [];
+    if (!rawData || !Array.isArray(rawData)) return [];
 
     // 1. Filter only USDT pairs (Standard Futures)
     let result = rawData.filter(t => t.symbol.endsWith('USDT'));
