@@ -18,7 +18,9 @@ export async function GET(request: Request) {
         const startTime = Date.now();
 
         // 2. Fetch all required data concurrently
-        const baseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000';
+        const baseUrl = process.env.VERCEL_URL
+            ? `https://${process.env.VERCEL_URL}`
+            : (process.env.NODE_ENV === 'production' ? 'https://binance-psi-eosin.vercel.app' : 'http://localhost:3000');
 
         const [marketRes, frameRes, oiRes, rsrsRes] = await Promise.all([
             fetch(`${baseUrl}/api/market`),
