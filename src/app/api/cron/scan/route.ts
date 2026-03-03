@@ -21,16 +21,13 @@ export async function GET(request: Request) {
         console.log('[Cron] Starting strategy scan...');
         const startTime = Date.now();
 
-        // 2. Fetch all required data concurrently
-        const baseUrl = process.env.VERCEL_URL
-            ? `https://${process.env.VERCEL_URL}`
-            : (process.env.NODE_ENV === 'production' ? 'https://binance-psi-eosin.vercel.app' : 'http://localhost:3000');
-
+        // 2. Fetch all required data concurrently by invoking route handlers directly in memory
+        // This prevents Vercel Serverless environment from returning 404/500 on loopback fetches
         const [marketRes, frameRes, oiRes, rsrsRes] = await Promise.all([
-            fetch(`${baseUrl}/api/market`),
-            fetch(`${baseUrl}/api/market/multiframe`),
-            fetch(`${baseUrl}/api/oi/all`),
-            fetch(`${baseUrl}/api/rsrs`)
+            getMarket() as Promise<Response>,
+            getMultiframe() as Promise<Response>,
+            getOi() as Promise<Response>,
+            getRsrs() as Promise<Response>
         ]);
 
         const rawData = await marketRes.json();
