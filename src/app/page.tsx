@@ -31,24 +31,26 @@ export default function Home() {
   const oiRefreshInterval = isPageVisible ? 15000 : 60000;
 
   // Data fetching (shared between Dashboard and StrategyCenter)
-  const { data: rawData } = useSWR<TickerData[]>('/api/market', fetcher, {
+  const { data: rawData, error: marketError, isLoading: marketLoading } = useSWR<TickerData[]>('/api/market', fetcher, {
     refreshInterval: marketRefreshInterval,
   });
 
-  const { data: oiData } = useSWR<Record<string, string>>('/api/oi/all', fetcher, {
+  const { data: oiData, error: oiError } = useSWR<Record<string, string>>('/api/oi/all', fetcher, {
     refreshInterval: oiRefreshInterval,
   });
 
   // Get symbol list for WebSocket subscription
   const symbols = useMemo(() => {
     if (!rawData || !Array.isArray(rawData)) return [];
-    return rawData.map(t => t.symbol.toLowerCase());
+    return rawData
+      .filter((t): t is TickerData => Boolean(t && typeof t.symbol === 'string' && t.symbol.length > 0))
+      .map(t => t.symbol.toLowerCase());
   }, [rawData]);
 
   // Use WebSocket for multi-timeframe data (replaces REST API)
   const { data: frameData } = useKlineWebSocket(symbols);
 
-  const { data: rsrsData } = useSWR<Record<string, {
+  const { data: rsrsData, error: rsrsError } = useSWR<Record<string, {
     beta: number;
     zScore: number;
     r2: number;
@@ -71,20 +73,25 @@ export default function Home() {
   const processedData = useMemo(() => {
     if (!rawData || !Array.isArray(rawData)) return [];
 
-    // 1. Filter only USDT pairs (Standard Futures)
-    let result = rawData.filter(t => t.symbol.endsWith('USDT'));
+    // 1. Filter invalid rows and keep only USDT pairs
+    let result = rawData.filter((t): t is TickerData => {
+      if (!t || typeof t.symbol !== 'string') return false;
+      if (typeof t.lastPrice !== 'string' || typeof t.quoteVolume !== 'string') return false;
+      return t.symbol.endsWith('USDT');
+    });
 
     // 2. Filter out stale data
     const now = Date.now();
-    result = result.filter(t => (now - t.closeTime) < 24 * 60 * 60 * 1000);
+    result = result.filter(t => Number.isFinite(t.closeTime) && (now - t.closeTime) < 24 * 60 * 60 * 1000);
 
     // 3. Filter out low-volume coins (test/alpha/delisted coins)
-    result = result.filter(t => parseFloat(t.quoteVolume) > 100000);
+    result = result.filter(t => Number.isFinite(parseFloat(t.quoteVolume)) && parseFloat(t.quoteVolume) > 100000);
 
     // 4. Merge all data in one pass
     result = result.map(t => {
       const newData = { ...t };
       const price = parseFloat(t.lastPrice);
+      if (!Number.isFinite(price)) return newData;
 
       // Add OI data
       if (oiData) {
@@ -174,14 +181,44 @@ export default function Home() {
   return (
     <main className="container">
       <TabNavigation activeTab={activeTab} onChange={setActiveTab} />
+      {(marketError || oiError || rsrsError) && (
+        <div
+          style={{
+            marginBottom: 12,
+            padding: '10px 12px',
+            borderRadius: 8,
+            border: '1px solid rgba(246, 70, 93, 0.4)',
+            background: 'rgba(246, 70, 93, 0.1)',
+            color: '#fca5a5',
+            fontSize: 13,
+          }}
+        >
+          数据服务连接失败：请检查网络或代理是否可访问 Binance Futures（fapi.binance.com）。
+        </div>
+      )}
+      {!marketLoading && !marketError && processedData.length === 0 && (
+        <div
+          style={{
+            marginBottom: 12,
+            padding: '10px 12px',
+            borderRadius: 8,
+            border: '1px solid rgba(245, 158, 11, 0.4)',
+            background: 'rgba(245, 158, 11, 0.1)',
+            color: '#fcd34d',
+            fontSize: 13,
+          }}
+        >
+          当前未获取到有效行情数据，请稍后重试。
+        </div>
+      )}
 
-      <div style={{ display: activeTab === 'dashboard' ? 'block' : 'none' }}>
+      {activeTab === 'dashboard' && (
         <Dashboard processedData={processedData} onSymbolClick={handleSymbolClick} />
-      </div>
-      <div style={{ display: activeTab === 'longshort' ? 'block' : 'none' }}>
+      )}
+      {activeTab === 'longshort' && (
         <LongShortPanel />
-      </div>
-      <div style={{ display: activeTab === 'strategies' ? 'block' : 'none' }}>
+      )}
+      {activeTab === 'strategies' && (
         <StrategyCenter
           data={processedData}
           signals={signals}
@@ -189,13 +226,15 @@ export default function Home() {
           clearAllSignals={clearAllSignals}
           onSymbolClick={handleSymbolClick}
         />
-      </div>
-      <div style={{ display: activeTab === 'trading' ? 'block' : 'none' }}>
+      )}
+      {activeTab === 'trading' && (
+        <>
         <SimulatedTrading />
         <div className="mt-8 border-t border-gray-800 pt-8">
           <DataManager />
         </div>
-      </div>
+        </>
+      )}
 
       {/* Shared ChartDrawer for all tabs */}
       {selectedSymbol && (

@@ -4,20 +4,33 @@ import { historicalTracker } from '@/lib/historicalTracker';
 import { fetchKlinesBatch, enhanceTickerData, getBTCReturns } from '@/lib/indicatorEnhancer';
 import { APP_CONFIG } from '@/lib/config';
 import { logger } from '@/lib/logger';
+import { fetchBinance } from '@/lib/binanceApi';
+
+let lastSuccessfulMarketData: TickerData[] | null = null;
+let lastSuccessfulAt = 0;
 
 export async function GET() {
     try {
-        // Use allSettled for error tolerance - partial failures won't break everything
+        // Use allSettled + multi-base fallback for better resilience.
         const results = await Promise.allSettled([
-            fetch('https://fapi.binance.com/fapi/v1/ticker/24hr', { next: { revalidate: 5 } }),
-            fetch('https://fapi.binance.com/fapi/v1/premiumIndex', { next: { revalidate: 5 } }),
-            fetch('https://fapi.binance.com/fapi/v1/exchangeInfo', { next: { revalidate: 86400 } }), // Cache for 24 hours (exchange info rarely changes)
+            fetchBinance('/fapi/v1/ticker/24hr', { revalidate: 5 }),
+            fetchBinance('/fapi/v1/premiumIndex', { revalidate: 5 }),
+            fetchBinance('/fapi/v1/exchangeInfo', { revalidate: 86400 }), // Cache for 24 hours (exchange info rarely changes)
         ]);
 
         // Check if critical endpoints succeeded (ticker + premium are required)
         if (results[0].status === 'rejected' || results[1].status === 'rejected') {
             logger.error('Failed to fetch critical data from Binance', new Error('Ticker or premium index endpoint failed'));
-            throw new Error('Failed to fetch data from Binance');
+            if (lastSuccessfulMarketData && lastSuccessfulMarketData.length > 0) {
+                return NextResponse.json(lastSuccessfulMarketData, {
+                    headers: {
+                        'Cache-Control': 'public, s-maxage=2, stale-while-revalidate=10',
+                        'X-Data-Source': 'stale-memory-cache',
+                        'X-Cache-Age-Seconds': Math.floor((Date.now() - lastSuccessfulAt) / 1000).toString(),
+                    }
+                });
+            }
+            throw new Error('Failed to fetch data from Binance and no cache available');
         }
 
         const tickerRes = results[0].value;
@@ -126,13 +139,27 @@ export async function GET() {
         // 定期清理旧数据（每次请求都清理一次）
         historicalTracker.cleanup();
 
+        // Update in-memory fallback cache after a successful full build.
+        lastSuccessfulMarketData = merged;
+        lastSuccessfulAt = Date.now();
+
         return NextResponse.json(merged, {
             headers: {
                 'Cache-Control': 'public, s-maxage=3, stale-while-revalidate=10',
+                'X-Data-Source': 'live',
             }
         });
     } catch (error) {
         logger.error('Error fetching market data', error as Error);
+        if (lastSuccessfulMarketData && lastSuccessfulMarketData.length > 0) {
+            return NextResponse.json(lastSuccessfulMarketData, {
+                headers: {
+                    'Cache-Control': 'public, s-maxage=2, stale-while-revalidate=10',
+                    'X-Data-Source': 'stale-memory-cache',
+                    'X-Cache-Age-Seconds': Math.floor((Date.now() - lastSuccessfulAt) / 1000).toString(),
+                }
+            });
+        }
         return NextResponse.json({ error: 'Failed to fetch market data' }, { status: 500 });
     }
 }

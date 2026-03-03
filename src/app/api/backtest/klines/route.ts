@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { dataCollector } from '@/lib/services/dataCollector';
+import { fetchBinance } from '@/lib/binanceApi';
 
 export const dynamic = 'force-dynamic';
 
@@ -56,7 +57,6 @@ export async function GET(req: NextRequest) {
 
     try {
         // 构建请求URL
-        const baseUrl = 'https://fapi.binance.com/fapi/v1/klines';
         const klineParams = new URLSearchParams({
             symbol: symbol.toUpperCase(),
             interval,
@@ -67,8 +67,8 @@ export async function GET(req: NextRequest) {
         if (endTime) klineParams.append('endTime', endTime);
 
         // 1. 发起 K 线请求 (始终从 API 获取最新的 K 线，因为 K 线 API 限制少且快)
-        const klinePromise = fetch(`${baseUrl}?${klineParams.toString()}`, {
-            next: { revalidate: 60 },
+        const klinePromise = fetchBinance(`/fapi/v1/klines?${klineParams.toString()}`, {
+            revalidate: 60,
         }).then(res => {
             if (!res.ok) throw new Error(`KLine API Error: ${res.status}`);
             return res.json();
@@ -202,7 +202,6 @@ export async function GET(req: NextRequest) {
 
 // 辅助函数: 获取持仓量历史
 async function fetchOpenInterest(symbol: string, period: string, startTime: string, endTime?: string, limit: string = '500') {
-    const baseUrl = 'https://fapi.binance.com/futures/data/openInterestHist';
     const params = new URLSearchParams({
         symbol: symbol.toUpperCase(),
         period,
@@ -211,14 +210,13 @@ async function fetchOpenInterest(symbol: string, period: string, startTime: stri
     });
     if (endTime) params.append('endTime', endTime);
 
-    const res = await fetch(`${baseUrl}?${params.toString()}`, { next: { revalidate: 60 } });
+    const res = await fetchBinance(`/futures/data/openInterestHist?${params.toString()}`, { revalidate: 60 });
     if (!res.ok) throw new Error(`OI API Error: ${res.status}`);
     return res.json();
 }
 
 // 辅助函数: 获取资金费率历史
 async function fetchFundingRate(symbol: string, startTime: string, endTime?: string, limit: string = '1000') {
-    const baseUrl = 'https://fapi.binance.com/fapi/v1/fundingRate';
     const params = new URLSearchParams({
         symbol: symbol.toUpperCase(),
         limit,
@@ -226,7 +224,7 @@ async function fetchFundingRate(symbol: string, startTime: string, endTime?: str
     });
     if (endTime) params.append('endTime', endTime);
 
-    const res = await fetch(`${baseUrl}?${params.toString()}`, { next: { revalidate: 60 } });
+    const res = await fetchBinance(`/fapi/v1/fundingRate?${params.toString()}`, { revalidate: 60 });
     if (!res.ok) throw new Error(`Funding API Error: ${res.status}`);
     return res.json();
 }

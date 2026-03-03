@@ -1,14 +1,12 @@
 import { NextResponse } from 'next/server';
+import { fetchBinanceJson } from '@/lib/binanceApi';
 
 // RSRS now uses adaptive window, no fixed N_DAYS/M_DAYS needed
 
 export async function GET() {
     try {
         // 1. Fetch all tickers to find top volume assets
-        const tickerRes = await fetch('https://fapi.binance.com/fapi/v1/ticker/24hr', { next: { revalidate: 300 } });
-        if (!tickerRes.ok) throw new Error('Failed to fetch tickers');
-
-        const allTickers = await tickerRes.json();
+        const allTickers = await fetchBinanceJson('/fapi/v1/ticker/24hr', { revalidate: 300 });
 
         // Filter USDT pairs and sort by Quote Volume (descending)
         // Limit to top 30 to avoid timeout/rate limits
@@ -49,11 +47,10 @@ export async function GET() {
             const batch = topTickers.slice(i, i + batchSize);
             const promises = batch.map(async (t: BinanceTicker24h) => {
                 try {
-                    const klinesRes = await fetch(
-                        `https://fapi.binance.com/fapi/v1/klines?symbol=${t.symbol}&interval=1d&limit=${TOTAL_CANDLES}`,
-                        { next: { revalidate: 3600 } } // Cache for 1 hour
+                    const klines = await fetchBinanceJson<any[]>(
+                        `/fapi/v1/klines?symbol=${t.symbol}&interval=1d&limit=${TOTAL_CANDLES}`,
+                        { revalidate: 3600 } // Cache for 1 hour
                     );
-                    const klines = await klinesRes.json();
 
                     if (Array.isArray(klines) && klines.length >= 40) { // Minimum data requirement
                         const result = calculateRSRS(klines);
@@ -409,4 +406,3 @@ function calculateEfficiencyRatio(closes: number[], period: number = 10): number
 
     return volatility === 0 ? 1 : direction / volatility;
 }
-

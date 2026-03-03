@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { fetchBinance } from '@/lib/binanceApi';
 
 // Define types
 interface Ticker {
@@ -25,7 +26,7 @@ export async function GET() {
 
     try {
         // 1. Get Tickers (All)
-        const tickerRes = await fetch('https://fapi.binance.com/fapi/v1/ticker/24hr', { next: { revalidate: 30 } });
+        const tickerRes = await fetchBinance('/fapi/v1/ticker/24hr', { revalidate: 30 });
         if (!tickerRes.ok) throw new Error('Failed to fetch tickers');
         const tickers: Ticker[] = await tickerRes.json();
 
@@ -42,7 +43,7 @@ export async function GET() {
 
         const fetchSymbolData = async (symbol: string): Promise<KlineResult> => {
             try {
-                const res = await fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=17`);
+                const res = await fetchBinance(`/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=17`, { revalidate: 60 });
                 if (!res.ok) throw new Error('Failed');
                 const klines = await res.json();
 

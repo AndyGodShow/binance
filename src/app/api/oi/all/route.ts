@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { fetchBinance } from '@/lib/binanceApi';
 
 // Simple in-memory cache to prevent hitting rate limits
 let cache: { time: number; data: Record<string, string> } | null = null;
@@ -12,7 +13,7 @@ export async function GET() {
 
     try {
         // 1. Get all symbols first (lightweight)
-        const infoRes = await fetch('https://fapi.binance.com/fapi/v1/ticker/24hr', { next: { revalidate: 30 } });
+        const infoRes = await fetchBinance('/fapi/v1/ticker/24hr', { revalidate: 30 });
         if (!infoRes.ok) throw new Error('Failed to fetch tickers');
         const tickers = await infoRes.json();
 
@@ -34,7 +35,7 @@ export async function GET() {
 
         for (const chunk of chunks) {
             const promises = chunk.map((s: string) =>
-                fetch(`https://fapi.binance.com/fapi/v1/openInterest?symbol=${s}`, { next: { revalidate: 60 } })
+                fetchBinance(`/fapi/v1/openInterest?symbol=${s}`, { revalidate: 60 })
                     .then(r => r.json())
                     .then(d => ({ symbol: s, oi: d.openInterest }))
                     .catch(() => ({ symbol: s, oi: '0' }))

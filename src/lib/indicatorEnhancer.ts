@@ -7,9 +7,9 @@ import { TickerData, OHLC } from '@/lib/types';
 import { getLatestATR, calculateBeta, calculateCorrelation, calculateReturns, extractClosePrices } from '@/lib/indicators';
 import { calculateVolumeProfile } from '@/lib/volumeProfile';
 import { logger } from '@/lib/logger';
-import { fetchWithRetry } from '@/lib/apiRetry';
 import { klineCache } from '@/lib/cache';
 import { APP_CONFIG } from '@/lib/config';
+import { fetchBinance } from '@/lib/binanceApi';
 
 /**
  * 获取 K 线数据
@@ -26,13 +26,11 @@ export async function fetchKlines(symbol: string, interval: string = '15m', limi
     }
 
     try {
-        const response = await fetchWithRetry(
-            `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`,
-            { next: { revalidate: APP_CONFIG.API.REVALIDATE_MARKET } },
+        const response = await fetchBinance(
+            `/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`,
             {
-                maxRetries: APP_CONFIG.API.MAX_RETRIES,
-                initialDelay: APP_CONFIG.API.RETRY_INITIAL_DELAY,
-                maxDelay: APP_CONFIG.API.RETRY_MAX_DELAY
+                revalidate: APP_CONFIG.API.REVALIDATE_MARKET,
+                timeoutMs: APP_CONFIG.API.RETRY_MAX_DELAY
             }
         );
 

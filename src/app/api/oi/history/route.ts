@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { fetchBinance } from '@/lib/binanceApi';
 
 /**
  * OI 历史数据 API
@@ -98,10 +99,7 @@ export async function GET(request: Request) {
 
 // 辅助函数：获取当前 OI
 async function fetchCurrentOI(symbol: string): Promise<number> {
-    const response = await fetch(
-        `https://fapi.binance.com/fapi/v1/openInterest?symbol=${symbol}`,
-        { next: { revalidate: 60 } }
-    );
+    const response = await fetchBinance(`/fapi/v1/openInterest?symbol=${symbol}`, { revalidate: 60 });
 
     if (!response.ok) {
         throw new Error(`Failed to fetch OI for ${symbol}`);
