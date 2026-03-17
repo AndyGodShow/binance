@@ -3,20 +3,31 @@ import { fetchBinanceJson } from '@/lib/binanceApi';
 
 // RSRS now uses adaptive window, no fixed N_DAYS/M_DAYS needed
 
+interface BinanceTicker24h {
+    symbol: string;
+    quoteVolume: string;
+}
+
+function isBinanceTicker24h(value: unknown): value is BinanceTicker24h {
+    return typeof value === 'object' &&
+        value !== null &&
+        typeof (value as BinanceTicker24h).symbol === 'string' &&
+        typeof (value as BinanceTicker24h).quoteVolume === 'string';
+}
+
 export async function GET() {
     try {
         // 1. Fetch all tickers to find top volume assets
-        const allTickers = await fetchBinanceJson('/fapi/v1/ticker/24hr', { revalidate: 300 });
+        const allTickers = await fetchBinanceJson<unknown>('/fapi/v1/ticker/24hr', { revalidate: 300 });
+        if (!Array.isArray(allTickers)) {
+            throw new Error('Unexpected ticker response from Binance');
+        }
 
         // Filter USDT pairs and sort by Quote Volume (descending)
         // Limit to top 30 to avoid timeout/rate limits
-        interface BinanceTicker24h {
-            symbol: string;
-            quoteVolume: string;
-        }
-
         const topTickers = allTickers
-            .filter((t: BinanceTicker24h) => t.symbol.endsWith('USDT'))
+            .filter(isBinanceTicker24h)
+            .filter((t) => t.symbol.endsWith('USDT'))
             .sort((a: BinanceTicker24h, b: BinanceTicker24h) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
             .slice(0, 30);
 

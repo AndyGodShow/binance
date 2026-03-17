@@ -36,6 +36,9 @@ export function useKlineWebSocket(symbols: string[]) {
         const loadInitialData = async () => {
             try {
                 const response = await fetch('/api/market/multiframe');
+                if (!response.ok) {
+                    throw new Error(`Failed to load multiframe data: ${response.status}`);
+                }
                 const data: Record<string, { o15m: number, o1h: number, o4h: number }> = await response.json();
 
                 // 转换为 KlineData 格式 (统一使用小写 symbol 作为 key)

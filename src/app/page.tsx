@@ -28,15 +28,16 @@ export default function Home() {
 
   // Smart refresh: slower when page is hidden to save resources
   const marketRefreshInterval = isPageVisible ? 3000 : 30000;
-  const oiRefreshInterval = isPageVisible ? 15000 : 60000;
+  const oiRefreshInterval = isPageVisible ? 120000 : 300000;
 
   // Data fetching (shared between Dashboard and StrategyCenter)
   const { data: rawData, error: marketError, isLoading: marketLoading } = useSWR<TickerData[]>('/api/market', fetcher, {
     refreshInterval: marketRefreshInterval,
   });
 
-  const { data: oiData, error: oiError } = useSWR<Record<string, string>>('/api/oi/all', fetcher, {
+  const { data: oiData } = useSWR<Record<string, string>>('/api/oi/all', fetcher, {
     refreshInterval: oiRefreshInterval,
+    revalidateOnFocus: false,
   });
 
   // Get symbol list for WebSocket subscription
@@ -181,7 +182,7 @@ export default function Home() {
   return (
     <main className="container">
       <TabNavigation activeTab={activeTab} onChange={setActiveTab} />
-      {(marketError || oiError || rsrsError) && (
+      {(marketError || rsrsError) && (
         <div
           style={{
             marginBottom: 12,

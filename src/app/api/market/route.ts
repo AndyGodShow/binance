@@ -4,18 +4,28 @@ import { historicalTracker } from '@/lib/historicalTracker';
 import { fetchKlinesBatch, enhanceTickerData, getBTCReturns } from '@/lib/indicatorEnhancer';
 import { APP_CONFIG } from '@/lib/config';
 import { logger } from '@/lib/logger';
-import { fetchBinance } from '@/lib/binanceApi';
+import { fetchBinanceJson } from '@/lib/binanceApi';
 
 let lastSuccessfulMarketData: TickerData[] | null = null;
 let lastSuccessfulAt = 0;
+
+interface BinanceExchangeInfoSymbol {
+    symbol: string;
+    contractType: string;
+    status: string;
+}
+
+interface BinanceExchangeInfoResponse {
+    symbols: BinanceExchangeInfoSymbol[];
+}
 
 export async function GET() {
     try {
         // Use allSettled + multi-base fallback for better resilience.
         const results = await Promise.allSettled([
-            fetchBinance('/fapi/v1/ticker/24hr', { revalidate: 5 }),
-            fetchBinance('/fapi/v1/premiumIndex', { revalidate: 5 }),
-            fetchBinance('/fapi/v1/exchangeInfo', { revalidate: 86400 }), // Cache for 24 hours (exchange info rarely changes)
+            fetchBinanceJson<TickerData[]>('/fapi/v1/ticker/24hr', { revalidate: 5 }),
+            fetchBinanceJson<PremiumIndex[]>('/fapi/v1/premiumIndex', { revalidate: 5 }),
+            fetchBinanceJson<BinanceExchangeInfoResponse>('/fapi/v1/exchangeInfo', { revalidate: 86400 }), // Cache for 24 hours (exchange info rarely changes)
         ]);
 
         // Check if critical endpoints succeeded (ticker + premium are required)
@@ -33,33 +43,21 @@ export async function GET() {
             throw new Error('Failed to fetch data from Binance and no cache available');
         }
 
-        const tickerRes = results[0].value;
-        const premiumRes = results[1].value;
-
-        if (!tickerRes.ok || !premiumRes.ok) {
-            throw new Error('Failed to fetch data from Binance');
-        }
-
-        const tickers: TickerData[] = await tickerRes.json();
-        const premiums: PremiumIndex[] = await premiumRes.json();
+        const tickers = results[0].value;
+        const premiums = results[1].value;
 
         // exchangeInfo is optional (cached 24h, rarely fails but shouldn't break everything)
         let perpetualSymbols: Set<string> | null = null;
-        if (results[2].status === 'fulfilled' && results[2].value.ok) {
-            interface BinanceExchangeInfoSymbol {
-                symbol: string;
-                contractType: string;
-                status: string;
-            }
-            const exchangeInfo = await results[2].value.json();
+        if (results[2].status === 'fulfilled' && Array.isArray(results[2].value.symbols)) {
+            const exchangeInfo = results[2].value;
             perpetualSymbols = new Set(
                 exchangeInfo.symbols
-                    .filter((s: BinanceExchangeInfoSymbol) => {
+                    .filter((s) => {
                         return s.contractType === 'PERPETUAL' &&
                             s.status === 'TRADING' &&
                             s.symbol.endsWith('USDT');
                     })
-                    .map((s: BinanceExchangeInfoSymbol) => s.symbol)
+                    .map((s) => s.symbol)
             );
         } else {
             logger.warn('exchangeInfo fetch failed, skipping perpetual filter');

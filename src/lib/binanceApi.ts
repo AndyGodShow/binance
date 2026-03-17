@@ -1,11 +1,14 @@
 import { logger } from '@/lib/logger';
 
 const DEFAULT_BINANCE_FAPI_BASES = [
-    'https://data-api.binance.vision',
     'https://fapi.binance.com',
     'https://fapi1.binance.com',
     'https://fapi2.binance.com',
     'https://fapi3.binance.com',
+];
+
+const DEFAULT_BINANCE_DATA_API_BASES = [
+    'https://data-api.binance.vision',
 ];
 
 const ENV_BINANCE_FAPI_BASES = (process.env.BINANCE_FAPI_BASES || '')
@@ -46,13 +49,25 @@ function buildInit(options: BinanceFetchOptions): NextFetchInit {
     return merged;
 }
 
+function getCandidateBases(path: string): string[] {
+    if (ENV_BINANCE_FAPI_BASES.length > 0) {
+        return BINANCE_FAPI_BASES;
+    }
+
+    const supportsDataApi = !path.startsWith('/fapi/') && !path.startsWith('/futures/');
+    return supportsDataApi
+        ? [...DEFAULT_BINANCE_DATA_API_BASES, ...DEFAULT_BINANCE_FAPI_BASES]
+        : DEFAULT_BINANCE_FAPI_BASES;
+}
+
 export async function fetchBinance(path: string, options: BinanceFetchOptions = {}): Promise<Response> {
     const errors: string[] = [];
     const init = buildInit(options);
+    const candidateBases = getCandidateBases(path);
 
-    for (let i = 0; i < BINANCE_FAPI_BASES.length; i++) {
-        const idx = (preferredBaseIndex + i) % BINANCE_FAPI_BASES.length;
-        const base = BINANCE_FAPI_BASES[idx];
+    for (let i = 0; i < candidateBases.length; i++) {
+        const idx = (preferredBaseIndex + i) % candidateBases.length;
+        const base = candidateBases[idx];
         const url = `${base}${path}`;
 
         try {
@@ -75,10 +90,11 @@ export async function fetchBinance(path: string, options: BinanceFetchOptions = 
 export async function fetchBinanceJson<T>(path: string, options: BinanceFetchOptions = {}): Promise<T> {
     const errors: string[] = [];
     const init = buildInit(options);
+    const candidateBases = getCandidateBases(path);
 
-    for (let i = 0; i < BINANCE_FAPI_BASES.length; i++) {
-        const idx = (preferredBaseIndex + i) % BINANCE_FAPI_BASES.length;
-        const base = BINANCE_FAPI_BASES[idx];
+    for (let i = 0; i < candidateBases.length; i++) {
+        const idx = (preferredBaseIndex + i) % candidateBases.length;
+        const base = candidateBases[idx];
         const url = `${base}${path}`;
 
         try {

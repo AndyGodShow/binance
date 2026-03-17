@@ -9,7 +9,7 @@ import { calculateVolumeProfile } from '@/lib/volumeProfile';
 import { logger } from '@/lib/logger';
 import { klineCache } from '@/lib/cache';
 import { APP_CONFIG } from '@/lib/config';
-import { fetchBinance } from '@/lib/binanceApi';
+import { fetchBinanceJson } from '@/lib/binanceApi';
 
 /**
  * 获取 K 线数据
@@ -26,7 +26,7 @@ export async function fetchKlines(symbol: string, interval: string = '15m', limi
     }
 
     try {
-        const response = await fetchBinance(
+        const data = await fetchBinanceJson<unknown>(
             `/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`,
             {
                 revalidate: APP_CONFIG.API.REVALIDATE_MARKET,
@@ -34,12 +34,10 @@ export async function fetchKlines(symbol: string, interval: string = '15m', limi
             }
         );
 
-        if (!response.ok) {
+        if (!Array.isArray(data)) {
             logger.warn(`Failed to fetch klines for ${symbol}`);
             return [];
         }
-
-        const data = await response.json();
 
         const klines = data.map((k: any[]) => ({
             time: k[0],

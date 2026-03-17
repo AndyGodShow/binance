@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { dataCollector } from '@/lib/services/dataCollector';
-import { fetchBinance } from '@/lib/binanceApi';
+import { fetchBinanceJson } from '@/lib/binanceApi';
 
 export const dynamic = 'force-dynamic';
 
@@ -67,11 +67,11 @@ export async function GET(req: NextRequest) {
         if (endTime) klineParams.append('endTime', endTime);
 
         // 1. 发起 K 线请求 (始终从 API 获取最新的 K 线，因为 K 线 API 限制少且快)
-        const klinePromise = fetchBinance(`/fapi/v1/klines?${klineParams.toString()}`, {
+        const klinePromise = fetchBinanceJson<unknown>(`/fapi/v1/klines?${klineParams.toString()}`, {
             revalidate: 60,
-        }).then(res => {
-            if (!res.ok) throw new Error(`KLine API Error: ${res.status}`);
-            return res.json();
+        }).then(data => {
+            if (!Array.isArray(data)) throw new Error('KLine API returned invalid data');
+            return data;
         });
 
         // 2. 获取持仓量数据 (优先本地，失败则降级到 API)
@@ -210,9 +210,9 @@ async function fetchOpenInterest(symbol: string, period: string, startTime: stri
     });
     if (endTime) params.append('endTime', endTime);
 
-    const res = await fetchBinance(`/futures/data/openInterestHist?${params.toString()}`, { revalidate: 60 });
-    if (!res.ok) throw new Error(`OI API Error: ${res.status}`);
-    return res.json();
+    const data = await fetchBinanceJson<unknown>(`/futures/data/openInterestHist?${params.toString()}`, { revalidate: 60 });
+    if (!Array.isArray(data)) throw new Error('OI API returned invalid data');
+    return data;
 }
 
 // 辅助函数: 获取资金费率历史
@@ -224,7 +224,7 @@ async function fetchFundingRate(symbol: string, startTime: string, endTime?: str
     });
     if (endTime) params.append('endTime', endTime);
 
-    const res = await fetchBinance(`/fapi/v1/fundingRate?${params.toString()}`, { revalidate: 60 });
-    if (!res.ok) throw new Error(`Funding API Error: ${res.status}`);
-    return res.json();
+    const data = await fetchBinanceJson<unknown>(`/fapi/v1/fundingRate?${params.toString()}`, { revalidate: 60 });
+    if (!Array.isArray(data)) throw new Error('Funding API returned invalid data');
+    return data;
 }
