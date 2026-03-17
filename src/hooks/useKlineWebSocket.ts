@@ -22,12 +22,18 @@ export function useKlineWebSocket(symbols: string[]) {
     const [kline4h, setKline4h] = useState<Map<string, KlineData>>(new Map());
     const [isConnected, setIsConnected] = useState(false);
     const [isInitialDataLoaded, setIsInitialDataLoaded] = useState(false);
+    const [webSocketDisabled, setWebSocketDisabled] = useState(false);
 
     const ws15mRef = useRef<WebSocket | null>(null);
     const ws1hRef = useRef<WebSocket | null>(null);
     const ws4hRef = useRef<WebSocket | null>(null);
     const reconnectTimeoutsRef = useRef<Map<string, NodeJS.Timeout>>(new Map()); // 每个 interval 独立的重连定时器
     const reconnectAttemptsRef = useRef<Map<string, number>>(new Map());
+    const webSocketDisabledRef = useRef(false);
+
+    useEffect(() => {
+        webSocketDisabledRef.current = webSocketDisabled;
+    }, [webSocketDisabled]);
 
     // 首次加载：使用 REST API 获取初始数据
     useEffect(() => {
@@ -90,7 +96,7 @@ export function useKlineWebSocket(symbols: string[]) {
     }, [symbols.length, isInitialDataLoaded]);
 
     useEffect(() => {
-        if (symbols.length === 0) return;
+        if (symbols.length === 0 || webSocketDisabled) return;
 
         // 限制最多 50 个币种，避免 URL 过长
         const limitedSymbols = symbols.slice(0, 50);
@@ -100,6 +106,8 @@ export function useKlineWebSocket(symbols: string[]) {
             wsRef: React.MutableRefObject<WebSocket | null>,
             setData: (value: React.SetStateAction<Map<string, KlineData>>) => void
         ) => {
+            if (webSocketDisabledRef.current) return;
+
             // 如果已经连接，先关闭
             if (wsRef.current) {
                 if (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING) {
@@ -168,8 +176,8 @@ export function useKlineWebSocket(symbols: string[]) {
                     }
                 }, 250);
 
-                ws.onerror = (error) => {
-                    console.error(`WebSocket ${interval} error:`, error);
+                ws.onerror = () => {
+                    // We rely on the close handler to enter polling fallback mode.
                 };
 
                 ws.onclose = (event) => {
@@ -179,9 +187,9 @@ export function useKlineWebSocket(symbols: string[]) {
 
                     // 指数退避重连
                     const attempts = reconnectAttemptsRef.current.get(interval) || 0;
-                    const maxAttempts = 10;
+                    const maxAttempts = 3;
 
-                    if (attempts < maxAttempts) {
+                    if (attempts < maxAttempts && !webSocketDisabledRef.current) {
                         const backoffTime = Math.min(1000 * Math.pow(2, attempts), 30000);
 
                         reconnectAttemptsRef.current.set(interval, attempts + 1);
@@ -191,11 +199,11 @@ export function useKlineWebSocket(symbols: string[]) {
                         }, backoffTime);
                         reconnectTimeoutsRef.current.set(interval, timeout);
                     } else {
-                        console.warn(`WebSocket ${interval} 超过最大重连次数，停止重连`);
+                        setWebSocketDisabled(true);
                     }
                 };
             } catch (err) {
-                console.error(`Failed to create WebSocket for ${interval}:`, err);
+                setWebSocketDisabled(true);
             }
         };
 
@@ -224,7 +232,7 @@ export function useKlineWebSocket(symbols: string[]) {
             reconnectAttemptsRef.current.clear();
         };
 
-    }, [symbols.join(',')]); // 使用 join 来避免数组引用变化导致的重连
+    }, [symbols.join(','), webSocketDisabled]); // 使用 join 来避免数组引用变化导致的重连
 
     // Polling fallback: 每 15 秒轮询一次 API，确保 WS 失败时有数据
     useEffect(() => {
