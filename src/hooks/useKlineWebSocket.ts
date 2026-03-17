@@ -35,6 +35,10 @@ export function useKlineWebSocket(symbols: string[]) {
         webSocketDisabledRef.current = webSocketDisabled;
     }, [webSocketDisabled]);
 
+    const canUseDirectWebSocket =
+        typeof window !== 'undefined' &&
+        (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+
     // 首次加载：使用 REST API 获取初始数据
     useEffect(() => {
         if (symbols.length === 0 || isInitialDataLoaded) return;
@@ -96,7 +100,7 @@ export function useKlineWebSocket(symbols: string[]) {
     }, [symbols.length, isInitialDataLoaded]);
 
     useEffect(() => {
-        if (symbols.length === 0 || webSocketDisabled) return;
+        if (symbols.length === 0 || webSocketDisabled || !canUseDirectWebSocket) return;
 
         // 限制最多 50 个币种，避免 URL 过长
         const limitedSymbols = symbols.slice(0, 50);
@@ -232,7 +236,7 @@ export function useKlineWebSocket(symbols: string[]) {
             reconnectAttemptsRef.current.clear();
         };
 
-    }, [symbols.join(','), webSocketDisabled]); // 使用 join 来避免数组引用变化导致的重连
+    }, [symbols.join(','), webSocketDisabled, canUseDirectWebSocket]); // 使用 join 来避免数组引用变化导致的重连
 
     // Polling fallback: 每 15 秒轮询一次 API，确保 WS 失败时有数据
     useEffect(() => {
