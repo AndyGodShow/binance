@@ -12,10 +12,12 @@ export function useStrategyScanner(data: TickerData[]) {
 
     // 保存上一次的数据摘要，用于检测变化
     const prevDataDigest = useRef<Map<string, string>>(new Map());
+    const prevStrategyVersion = useRef(0);
 
     // 🔧 修复 Hydration Mismatch：初始化为空，然后在客户端加载
     const [dismissedSignals, setDismissedSignals] = useState<Set<string>>(new Set());
     const dismissedSignalsRef = useRef<Set<string>>(new Set());
+    const [strategyVersion, setStrategyVersion] = useState(0);
 
     // 在客户端加载后从 localStorage 读取
     useEffect(() => {
@@ -33,153 +35,181 @@ export function useStrategyScanner(data: TickerData[]) {
         }
     }, []);
 
+    useEffect(() => {
+        return strategyRegistry.subscribe(() => {
+            setStrategyVersion((prev) => prev + 1);
+        });
+    }, []);
+
     // 扫描并生成信号
     useEffect(() => {
         if (!data || data.length === 0) return;
 
         const enabledStrategies = strategyRegistry.getEnabled();
+        const forceRescan = prevStrategyVersion.current !== strategyVersion;
 
-        // 第1步：按币种分组收集所有策略信号
-        const signalsBySymbol = new Map<string, StrategySignal[]>();
-
-        // 创建当前数据摘要，用于下次比较
         const currentDataDigest = new Map<string, string>();
+        const scanResults = new Map<string, StrategySignal | null>();
+        const releasedDismissals = new Set<string>();
+        const clearSignalTimestamps = (symbol: string) => {
+            Array.from(signalTimestamps.current.keys()).forEach((key) => {
+                if (key.startsWith(`${symbol}-`)) {
+                    signalTimestamps.current.delete(key);
+                }
+            });
+        };
 
         data.forEach(ticker => {
-            // 为每个ticker创建包含关键字段的摘要
             const digest = JSON.stringify({
                 lastPrice: ticker.lastPrice,
+                priceChangePercent: ticker.priceChangePercent,
                 change15m: ticker.change15m,
                 change1h: ticker.change1h,
                 change4h: ticker.change4h,
                 quoteVolume: ticker.quoteVolume,
                 openInterest: ticker.openInterest,
+                openInterestValue: ticker.openInterestValue,
+                oiChangePercent: ticker.oiChangePercent,
                 fundingRate: ticker.fundingRate,
-                // 添加其他策略可能用到的字段
                 rsrs: ticker.rsrs,
                 rsrsZScore: ticker.rsrsZScore,
+                rsrsFinal: ticker.rsrsFinal,
+                rsrsR2: ticker.rsrsR2,
+                rsrsROC: ticker.rsrsROC,
+                rsrsAcceleration: ticker.rsrsAcceleration,
+                rsrsDynamicLongThreshold: ticker.rsrsDynamicLongThreshold,
+                rsrsDynamicShortThreshold: ticker.rsrsDynamicShortThreshold,
                 atr: ticker.atr,
+                volumeMA: ticker.volumeMA,
+                betaToBTC: ticker.betaToBTC,
+                correlationToBTC: ticker.correlationToBTC,
+                cvd: ticker.cvd,
+                cvdSlope: ticker.cvdSlope,
+                vah: ticker.vah,
+                val: ticker.val,
+                poc: ticker.poc,
+                bollingerUpper: ticker.bollingerUpper,
+                bollingerLower: ticker.bollingerLower,
+                keltnerUpper: ticker.keltnerUpper,
+                keltnerMid: ticker.keltnerMid,
+                keltnerLower: ticker.keltnerLower,
+                squeezeStatus: ticker.squeezeStatus,
+                prevSqueezeStatus: ticker.prevSqueezeStatus,
+                squeezeDuration: ticker.squeezeDuration,
+                squeezeStrength: ticker.squeezeStrength,
+                momentumValue: ticker.momentumValue,
+                momentumColor: ticker.momentumColor,
+                adx: ticker.adx,
+                adxSlope: ticker.adxSlope,
+                bandwidthPercentile: ticker.bandwidthPercentile,
             });
 
             currentDataDigest.set(ticker.symbol, digest);
 
-            // 只对数据有变化的币种重新扫描策略
             const prevDigest = prevDataDigest.current.get(ticker.symbol);
-            if (prevDigest === digest) {
-                // 数据没变化，跳过策略扫描
+            if (!forceRescan && prevDigest === digest) {
                 return;
             }
 
             const symbolSignals: StrategySignal[] = [];
-
-            // 对每个币种应用所有启用的策略
             enabledStrategies.forEach(strategy => {
                 const signal = strategy.detect(ticker);
                 if (signal) {
-                    // 只保留置信度≥85分的高质量信号
                     if (signal.confidence < 85) return;
-
-                    // 添加触发时的价格
                     signal.price = parseFloat(ticker.lastPrice);
-
-                    // 生成信号的唯一标识
                     const signalId = `${signal.symbol}-${signal.strategyId}`;
-
-                    // 如果这个信号之前已经存在，使用原来的时间戳
                     const existingTimestamp = signalTimestamps.current.get(signalId);
                     if (existingTimestamp) {
                         signal.timestamp = existingTimestamp;
                     } else {
-                        // 新信号，记录时间戳
                         signalTimestamps.current.set(signalId, signal.timestamp);
                     }
-
                     symbolSignals.push(signal);
                 }
             });
 
-            // 如果该币种有触发任何策略，加入分组
             if (symbolSignals.length > 0) {
-                signalsBySymbol.set(ticker.symbol, symbolSignals);
+                const stackCount = symbolSignals.length;
+                let comboBonus = 0;
+
+                if (stackCount >= 3) {
+                    comboBonus = 20;
+                } else if (stackCount >= 2) {
+                    comboBonus = 10;
+                }
+
+                const mainSignal = symbolSignals.reduce((max, signal) =>
+                    signal.confidence > max.confidence ? signal : max
+                );
+
+                scanResults.set(ticker.symbol, {
+                    ...mainSignal,
+                    confidence: mainSignal.confidence + comboBonus,
+                    stackCount,
+                    stackedStrategies: symbolSignals.map(signal => signal.strategyName),
+                    comboBonus,
+                });
+            } else {
+                scanResults.set(ticker.symbol, null);
+                releasedDismissals.add(ticker.symbol);
+                clearSignalTimestamps(ticker.symbol);
             }
         });
 
-        // 更新数据摘要缓存
         prevDataDigest.current = currentDataDigest;
+        prevStrategyVersion.current = strategyVersion;
 
-        // 第2步：计算叠加加成并合并信号
-        const currentSignals: StrategySignal[] = [];
+        if (releasedDismissals.size > 0) {
+            setDismissedSignals((prev) => {
+                const next = new Set(prev);
+                let changed = false;
 
-        signalsBySymbol.forEach((symbolSignals, symbol) => {
-            const stackCount = symbolSignals.length;
+                releasedDismissals.forEach((symbol) => {
+                    if (next.delete(symbol)) {
+                        changed = true;
+                    }
+                });
 
-            // 计算叠加加成
-            let comboBonus = 0;
-            if (stackCount >= 3) {
-                comboBonus = 20; // 🔥 超级信号
-            } else if (stackCount >= 2) {
-                comboBonus = 10; // ⚡ 强信号
-            }
+                if (changed) {
+                    dismissedSignalsRef.current = next;
+                    localStorage.setItem('dismissedSignals', JSON.stringify(Array.from(next)));
+                    return next;
+                }
 
-            // 选择置信度最高的策略作为主信号
-            const mainSignal = symbolSignals.reduce((max, s) =>
-                s.confidence > max.confidence ? s : max
-            );
+                return prev;
+            });
+        }
 
-            // 创建增强的信号（带叠加信息）
-            const boostedSignal: StrategySignal = {
-                ...mainSignal,
-                confidence: mainSignal.confidence + comboBonus,
-                stackCount,
-                stackedStrategies: symbolSignals.map(s => s.strategyName),
-                comboBonus,
-            };
-
-            currentSignals.push(boostedSignal);
-        });
-
-        // 第3步：更新信号列表（保持现有信号，只添加新的）
         setSignals(prev => {
-            // 创建一个Map来快速查找现有信号
             const existingSignalsMap = new Map<string, StrategySignal>();
             prev.forEach(sig => {
                 existingSignalsMap.set(sig.symbol, sig);
             });
 
-            // 更新或添加信号
             const updatedSignals: StrategySignal[] = [];
-            const processedSymbols = new Set<string>();
+            data.forEach((ticker) => {
+                const symbol = ticker.symbol;
+                const scanResult = scanResults.get(symbol);
 
-            // 处理当前检测到的信号
-            currentSignals.forEach(newSig => {
-                // 🔧 跳过用户已手动关闭的信号
-                if (dismissedSignalsRef.current.has(newSig.symbol)) {
+                if (scanResult === undefined) {
+                    const existing = existingSignalsMap.get(symbol);
+                    if (existing && !dismissedSignalsRef.current.has(symbol)) {
+                        updatedSignals.push(existing);
+                    }
                     return;
                 }
 
-                processedSymbols.add(newSig.symbol);
-                const existing = existingSignalsMap.get(newSig.symbol);
-
-                if (existing) {
-                    // 更新现有信号，但保留原始时间戳
-                    updatedSignals.push({
-                        ...newSig,
-                        timestamp: existing.timestamp
-                    });
-                } else {
-                    // 新信号
-                    updatedSignals.push(newSig);
+                if (scanResult === null || dismissedSignalsRef.current.has(symbol)) {
+                    return;
                 }
+
+                const existing = existingSignalsMap.get(symbol);
+                updatedSignals.push(existing
+                    ? { ...scanResult, timestamp: existing.timestamp }
+                    : scanResult
+                );
             });
 
-            // 保留未被更新的旧信号（条件不再满足但还在列表中的）
-            prev.forEach(oldSig => {
-                if (!processedSymbols.has(oldSig.symbol)) {
-                    updatedSignals.push(oldSig);
-                }
-            });
-
-            // 按时间戳倒序排序（最新的在上面）并限制数量
             return updatedSignals
                 .sort((a, b) => b.timestamp - a.timestamp)
                 .slice(0, 50);
@@ -191,7 +221,7 @@ export function useStrategyScanner(data: TickerData[]) {
         }, 5 * 60 * 1000);
 
         return () => clearTimeout(cleanupTimer);
-    }, [data]); // 🔥 Removed dismissedSignals to prevent full data re-scan on single dismiss
+    }, [data, strategyVersion]);
 
     // 按时间戳倒序排序的活跃信号（最新的在上面）
     const sortedSignals = useMemo(() => {

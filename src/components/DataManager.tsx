@@ -19,13 +19,16 @@ const DataManager = () => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ symbol, type, startDate, endDate }),
             });
+            const payload = await res.json().catch(() => null);
 
             if (res.ok) {
                 setStatus(`已开始下载 ${type}，请查看服务器后台日志获取进度。文件将保存至 data/historical`);
+            } else if (typeof payload?.error === 'string') {
+                setStatus(payload.error);
             } else {
-                setStatus('请求失败');
+                setStatus(`请求失败 (${res.status})`);
             }
-        } catch (error) {
+        } catch {
             setStatus('发生错误');
         } finally {
             setLoading(false);

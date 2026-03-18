@@ -11,7 +11,7 @@ import {
     TakeProfitTarget
 } from './types';
 import { calculateOptimalPosition } from './positionSizer';
-import { roundPrice, roundPercentage } from './priceUtils';
+import { atrPercentToPriceDistance, roundPrice, roundPercentage } from './priceUtils';
 
 export function calculateBreakoutRisk(params: RiskCalculationParams): RiskManagement {
     const {
@@ -27,7 +27,7 @@ export function calculateBreakoutRisk(params: RiskCalculationParams): RiskManage
 
     // ========== 止损逻辑 ==========
     // 基于 ATR 或 KC 下轨
-    const atrValue = atr || entryPrice * 0.02; // 默认2%
+    const atrValue = atrPercentToPriceDistance(entryPrice, atr); // atr 为百分比口径
     let stopLossPrice: number;
     let stopLossReason: string;
 

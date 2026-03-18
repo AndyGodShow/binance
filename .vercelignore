@@ -1,0 +1,13 @@
+.next
+node_modules
+.git
+.env
+.env.*
+data
+.playwright-cli
+output
+docs
+.agents
+.vscode
+*.tsbuildinfo
+.DS_Store

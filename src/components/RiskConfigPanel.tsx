@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { StrategyRiskConfig, DEFAULT_RISK_CONFIGS, StopLossConfig, TakeProfitTargetConfig } from '@/lib/risk/riskConfig';
+import { StrategyRiskConfig, getDefaultRiskConfig, StopLossConfig, TakeProfitTargetConfig } from '@/lib/risk/riskConfig';
 import styles from './BacktestPanel.module.css';
 
 interface RiskConfigPanelProps {
@@ -10,16 +10,15 @@ interface RiskConfigPanelProps {
 }
 
 export default function RiskConfigPanel({ strategyId, onChange }: RiskConfigPanelProps) {
-    const defaults = DEFAULT_RISK_CONFIGS[strategyId] || DEFAULT_RISK_CONFIGS['strong-breakout'];
-    const [config, setConfig] = useState<StrategyRiskConfig>(JSON.parse(JSON.stringify(defaults)));
+    const defaults = getDefaultRiskConfig(strategyId);
+    const [config, setConfig] = useState<StrategyRiskConfig>(defaults);
     const [expanded, setExpanded] = useState(false);
 
     // 策略切换时重置为默认值
     useEffect(() => {
-        const newDefaults = DEFAULT_RISK_CONFIGS[strategyId] || DEFAULT_RISK_CONFIGS['strong-breakout'];
-        const cloned = JSON.parse(JSON.stringify(newDefaults));
-        setConfig(cloned);
-        onChange(cloned);
+        const nextDefaults = getDefaultRiskConfig(strategyId);
+        setConfig(nextDefaults);
+        onChange(nextDefaults);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [strategyId]);
 
@@ -55,9 +54,7 @@ export default function RiskConfigPanel({ strategyId, onChange }: RiskConfigPane
     };
 
     const resetToDefaults = () => {
-        const newDefaults = JSON.parse(JSON.stringify(
-            DEFAULT_RISK_CONFIGS[strategyId] || DEFAULT_RISK_CONFIGS['strong-breakout']
-        ));
+        const newDefaults = getDefaultRiskConfig(strategyId);
         setConfig(newDefaults);
         onChange(newDefaults);
     };

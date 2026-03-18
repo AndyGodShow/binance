@@ -37,7 +37,8 @@ export function useKlineWebSocket(symbols: string[]) {
 
     const canUseDirectWebSocket =
         typeof window !== 'undefined' &&
-        (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+        typeof WebSocket !== 'undefined' &&
+        (window.location.protocol === 'https:' || window.location.protocol === 'http:');
 
     // 首次加载：使用 REST API 获取初始数据
     useEffect(() => {
@@ -238,7 +239,9 @@ export function useKlineWebSocket(symbols: string[]) {
 
     }, [symbols.join(','), webSocketDisabled, canUseDirectWebSocket]); // 使用 join 来避免数组引用变化导致的重连
 
-    // Polling fallback: 每 15 秒轮询一次 API，确保 WS 失败时有数据
+    // Polling backup:
+    // - Direct WebSocket 正常时，用较慢轮询刷新未订阅的长尾币种开盘价
+    // - Direct WebSocket 不可用或失败时，退回 15 秒轮询
     useEffect(() => {
         if (symbols.length === 0) return;
 
@@ -288,11 +291,11 @@ export function useKlineWebSocket(symbols: string[]) {
             }
         };
 
-        // 首次运行由上面的 useEffect 处理，这里只处理轮询
-        const intervalId = setInterval(fetchData, 15000);
+        const intervalMs = canUseDirectWebSocket && !webSocketDisabled ? 60000 : 15000;
+        const intervalId = setInterval(fetchData, intervalMs);
 
         return () => clearInterval(intervalId);
-    }, [symbols.length]); // 依赖 symbols 长度，避免频繁重置
+    }, [symbols.length, canUseDirectWebSocket, webSocketDisabled]); // 依赖 symbols 长度，避免频繁重置
 
     // 计算多时间框架数据
     const multiTimeframeData = useMemo(() => {

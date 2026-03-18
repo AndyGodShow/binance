@@ -16,15 +16,25 @@ interface BinanceTakerEntry {
     timestamp: string;
 }
 
+interface LongShortResponseBody {
+    global: Array<{ ratio: number; longPct: number; shortPct: number; ts: number }>;
+    topAccount: Array<{ ratio: number; longPct: number; shortPct: number; ts: number }>;
+    topPosition: Array<{ ratio: number; longPct: number; shortPct: number; ts: number }>;
+    takerVolume: Array<{ ratio: number; buyVol: number; sellVol: number; ts: number }>;
+}
+
+const routeCache = new Map<string, { data: LongShortResponseBody; timestamp: number }>();
+
 export async function GET(request: NextRequest) {
     try {
         const { searchParams } = new URL(request.url);
         const symbol = searchParams.get('symbol') || 'BTCUSDT';
         const period = searchParams.get('period') || '1h';
         const limit = Math.min(Number(searchParams.get('limit') || '30'), 500);
+        const cacheKey = `${symbol}:${period}:${limit}`;
+        const cached = routeCache.get(cacheKey);
 
-        // Parallel fetch all 4 endpoints
-        const [global, topAccount, topPosition, taker] = await Promise.all([
+        const [global, topAccount, topPosition, taker] = await Promise.allSettled([
             fetchBinanceJson<BinanceLSEntry[]>(`/futures/data/globalLongShortAccountRatio?symbol=${symbol}&period=${period}&limit=${limit}`, { revalidate: 60 }),
             fetchBinanceJson<BinanceLSEntry[]>(`/futures/data/topLongShortAccountRatio?symbol=${symbol}&period=${period}&limit=${limit}`, { revalidate: 60 }),
             fetchBinanceJson<BinanceLSEntry[]>(`/futures/data/topLongShortPositionRatio?symbol=${symbol}&period=${period}&limit=${limit}`, { revalidate: 60 }),
@@ -48,19 +58,39 @@ export async function GET(request: NextRequest) {
                 ts: Number(e.timestamp),
             }));
 
-        return NextResponse.json(
-            {
-                global: transform(global),
-                topAccount: transform(topAccount),
-                topPosition: transform(topPosition),
-                takerVolume: transformTaker(taker),
-            },
-            {
-                headers: {
-                    'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=120',
-                },
+        const responseBody: LongShortResponseBody = {
+            global: global.status === 'fulfilled' ? transform(global.value) : (cached?.data.global || []),
+            topAccount: topAccount.status === 'fulfilled' ? transform(topAccount.value) : (cached?.data.topAccount || []),
+            topPosition: topPosition.status === 'fulfilled' ? transform(topPosition.value) : (cached?.data.topPosition || []),
+            takerVolume: taker.status === 'fulfilled' ? transformTaker(taker.value) : (cached?.data.takerVolume || []),
+        };
+
+        const successCount = [global, topAccount, topPosition, taker].filter((result) => result.status === 'fulfilled').length;
+
+        if (successCount === 0) {
+            if (cached) {
+                return NextResponse.json(cached.data, {
+                    headers: {
+                        'Cache-Control': 'public, s-maxage=30, stale-while-revalidate=120',
+                        'X-Data-Source': 'stale-memory-cache',
+                    },
+                });
             }
-        );
+
+            throw new Error('All long/short upstream requests failed');
+        }
+
+        routeCache.set(cacheKey, {
+            data: responseBody,
+            timestamp: Date.now(),
+        });
+
+        return NextResponse.json(responseBody, {
+            headers: {
+                'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=120',
+                'X-Data-Source': successCount === 4 ? 'live' : 'partial-live-stale',
+            },
+        });
     } catch (error) {
         console.error('[LongShort API]', error);
         return NextResponse.json(

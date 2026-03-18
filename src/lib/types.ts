@@ -12,6 +12,7 @@ export interface TickerData {
     openTime: number;
     closeTime: number;
     // Merged fields
+    markPrice?: string;
     fundingRate?: string;
     openInterest?: string;
     openInterestAmount?: string; // value in USDT usually calculated or from API

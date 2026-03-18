@@ -3,16 +3,95 @@
 import { useState } from 'react';
 import { historicalDataFetcher, HistoricalDataFetcher } from '@/lib/historicalDataFetcher';
 import { BacktestEngine, BacktestResult, BacktestConfig } from '@/lib/backtestEngine';
-import { KlineData } from '@/app/api/backtest/klines/route';
 import { strategyRegistry } from '@/strategies/registry';
 import { TickerData } from '@/lib/types';
 import { logger } from '@/lib/logger';
 import { calculateDataQuality, DataQualityMetrics } from '@/lib/dataQuality';
-import { StrategyRiskConfig, DEFAULT_RISK_CONFIGS } from '@/lib/risk/riskConfig';
+import { StrategyRiskConfig } from '@/lib/risk/riskConfig';
+import { calculateRiskManagement } from '@/lib/risk/riskCalculator';
+import { applyRiskConfigOverrides } from '@/lib/risk/overrideRiskManagement';
 import DataQualityCard from './DataQualityCard';
 import RiskConfigPanel from './RiskConfigPanel';
 import { EquityCurveChart, DrawdownChart, ProfitDistributionChart, HoldingTimeChart } from './BacktestCharts';
 import styles from './BacktestPanel.module.css';
+
+interface DownloadRequestResult {
+    ok: boolean;
+    status: number;
+    message: string;
+    unsupported: boolean;
+}
+
+async function requestHistoricalDataDownload(
+    symbol: string,
+    type: 'metrics' | 'fundingRate',
+    startDate: string,
+    endDate: string
+): Promise<DownloadRequestResult> {
+    try {
+        const response = await fetch('/api/data/download', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ symbol, type, startDate, endDate }),
+        });
+
+        const payload = await response.json().catch(() => null);
+        const message = typeof payload?.error === 'string'
+            ? payload.error
+            : typeof payload?.message === 'string'
+                ? payload.message
+                : `HTTP ${response.status}`;
+
+        return {
+            ok: response.ok,
+            status: response.status,
+            message,
+            unsupported: payload?.status === 'unsupported',
+        };
+    } catch (error) {
+        return {
+            ok: false,
+            status: 0,
+            message: error instanceof Error ? error.message : '下载请求失败',
+            unsupported: false,
+        };
+    }
+}
+
+function buildRiskCalculationParams(
+    ticker: TickerData,
+    direction: 'long' | 'short',
+    confidence: number,
+    accountBalance: number
+) {
+    return {
+        entryPrice: parseFloat(ticker.lastPrice),
+        direction,
+        confidence,
+        atr: ticker.atr,
+        keltnerMid: ticker.keltnerMid,
+        keltnerUpper: ticker.keltnerUpper,
+        keltnerLower: ticker.keltnerLower,
+        vah: ticker.vah,
+        val: ticker.val,
+        poc: ticker.poc,
+        bollingerLower: ticker.bollingerLower,
+        bollingerUpper: ticker.bollingerUpper,
+        momentumColor: ticker.momentumColor,
+        cvdSlope: ticker.cvdSlope,
+        fundingRateTrend: ticker.fundingRateTrend,
+        rsrsZScore: ticker.rsrsZScore,
+        squeezeDuration: ticker.squeezeDuration,
+        bandwidthPercentile: ticker.bandwidthPercentile,
+        adx: ticker.adx,
+        oiChangePercent: ticker.oiChangePercent,
+        volumeChangePercent: ticker.volumeChangePercent,
+        betaToBTC: ticker.betaToBTC,
+        rsrsR2: ticker.rsrsR2,
+        accountBalance,
+        riskPercentage: 1,
+    };
+}
 
 export default function BacktestPanel() {
     const [symbol, setSymbol] = useState('BTCUSDT');
@@ -68,25 +147,20 @@ export default function BacktestPanel() {
                 if (avgCoverage < 50) {
                     setDownloadStatus(`📥 数据覆盖率仅 ${avgCoverage.toFixed(0)}%，正在下载历史数据...`);
 
-                    // 触发下载
                     const downloadTypes = ['metrics', 'fundingRate'] as const;
-                    await Promise.all(downloadTypes.map(type =>
-                        fetch('/api/data/download', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                symbol,
-                                type,
-                                startDate: startDateStr,
-                                endDate: endDateStr
-                            })
-                        })
-                    ));
+                    const downloadResults = await Promise.all(
+                        downloadTypes.map((type) =>
+                            requestHistoricalDataDownload(symbol, type, startDateStr, endDateStr)
+                        )
+                    );
 
-                    // 给下载一些时间（简化版，实际应该轮询检查）
-                    setDownloadStatus('⏳ 数据下载中，请稍候...');
-                    await new Promise(r => setTimeout(r, 3000));
-                    setDownloadStatus('✅ 数据准备完成');
+                    if (downloadResults.some((result) => result.unsupported)) {
+                        setDownloadStatus('ℹ️ 当前部署环境不支持本地历史数据下载，回测将继续使用 API 数据；超过 30 天时 OI/资金费率可能不完整');
+                    } else if (downloadResults.some((result) => result.ok)) {
+                        setDownloadStatus('📥 已发起后台数据下载，本次回测先使用当前可用数据；稍后重新回测即可读取新增历史数据');
+                    } else {
+                        setDownloadStatus(`⚠️ 历史数据下载请求失败：${downloadResults[0]?.message || '未知错误'}，本次回测将继续使用当前可用数据`);
+                    }
                 } else {
                     setDownloadStatus(`✅ 数据覆盖率 ${avgCoverage.toFixed(0)}%，质量良好`);
                 }
@@ -127,6 +201,7 @@ export default function BacktestPanel() {
             };
 
             const engine = new BacktestEngine(config);
+            const activeRiskConfig = riskConfig;
 
             // 6. 运行回测
             const backtestResult = engine.run(
@@ -134,10 +209,24 @@ export default function BacktestPanel() {
                 (ticker: TickerData) => {
                     const signal = strategy.detect(ticker);
                     if (!signal) return null;
+
+                    const baseRisk = signal.risk || calculateRiskManagement(
+                        strategy.id,
+                        buildRiskCalculationParams(ticker, signal.direction, signal.confidence, initialCapital)
+                    );
+
+                    const effectiveRisk = applyRiskConfigOverrides({
+                        strategyId: strategy.id,
+                        baseRisk,
+                        overrideConfig: activeRiskConfig,
+                        ticker,
+                        direction: signal.direction,
+                    });
+
                     return {
                         signal: signal.direction,
                         confidence: signal.confidence,
-                        risk: signal.risk, // 🔥 传递策略风控（多级止盈/跟踪止损/保本）
+                        risk: effectiveRisk,
                     };
                 },
                 strategy.name,
@@ -184,21 +273,22 @@ export default function BacktestPanel() {
 
                         setDownloadStatus('📥 正在下载历史数据...');
                         try {
-                            await Promise.all(['metrics', 'fundingRate'].map(type =>
-                                fetch('/api/data/download', {
-                                    method: 'POST',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({
-                                        symbol,
-                                        type,
-                                        startDate: startDateStr,
-                                        endDate: endDateStr
-                                    })
-                                })
-                            ));
-                            setDownloadStatus('✅ 数据下载完成');
+                            const results = await Promise.all(
+                                (['metrics', 'fundingRate'] as const).map((type) =>
+                                    requestHistoricalDataDownload(symbol, type, startDateStr, endDateStr)
+                                )
+                            );
+
+                            if (results.some((result) => result.unsupported)) {
+                                setDownloadStatus('ℹ️ 当前部署环境不支持本地历史数据下载，请改用本地运行后再下载');
+                            } else if (results.some((result) => result.ok)) {
+                                setDownloadStatus('📥 已发起后台下载，请稍后重新运行回测读取本地数据');
+                            } else {
+                                setDownloadStatus(`❌ 下载失败：${results[0]?.message || '未知错误'}`);
+                            }
+
                             setTimeout(() => setDownloadStatus(''), 2000);
-                        } catch (err) {
+                        } catch {
                             setDownloadStatus('❌ 下载失败');
                         }
                     }}

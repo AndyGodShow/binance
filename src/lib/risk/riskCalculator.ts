@@ -9,7 +9,7 @@ import { calculateBreakoutRisk } from './breakoutRisk';
 import { calculateTrendRisk } from './trendRisk';
 import { calculateInflowRisk } from './inflowRisk';
 import { calculateRSRSRisk } from './rsrsRisk';
-import { roundPrice, roundPercentage } from './priceUtils';
+import { atrPercentToPriceDistance, roundPrice, roundPercentage } from './priceUtils';
 
 /**
  * 主风控计算函数 - 根据策略ID分发
@@ -54,7 +54,7 @@ function calculateBasicRisk(params: RiskCalculationParams): RiskManagement {
     } = params;
 
     // 简单的 ATR 止损
-    const atrValue = atr || entryPrice * 0.02; // 默认2%
+    const atrValue = atrPercentToPriceDistance(entryPrice, atr); // atr 为百分比口径
     const stopLossPrice = direction === 'long'
         ? entryPrice - atrValue * 2.5
         : entryPrice + atrValue * 2.5;

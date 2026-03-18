@@ -11,7 +11,7 @@ import {
     TakeProfitTarget
 } from './types';
 import { calculateOptimalPosition } from './positionSizer';
-import { roundPrice, roundPercentage } from './priceUtils';
+import { atrPercentToPriceDistance, roundPrice, roundPercentage } from './priceUtils';
 
 export function calculateTrendRisk(params: RiskCalculationParams): RiskManagement {
     const {
@@ -44,7 +44,7 @@ export function calculateTrendRisk(params: RiskCalculationParams): RiskManagemen
         }
     }
 
-    const atrValue = (atr || entryPrice * 0.02) * volatilityMultiplier;
+    const atrValue = atrPercentToPriceDistance(entryPrice, atr) * volatilityMultiplier;
     let stopLossPrice: number;
     let stopLossReason: string;
 

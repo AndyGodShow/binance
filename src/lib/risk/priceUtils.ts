@@ -18,3 +18,15 @@ export function roundPrice(price: number): number {
 export function roundPercentage(percentage: number): number {
     return Math.round(percentage * 100) / 100;  // 百分比保留2位
 }
+
+export function atrPercentToPriceDistance(
+    entryPrice: number,
+    atrPercent?: number,
+    fallbackPercent: number = 2
+): number {
+    if (typeof atrPercent === 'number' && Number.isFinite(atrPercent) && atrPercent > 0) {
+        return entryPrice * (atrPercent / 100);
+    }
+
+    return entryPrice * (fallbackPercent / 100);
+}

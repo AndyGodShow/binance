@@ -88,12 +88,14 @@ export default function Dashboard({ processedData: externalData, onSymbolClick }
         return result;
     }, [externalData, search, volumeFilter, sortConfig]);
 
+    const alertData = externalData || [];
+
     // Alert Monitor Hook
-    const { alerts, config: alertConfig, updateConfig: updateAlertConfig, dismissAlert, clearAllAlerts } = useAlertMonitor(filteredData);
+    const { alerts, config: alertConfig, updateConfig: updateAlertConfig, dismissAlert, clearAllAlerts } = useAlertMonitor(alertData);
 
     // Scheduled Alerts Hook
     const { scheduledAlerts, dismissAlert: dismissScheduledAlert } = useScheduledAlerts(
-        filteredData,
+        alertData,
         alertConfig.enableScheduledAlerts
     );
 

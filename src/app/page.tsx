@@ -4,7 +4,6 @@ import { useState, useMemo, useEffect, useCallback } from 'react';
 import useSWR from 'swr';
 import { TickerData } from '@/lib/types';
 import { usePageVisibility } from '@/hooks/usePageVisibility';
-import { useKlineWebSocket } from '@/hooks/useKlineWebSocket';
 import Dashboard from '@/components/Dashboard';
 import StrategyCenter from '@/components/StrategyCenter';
 import SimulatedTrading from '@/components/SimulatedTrading';
@@ -28,28 +27,17 @@ export default function Home() {
 
   // Smart refresh: slower when page is hidden to save resources
   const marketRefreshInterval = isPageVisible ? 3000 : 30000;
-  const oiRefreshInterval = isPageVisible ? 120000 : 300000;
+  const multiframeRefreshInterval = isPageVisible ? 30000 : 300000;
 
   // Data fetching (shared between Dashboard and StrategyCenter)
   const { data: rawData, error: marketError, isLoading: marketLoading } = useSWR<TickerData[]>('/api/market', fetcher, {
     refreshInterval: marketRefreshInterval,
   });
 
-  const { data: oiData } = useSWR<Record<string, string>>('/api/oi/all', fetcher, {
-    refreshInterval: oiRefreshInterval,
+  const { data: frameData } = useSWR<Record<string, { o15m: number; o1h: number; o4h: number }>>('/api/market/multiframe', fetcher, {
+    refreshInterval: multiframeRefreshInterval,
     revalidateOnFocus: false,
   });
-
-  // Get symbol list for WebSocket subscription
-  const symbols = useMemo(() => {
-    if (!rawData || !Array.isArray(rawData)) return [];
-    return rawData
-      .filter((t): t is TickerData => Boolean(t && typeof t.symbol === 'string' && t.symbol.length > 0))
-      .map(t => t.symbol.toLowerCase());
-  }, [rawData]);
-
-  // Use WebSocket for multi-timeframe data (replaces REST API)
-  const { data: frameData } = useKlineWebSocket(symbols);
 
   const { data: rsrsData, error: rsrsError } = useSWR<Record<string, {
     beta: number;
@@ -91,18 +79,17 @@ export default function Home() {
     // 4. Merge all data in one pass
     result = result.map(t => {
       const newData = { ...t };
+      const valuationPrice = parseFloat(t.markPrice || t.lastPrice);
       const price = parseFloat(t.lastPrice);
       if (!Number.isFinite(price)) return newData;
 
-      // Add OI data
-      if (oiData) {
-        newData.openInterest = oiData[t.symbol] || '0';
-        newData.openInterestValue = (parseFloat(oiData[t.symbol] || '0') * price).toString();
+      if ((!newData.openInterestValue || newData.openInterestValue === '0') && newData.openInterest && Number.isFinite(valuationPrice)) {
+        newData.openInterestValue = (parseFloat(newData.openInterest) * valuationPrice).toString();
       }
 
       // Add multi-frame data
       if (frameData) {
-        const f = frameData[t.symbol.toLowerCase()];
+        const f = frameData[t.symbol];
         if (f) {
           newData.change15m = f.o15m ? ((price - f.o15m) / f.o15m) * 100 : 0;
           newData.change1h = f.o1h ? ((price - f.o1h) / f.o1h) * 100 : 0;
@@ -133,7 +120,7 @@ export default function Home() {
     });
 
     return result;
-  }, [rawData, oiData, frameData, rsrsData]);
+  }, [rawData, frameData, rsrsData]);
 
   // Run strategy scanner
   const { signals, dismissSignal, clearAll: clearAllSignals } = useStrategyScanner(processedData);

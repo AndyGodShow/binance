@@ -131,6 +131,9 @@ export class BacktestEngine {
         if (klines.length === 0) {
             throw new Error('K线数据为空');
         }
+        if (klines.length < 2) {
+            throw new Error('K线数据不足，至少需要 2 根K线');
+        }
 
         const trades: Trade[] = [];
         const equityCurve: EquityPoint[] = [];
@@ -151,7 +154,9 @@ export class BacktestEngine {
         let peakEquity = 100;
         let maxDrawdown = 0;
 
-        const startIndex = Math.max(100, 0);
+        // 允许短周期/短样本回测继续执行，同时给指标留出合理预热窗口。
+        const preferredWarmupBars = 50;
+        const startIndex = Math.min(preferredWarmupBars, klines.length - 1);
 
         // 遍历所有K线
         for (let i = startIndex; i < klines.length; i++) {
@@ -343,6 +348,25 @@ export class BacktestEngine {
                         shouldExit = true;
                         exitReason = 'take_profit';
                         exitPrice = currentClose;
+                    }
+                }
+
+                // 时间止损：达到最大持仓K线数但收益未达阈值时平仓
+                if (!shouldExit && strategyRisk?.timeStop) {
+                    const barsHeld = i - currentPosition.entryIndex + 1;
+                    if (barsHeld >= strategyRisk.timeStop.maxHoldBars) {
+                        let floatingProfitPercent = 0;
+                        if (direction === 'long') {
+                            floatingProfitPercent = ((currentClose - entryPrice) / entryPrice) * 100;
+                        } else {
+                            floatingProfitPercent = ((entryPrice - currentClose) / entryPrice) * 100;
+                        }
+
+                        if (floatingProfitPercent < strategyRisk.timeStop.profitThreshold) {
+                            shouldExit = true;
+                            exitReason = 'time_stop';
+                            exitPrice = currentClose;
+                        }
                     }
                 }
 

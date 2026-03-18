@@ -11,7 +11,7 @@ import {
     TakeProfitTarget
 } from './types';
 import { calculateOptimalPosition } from './positionSizer';
-import { roundPrice, roundPercentage } from './priceUtils';
+import { atrPercentToPriceDistance, roundPrice, roundPercentage } from './priceUtils';
 
 export function calculateInflowRisk(params: RiskCalculationParams): RiskManagement {
     const {
@@ -29,7 +29,7 @@ export function calculateInflowRisk(params: RiskCalculationParams): RiskManageme
 
     // ========== 止损逻辑 ==========
     // 基于 Volume Profile (POC/VAL)
-    const atrValue = atr || entryPrice * 0.02;
+    const atrValue = atrPercentToPriceDistance(entryPrice, atr);
     let stopLossPrice: number;
     let stopLossReason: string;
 
