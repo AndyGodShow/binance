@@ -3,11 +3,6 @@
  * 用于管理策略信号冷却期，自动清理过期记录，防止内存泄漏
  */
 
-interface CooldownRecord {
-    timestamp: number;
-    strategyId: string;
-}
-
 class CooldownManager {
     private cooldowns = new Map<string, number>();
     private cleanupInterval: NodeJS.Timeout | null = null;
@@ -71,9 +66,11 @@ class CooldownManager {
      * 启动自动清理
      */
     private startAutoCleanup(): void {
-        if (this.cleanupInterval) {
-            return; // 已经启动
-        }
+        if (this.cleanupInterval) return;
+        // 使用 globalThis 标记防止 Next.js 热重载时重复创建 interval
+        const guardKey = '__cooldownManagerCleanupStarted';
+        if ((globalThis as Record<string, unknown>)[guardKey]) return;
+        (globalThis as Record<string, unknown>)[guardKey] = true;
 
         this.cleanupInterval = setInterval(() => {
             this.cleanup();
@@ -102,6 +99,20 @@ class CooldownManager {
      */
     clear(): void {
         this.cooldowns.clear();
+    }
+
+    /**
+     * 快照当前冷却状态（用于回测隔离）
+     */
+    snapshot(): Map<string, number> {
+        return new Map(this.cooldowns);
+    }
+
+    /**
+     * 恢复之前的冷却状态（用于回测结束后还原实时扫描环境）
+     */
+    restore(snapshot: Map<string, number>): void {
+        this.cooldowns = new Map(snapshot);
     }
 }
 

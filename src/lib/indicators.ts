@@ -10,6 +10,8 @@ export interface OHLC {
     low: number;
     close: number;
     volume: number;
+    quoteVolume?: number;
+    takerBuyQuoteVolume?: number;
 }
 
 /**
@@ -66,34 +68,6 @@ export function getLatestATR(candles: OHLC[], period: number = 14): number | nul
     return atrValues.length > 0 ? atrValues[atrValues.length - 1] : null;
 }
 
-/**
- * 计算滚动标准差 (Rolling Standard Deviation)
- * 用于测量价格波动的统计分布
- * 
- * @param values 价格或收益率数组
- * @param window 滚动窗口大小
- * @returns 标准差数组
- */
-export function calculateRollingStd(values: number[], window: number): number[] {
-    if (values.length < window) {
-        return [];
-    }
-
-    const stdValues: number[] = [];
-
-    for (let i = window - 1; i < values.length; i++) {
-        const subset = values.slice(i - window + 1, i + 1);
-        const mean = subset.reduce((a, b) => a + b, 0) / window;
-
-        const variance = subset.reduce((sum, val) => {
-            return sum + Math.pow(val - mean, 2);
-        }, 0) / window;
-
-        stdValues.push(Math.sqrt(variance));
-    }
-
-    return stdValues;
-}
 
 /**
  * 计算 Beta 系数 - 相对于 BTC 的相关性
@@ -167,96 +141,6 @@ export function calculateCorrelation(x: number[], y: number[]): number {
 }
 
 /**
- * 计算 Hurst 指数 - 趋势强度测量
- * H > 0.5: 趋势性（持续性）
- * H = 0.5: 随机游走
- * H < 0.5: 均值回归
- * 
- * @param prices 价格序列
- * @param maxLag 最大滞后期
- * @returns Hurst 指数
- */
-export function calculateHurst(prices: number[], maxLag: number = 20): number {
-    const n = prices.length;
-
-    if (n < maxLag * 2) {
-        return 0.5; // 默认值：随机游走
-    }
-
-    const lags: number[] = [];
-    const rsByLag: number[] = [];
-
-    // 对不同的时间跨度计算 R/S
-    for (let lag = 2; lag <= maxLag; lag++) {
-        const chunks = Math.floor(n / lag);
-        const rsValues: number[] = [];
-
-        for (let i = 0; i < chunks; i++) {
-            const subset = prices.slice(i * lag, (i + 1) * lag);
-
-            // 计算对数收益率
-            const returns = subset.slice(1).map((p, idx) =>
-                Math.log(p / subset[idx])
-            );
-
-            if (returns.length === 0) continue;
-
-            const mean = returns.reduce((a, b) => a + b, 0) / returns.length;
-
-            // 计算累计偏差
-            let cumulativeDeviation = 0;
-            const deviations: number[] = [];
-
-            for (const ret of returns) {
-                cumulativeDeviation += ret - mean;
-                deviations.push(cumulativeDeviation);
-            }
-
-            const range = Math.max(...deviations) - Math.min(...deviations);
-
-            // 计算标准差
-            const variance = returns.reduce((sum, ret) =>
-                sum + Math.pow(ret - mean, 2), 0
-            ) / returns.length;
-
-            const std = Math.sqrt(variance);
-
-            if (std !== 0 && range !== 0) {
-                rsValues.push(range / std);
-            }
-        }
-
-        if (rsValues.length > 0) {
-            const avgRS = rsValues.reduce((a, b) => a + b, 0) / rsValues.length;
-            lags.push(Math.log(lag));
-            rsByLag.push(Math.log(avgRS));
-        }
-    }
-
-    // 线性回归求斜率（即 Hurst 指数）
-    if (lags.length < 2) {
-        return 0.5;
-    }
-
-    const n_lags = lags.length;
-    const lagMean = lags.reduce((a, b) => a + b, 0) / n_lags;
-    const rsMean = rsByLag.reduce((a, b) => a + b, 0) / n_lags;
-
-    let numerator = 0;
-    let denominator = 0;
-
-    for (let i = 0; i < n_lags; i++) {
-        numerator += (lags[i] - lagMean) * (rsByLag[i] - rsMean);
-        denominator += Math.pow(lags[i] - lagMean, 2);
-    }
-
-    const hurst = denominator !== 0 ? numerator / denominator : 0.5;
-
-    // 限制范围在 [0, 1]
-    return Math.max(0, Math.min(1, hurst));
-}
-
-/**
  * 计算价格收益率序列
  */
 export function calculateReturns(prices: number[]): number[] {
@@ -274,6 +158,213 @@ export function calculateReturns(prices: number[]): number[] {
  */
 export function extractClosePrices(candles: OHLC[]): number[] {
     return candles.map(c => c.close);
+}
+
+export interface EmaState {
+    value: number;
+    previous: number | null;
+    rising: boolean;
+}
+
+export interface RsiState {
+    value: number;
+    previous: number | null;
+    rising: boolean;
+    overbought: boolean;
+    oversold: boolean;
+}
+
+export interface MACDPoint {
+    macd: number;
+    signal: number;
+    histogram: number;
+}
+
+export interface MACDState {
+    value: MACDPoint;
+    previous: MACDPoint | null;
+    bullish: boolean;
+    bearish: boolean;
+    histogramRising: boolean;
+    histogramFalling: boolean;
+}
+
+/**
+ * 计算 EMA 序列
+ *
+ * @param values 输入序列
+ * @param period EMA 周期
+ * @returns EMA 数组。第一个值使用对应周期的 SMA 作为种子，因此结果长度为 values.length - period + 1
+ */
+export function calculateEMA(values: number[], period: number): number[] {
+    if (period <= 0 || values.length < period) {
+        return [];
+    }
+
+    const emaValues: number[] = [];
+    const seed = values.slice(0, period).reduce((sum, value) => sum + value, 0) / period;
+    const multiplier = 2 / (period + 1);
+
+    let ema = seed;
+    emaValues.push(ema);
+
+    for (let i = period; i < values.length; i++) {
+        ema = (values[i] - ema) * multiplier + ema;
+        emaValues.push(ema);
+    }
+
+    return emaValues;
+}
+
+export function getLatestEMAState(values: number[], period: number): EmaState | null {
+    const emaValues = calculateEMA(values, period);
+    if (emaValues.length === 0) {
+        return null;
+    }
+
+    const value = emaValues[emaValues.length - 1];
+    const previous = emaValues.length >= 2 ? emaValues[emaValues.length - 2] : null;
+
+    return {
+        value,
+        previous,
+        rising: previous !== null ? value > previous : false,
+    };
+}
+
+/**
+ * 计算 RSI 序列（Wilder 版本）
+ */
+export function calculateRSI(values: number[], period: number = 14): number[] {
+    if (period <= 0 || values.length < period + 1) {
+        return [];
+    }
+
+    let gains = 0;
+    let losses = 0;
+
+    for (let i = 1; i <= period; i++) {
+        const delta = values[i] - values[i - 1];
+        if (delta >= 0) {
+            gains += delta;
+        } else {
+            losses += Math.abs(delta);
+        }
+    }
+
+    let averageGain = gains / period;
+    let averageLoss = losses / period;
+    const rsiValues: number[] = [];
+
+    const firstRs = averageLoss === 0 ? Infinity : averageGain / averageLoss;
+    rsiValues.push(100 - (100 / (1 + firstRs)));
+
+    for (let i = period + 1; i < values.length; i++) {
+        const delta = values[i] - values[i - 1];
+        const gain = delta > 0 ? delta : 0;
+        const loss = delta < 0 ? Math.abs(delta) : 0;
+
+        averageGain = ((averageGain * (period - 1)) + gain) / period;
+        averageLoss = ((averageLoss * (period - 1)) + loss) / period;
+
+        const rs = averageLoss === 0 ? Infinity : averageGain / averageLoss;
+        rsiValues.push(100 - (100 / (1 + rs)));
+    }
+
+    return rsiValues;
+}
+
+export function getLatestRSIState(values: number[], period: number = 14): RsiState | null {
+    const rsiValues = calculateRSI(values, period);
+    if (rsiValues.length === 0) {
+        return null;
+    }
+
+    const value = rsiValues[rsiValues.length - 1];
+    const previous = rsiValues.length >= 2 ? rsiValues[rsiValues.length - 2] : null;
+
+    return {
+        value,
+        previous,
+        rising: previous !== null ? value > previous : false,
+        overbought: value >= 70,
+        oversold: value <= 30,
+    };
+}
+
+/**
+ * 计算 MACD 序列（标准参数 12/26/9）
+ */
+export function calculateMACD(
+    values: number[],
+    fastPeriod: number = 12,
+    slowPeriod: number = 26,
+    signalPeriod: number = 9
+): MACDPoint[] {
+    if (
+        fastPeriod <= 0 ||
+        slowPeriod <= 0 ||
+        signalPeriod <= 0 ||
+        fastPeriod >= slowPeriod ||
+        values.length < slowPeriod + signalPeriod - 1
+    ) {
+        return [];
+    }
+
+    const fastEma = calculateEMA(values, fastPeriod);
+    const slowEma = calculateEMA(values, slowPeriod);
+    if (fastEma.length === 0 || slowEma.length === 0) {
+        return [];
+    }
+
+    const macdLine: number[] = [];
+    for (let priceIndex = slowPeriod - 1; priceIndex < values.length; priceIndex++) {
+        const fastIndex = priceIndex - (fastPeriod - 1);
+        const slowIndex = priceIndex - (slowPeriod - 1);
+        macdLine.push(fastEma[fastIndex] - slowEma[slowIndex]);
+    }
+
+    const signalLine = calculateEMA(macdLine, signalPeriod);
+    if (signalLine.length === 0) {
+        return [];
+    }
+
+    const points: MACDPoint[] = [];
+    for (let i = signalPeriod - 1; i < macdLine.length; i++) {
+        const macd = macdLine[i];
+        const signal = signalLine[i - (signalPeriod - 1)];
+        points.push({
+            macd,
+            signal,
+            histogram: macd - signal,
+        });
+    }
+
+    return points;
+}
+
+export function getLatestMACDState(
+    values: number[],
+    fastPeriod: number = 12,
+    slowPeriod: number = 26,
+    signalPeriod: number = 9
+): MACDState | null {
+    const macdPoints = calculateMACD(values, fastPeriod, slowPeriod, signalPeriod);
+    if (macdPoints.length === 0) {
+        return null;
+    }
+
+    const value = macdPoints[macdPoints.length - 1];
+    const previous = macdPoints.length >= 2 ? macdPoints[macdPoints.length - 2] : null;
+
+    return {
+        value,
+        previous,
+        bullish: value.macd > value.signal,
+        bearish: value.macd < value.signal,
+        histogramRising: previous !== null ? value.histogram > previous.histogram : false,
+        histogramFalling: previous !== null ? value.histogram < previous.histogram : false,
+    };
 }
 
 // ========== 🔥 Volatility Squeeze 相关指标 ==========
@@ -328,10 +419,10 @@ export function calculateBollingerBands(
         const subset = prices.slice(i - period + 1, i + 1);
         const sma = subset.reduce((a, b) => a + b, 0) / period;
 
-        // 计算标准差
+        // 计算标准差（使用样本标准差 N-1 ，与 TradingView 保持一致）
         const variance = subset.reduce((sum, val) =>
             sum + Math.pow(val - sma, 2), 0
-        ) / period;
+        ) / (period - 1); // <-- 这里改为 N - 1
         const stdDev = Math.sqrt(variance);
 
         const upperBand = sma + stdDevMultiplier * stdDev;
@@ -386,7 +477,6 @@ export function calculateKeltnerChannels(
     }
 
     // 计算上下轨
-    const startIndex = period - 1;
     for (let i = 0; i < emaValues.length; i++) {
         const atr = atrValues[i] || 0;
         middle.push(emaValues[i]);

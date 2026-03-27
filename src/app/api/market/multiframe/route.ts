@@ -37,6 +37,16 @@ type MultiframeData = Record<string, { o15m: number, o1h: number, o4h: number }>
 let cache: { expiresAt: number; data: MultiframeData } | null = null;
 let inflightBuild: Promise<MultiframeData> | null = null;
 
+function ensureMultiframeBuild(): Promise<MultiframeData> {
+    if (!inflightBuild) {
+        inflightBuild = buildMultiframeData().finally(() => {
+            inflightBuild = null;
+        });
+    }
+
+    return inflightBuild;
+}
+
 function getNextQuarterHourBoundary(now: number): number {
     const intervalMs = 15 * 60 * 1000;
     return (Math.floor(now / intervalMs) + 1) * intervalMs;
@@ -67,14 +77,15 @@ async function buildMultiframeData(): Promise<MultiframeData> {
 
     const fetchSymbolData = async (symbol: string): Promise<KlineResult> => {
         try {
-            const klines = await fetchBinanceJson<unknown>(`/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=17`, { revalidate: 60 });
+            // 获取18根K线 (当前1根 + 历史17根)，确保足够看16根之前的数据 (4小时 = 16 * 15m)
+            const klines = await fetchBinanceJson<unknown>(`/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=18`, { revalidate: 60 });
             if (!Array.isArray(klines) || klines.length === 0) {
                 return { symbol, o15m: 0, o1h: 0, o4h: 0 };
             }
 
             const lastIdx = klines.length - 1;
             const idx1h = Math.max(0, lastIdx - 4);
-            const idx4h = Math.max(0, lastIdx - 16);
+            const idx4h = Math.max(0, lastIdx - 16); // 现在 lastIdx 最大是 17，17 - 16 = 1，避免被截断到 0
 
             const openCurrent = parseFloat(klines[lastIdx][1]);
             const open1h = parseFloat(klines[idx1h][1]);
@@ -92,7 +103,7 @@ async function buildMultiframeData(): Promise<MultiframeData> {
     };
 
     const chunkArray = (arr: string[], size: number) =>
-        Array.from({ length: Math.ceil(arr.length / size) }, (v, i) => arr.slice(i * size, i * size + size));
+        Array.from({ length: Math.ceil(arr.length / size) }, (_, i) => arr.slice(i * size, i * size + size));
 
     const chunks = chunkArray(targetSymbols, 50);
     const resultData: MultiframeData = {};
@@ -134,13 +145,23 @@ export async function GET() {
         });
     }
 
-    const ownsInflight = !inflightBuild;
-    if (!inflightBuild) {
-        inflightBuild = buildMultiframeData();
+    if (cache && Object.keys(cache.data).length > 0) {
+        void ensureMultiframeBuild().catch((error) => {
+            logger.error('Background multiframe refresh failed', error as Error);
+        });
+
+        return NextResponse.json(cache.data, {
+            headers: {
+                'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=120',
+                'X-Data-Source': 'stale-memory-cache-refreshing',
+                'X-Cache-Age-Seconds': Math.floor((now - (cache.expiresAt - 15 * 60 * 1000)) / 1000).toString(),
+            }
+        });
     }
 
+    const ownsInflight = !inflightBuild;
     try {
-        const data = await inflightBuild;
+        const data = await ensureMultiframeBuild();
         return NextResponse.json(data, {
             headers: {
                 'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=120',
@@ -163,9 +184,5 @@ export async function GET() {
                 'X-Data-Source': 'empty-fallback',
             }
         });
-    } finally {
-        if (ownsInflight) {
-            inflightBuild = null;
-        }
     }
 }

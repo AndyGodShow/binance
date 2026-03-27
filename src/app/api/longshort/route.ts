@@ -33,6 +33,24 @@ export async function GET(request: NextRequest) {
         const limit = Math.min(Number(searchParams.get('limit') || '30'), 500);
         const cacheKey = `${symbol}:${period}:${limit}`;
         const cached = routeCache.get(cacheKey);
+        
+        // Cleanup expired cache to prevent memory leak
+        if (Math.random() < 0.1) {
+            const now = Date.now();
+            for (const [k, v] of routeCache.entries()) {
+                if (now - v.timestamp > 5 * 60 * 1000) routeCache.delete(k); // 5 min TTL for memory cleanup
+            }
+        }
+
+        // Return cached if fresh enough (1 minute)
+        if (cached && Date.now() - cached.timestamp < 60_000) {
+            return NextResponse.json(cached.data, {
+                headers: {
+                    'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=120',
+                    'X-Data-Source': 'memory-cache',
+                },
+            });
+        }
 
         const [global, topAccount, topPosition, taker] = await Promise.allSettled([
             fetchBinanceJson<BinanceLSEntry[]>(`/futures/data/globalLongShortAccountRatio?symbol=${symbol}&period=${period}&limit=${limit}`, { revalidate: 60 }),

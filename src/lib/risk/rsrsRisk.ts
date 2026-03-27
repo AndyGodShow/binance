@@ -20,7 +20,6 @@ export function calculateRSRSRisk(params: RiskCalculationParams): RiskManagement
         confidence,
         bollingerLower,
         bollingerUpper,
-        rsrsZScore,
         accountBalance,
         riskPercentage = 1
     } = params;
@@ -127,7 +126,7 @@ export function calculateRSRSRisk(params: RiskCalculationParams): RiskManagement
         takeProfit,
         positionSizing,
         metrics: {
-            entryPrice,
+            entryPrice: roundPrice(entryPrice),
             riskAmount: Math.round(riskAmount * 100) / 100,
             potentialProfit: Math.round(potentialProfit * 100) / 100,
             winRate: 0.68,

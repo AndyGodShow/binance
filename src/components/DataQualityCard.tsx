@@ -5,10 +5,9 @@ import styles from './DataQualityCard.module.css';
 
 interface DataQualityCardProps {
     metrics: DataQualityMetrics;
-    onDownloadData?: () => void;
 }
 
-export default function DataQualityCard({ metrics, onDownloadData }: DataQualityCardProps) {
+export default function DataQualityCard({ metrics }: DataQualityCardProps) {
     const quality = getDataQualityLevel(metrics.dataQualityScore);
 
     return (
@@ -89,13 +88,8 @@ export default function DataQualityCard({ metrics, onDownloadData }: DataQuality
                 <div className={styles.suggestion}>
                     <span className={styles.suggestionIcon}>⚠️</span>
                     <span className={styles.suggestionText}>
-                        数据质量较低，建议下载更多历史数据
+                        数据质量较低。长周期回测会自动检查并补齐本地历史数据，补齐后重新回测结果会更可靠。
                     </span>
-                    {onDownloadData && (
-                        <button className={styles.downloadBtn} onClick={onDownloadData}>
-                            下载数据
-                        </button>
-                    )}
                 </div>
             )}
         </div>

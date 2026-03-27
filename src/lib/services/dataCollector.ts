@@ -1,9 +1,9 @@
 import fs from 'fs';
 import path from 'path';
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import util from 'util';
 
-const execPromise = util.promisify(exec);
+const execFilePromise = util.promisify(execFile);
 
 // 检测是否在 Serverless 环境（Vercel 等）
 const isServerless = !!(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.SERVERLESS);
@@ -30,6 +30,10 @@ export class DataCollector {
         if (isServerless) {
             console.warn('[DataCollector] Serverless 环境不支持本地数据下载');
             return;
+        }
+        // Validate symbol to prevent path traversal or injection
+        if (!/^[A-Z0-9]+$/i.test(symbol)) {
+            throw new Error(`Invalid symbol: ${symbol}`);
         }
         const start = new Date(startDate);
         const end = new Date(endDate);
@@ -59,7 +63,7 @@ export class DataCollector {
             try {
                 // Download
                 console.log(`Downloading ${url}...`);
-                await execPromise(`curl -s -o "${localZipPath}" "${url}"`);
+                await execFilePromise('curl', ['-s', '-o', localZipPath, url]);
 
                 // Check if file is valid (not empty and is a zip)
                 const stats = fs.statSync(localZipPath);
@@ -71,7 +75,7 @@ export class DataCollector {
 
                 // Unzip
                 console.log(`Unzipping ${zipName}...`);
-                await execPromise(`unzip -o "${localZipPath}" -d "${symbolDir}"`);
+                await execFilePromise('unzip', ['-o', localZipPath, '-d', symbolDir]);
 
                 // Clean up zip
                 fs.unlinkSync(localZipPath);

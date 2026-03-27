@@ -102,6 +102,101 @@ export class TechnicalIndicators {
         };
     }
 
+    static calculateRSRS(klines: KlineData[]): Partial<TickerData> | null {
+        if (klines.length < 40) {
+            return null;
+        }
+
+        const highs = klines.map((kline) => parseFloat(kline.high));
+        const lows = klines.map((kline) => parseFloat(kline.low));
+        const closes = klines.map((kline) => parseFloat(kline.close));
+        const volumes = klines.map((kline) => parseFloat(kline.volume));
+
+        const efficiencyRatio = this.calculateEfficiencyRatio(closes, 10);
+        const fastWindow = 12;
+        const slowWindow = 30;
+        const adaptiveWindow = Math.round(slowWindow - (slowWindow - fastWindow) * Math.pow(efficiencyRatio, 2));
+        const windowSize = Math.max(fastWindow, Math.min(slowWindow, adaptiveWindow));
+
+        if (highs.length < windowSize) {
+            return null;
+        }
+
+        const betas: number[] = [];
+        const r2s: number[] = [];
+        const rsrsFinalValues: number[] = [];
+
+        for (let index = windowSize; index < highs.length; index++) {
+            const windowHighs = highs.slice(index - windowSize, index);
+            const windowLows = lows.slice(index - windowSize, index);
+            const windowVolumes = volumes.slice(index - windowSize, index);
+
+            const tlsResult = this.getTLSData(windowLows, windowHighs);
+            const wlsResult = this.getWLSData(windowLows, windowHighs, windowVolumes);
+
+            const hybridBeta = 0.7 * wlsResult.beta + 0.3 * tlsResult.beta;
+            const hybridR2 = Math.max(wlsResult.r2, tlsResult.r2);
+
+            betas.push(hybridBeta);
+            r2s.push(hybridR2);
+        }
+
+        if (betas.length === 0) {
+            return null;
+        }
+
+        const currentBeta = betas[betas.length - 1];
+        const currentR2 = r2s[r2s.length - 1];
+        const historyWindow = 100;
+        const historyBetas = betas.slice(Math.max(0, betas.length - historyWindow - 1), betas.length - 1);
+
+        if (historyBetas.length < 10) {
+            return null;
+        }
+
+        const median = this.calculateMedian(historyBetas);
+        const mad = this.calculateMAD(historyBetas);
+        const robustZScore = mad === 0 ? 0 : 0.6745 * (currentBeta - median) / mad;
+        const correctedZScore = robustZScore * currentR2;
+        const rsrsFinal = correctedZScore * currentBeta;
+
+        for (let index = 0; index < betas.length - 1; index++) {
+            const historicalZScore = mad === 0 ? 0 : 0.6745 * (betas[index] - median) / mad;
+            const historicalCorrectedZScore = historicalZScore * r2s[index];
+            rsrsFinalValues.push(historicalCorrectedZScore * betas[index]);
+        }
+        rsrsFinalValues.push(rsrsFinal);
+
+        let rsrsROC = 0;
+        let rsrsAcceleration = 0;
+        if (rsrsFinalValues.length >= 3) {
+            const current = rsrsFinalValues[rsrsFinalValues.length - 1];
+            const prev = rsrsFinalValues[rsrsFinalValues.length - 2];
+            const prevPrev = rsrsFinalValues[rsrsFinalValues.length - 3];
+
+            rsrsROC = prev !== 0 ? ((current - prev) / Math.abs(prev)) * 100 : 0;
+            const prevROC = prevPrev !== 0 ? ((prev - prevPrev) / Math.abs(prevPrev)) * 100 : 0;
+            rsrsAcceleration = rsrsROC - prevROC;
+        }
+
+        const sortedRsrsFinal = [...rsrsFinalValues].sort((a, b) => a - b);
+        const dynamicLongThreshold = sortedRsrsFinal[Math.floor(sortedRsrsFinal.length * 0.9)] || 0;
+        const dynamicShortThreshold = sortedRsrsFinal[Math.floor(sortedRsrsFinal.length * 0.1)] || 0;
+
+        return {
+            rsrs: currentBeta,
+            rsrsZScore: correctedZScore,
+            rsrsFinal,
+            rsrsR2: currentR2,
+            rsrsDynamicLongThreshold: dynamicLongThreshold,
+            rsrsDynamicShortThreshold: dynamicShortThreshold,
+            rsrsROC,
+            rsrsAcceleration,
+            rsrsAdaptiveWindow: windowSize,
+            rsrsMethod: 'VW-TLS + Median/MAD',
+        };
+    }
+
     /**
      * 将K线数组转换为带技术指标的TickerData
      */
@@ -132,6 +227,7 @@ export class TechnicalIndicators {
         const atr = this.calculateATR(historyForIndicators);
         const volumeMA = this.calculateVolumeMA(historyForIndicators);
         const { cvd, cvdSlope } = this.calculateCVD(historyForIndicators);
+        const rsrsMetrics = this.calculateRSRS(historyForIndicators);
 
         // 准备 OHLC 数据格式
         const ohlcData: OHLC[] = historyForIndicators.map(k => ({
@@ -147,6 +243,13 @@ export class TechnicalIndicators {
 
         const priceChangePercentVal = ((currentPrice - parseFloat(current.open)) / parseFloat(current.open) * 100);
         const priceChangePercent = priceChangePercentVal.toString();
+        const currentOpenInterest = typeof current.openInterest === 'string' ? parseFloat(current.openInterest) : NaN;
+        const previousOpenInterest = typeof klines[currentIndex - 1]?.openInterest === 'string'
+            ? parseFloat(klines[currentIndex - 1].openInterest as string)
+            : NaN;
+        const hasRealFundingRate = typeof current.fundingRate === 'string' && Number.isFinite(parseFloat(current.fundingRate));
+        const hasRealOpenInterest = Number.isFinite(currentOpenInterest);
+        const hasPreviousRealOpenInterest = Number.isFinite(previousOpenInterest) && previousOpenInterest > 0;
 
         // 初始化增强数据
         const enhanced: TickerData = {
@@ -162,33 +265,33 @@ export class TechnicalIndicators {
             quoteVolume: current.quoteVolume,
             openTime: current.openTime,
             closeTime: current.closeTime,
-            // 优先使用真实的历史数据，如果不存在则使用模拟数据
-            fundingRate: current.fundingRate
-                ? current.fundingRate
-                : (priceChangePercentVal * 0.01).toFixed(6),
+            fundingRate: hasRealFundingRate ? current.fundingRate : undefined,
+            openInterest: hasRealOpenInterest ? current.openInterest : undefined,
 
-            openInterest: current.openInterest
-                ? current.openInterest
-                : (parseFloat(current.volume) * 500).toFixed(2),
-
-            openInterestValue: current.openInterest
-                ? (parseFloat(current.openInterest) * parseFloat(current.close)).toFixed(2) //如果有真实OI(张数/币数)，则计算价值
-                : (parseFloat(current.quoteVolume) * 500).toFixed(2),
+            openInterestValue: current.openInterestValue
+                ? current.openInterestValue
+                : hasRealOpenInterest
+                ? (currentOpenInterest * parseFloat(current.close)).toFixed(2)
+                : undefined,
 
             change15m,
             change1h,
             change4h,
             atr,
             volumeMA,
+            volumeRatio: volumeMA > 0 ? parseFloat(current.quoteVolume) / volumeMA : undefined,
             cvd,
             cvdSlope,
-            // 如果有真实OI数据，计算真实的 oiChangePercent
-            oiChangePercent: (current.openInterest && klines[currentIndex - 1]?.openInterest)
-                ? ((parseFloat(current.openInterest) - parseFloat(klines[currentIndex - 1].openInterest!)) / parseFloat(klines[currentIndex - 1].openInterest!) * 100)
-                : Math.abs(priceChangePercentVal) * (current.volume && volumeMA ? parseFloat(current.volume) / volumeMA : 1) * 20, // Fallback to simulation
+            oiChangePercent: hasRealOpenInterest && hasPreviousRealOpenInterest
+                ? ((currentOpenInterest - previousOpenInterest) / previousOpenInterest) * 100
+                : undefined,
 
             volumeChangePercent: current.volume && volumeMA ? ((parseFloat(current.volume) - volumeMA) / volumeMA) * 100 : 0,
         };
+
+        if (rsrsMetrics) {
+            Object.assign(enhanced, rsrsMetrics);
+        }
 
         // 🔥 计算 Bollinger Bands
         if (closePrices.length >= 20) {
@@ -218,6 +321,9 @@ export class TechnicalIndicators {
                 if (enhanced.bollingerUpper && enhanced.keltnerUpper) {
                     const bb = calculateBollingerBands(closePrices, 20, 2);
                     const squeeze = detectSqueeze(bb, kc);
+                    const squeezeStates = bb.upper.map((upper, index) =>
+                        upper < kc.upper[index] && bb.lower[index] > kc.lower[index]
+                    );
 
                     enhanced.squeezeStatus = squeeze.isSqueezeOn ? 'on' : 'off';
                     enhanced.squeezeDuration = squeeze.squeezeDuration;
@@ -231,6 +337,45 @@ export class TechnicalIndicators {
                         prevSqueezeStatus = isPrevSqueeze ? 'on' : 'off';
                     }
                     enhanced.prevSqueezeStatus = prevSqueezeStatus;
+
+                    const latestIdx = squeezeStates.length - 1;
+                    let releaseBarsAgo: number | undefined;
+                    for (let index = latestIdx; index >= 1; index--) {
+                        if (!squeezeStates[index] && squeezeStates[index - 1]) {
+                            releaseBarsAgo = latestIdx - index;
+                            break;
+                        }
+                    }
+
+                    let lastSqueezeDuration = squeeze.squeezeDuration;
+                    let squeezeBoxHigh: number | undefined;
+                    let squeezeBoxLow: number | undefined;
+                    if (releaseBarsAgo !== undefined) {
+                        const releaseIndex = latestIdx - releaseBarsAgo;
+                        let startIndex = releaseIndex - 1;
+                        while (startIndex >= 0 && squeezeStates[startIndex]) {
+                            startIndex--;
+                        }
+                        const squeezeStart = startIndex + 1;
+                        const squeezeEnd = releaseIndex - 1;
+                        lastSqueezeDuration = Math.max(0, squeezeEnd - squeezeStart + 1);
+
+                        if (lastSqueezeDuration > 0) {
+                            const alignedStart = Math.max(0, historyForIndicators.length - squeezeStates.length + squeezeStart);
+                            const alignedEnd = Math.min(historyForIndicators.length - 1, historyForIndicators.length - squeezeStates.length + squeezeEnd);
+                            const squeezeSlice = historyForIndicators.slice(alignedStart, alignedEnd + 1);
+
+                            if (squeezeSlice.length > 0) {
+                                squeezeBoxHigh = Math.max(...squeezeSlice.map((kline) => parseFloat(kline.high)));
+                                squeezeBoxLow = Math.min(...squeezeSlice.map((kline) => parseFloat(kline.low)));
+                            }
+                        }
+                    }
+
+                    enhanced.releaseBarsAgo = releaseBarsAgo;
+                    enhanced.lastSqueezeDuration = lastSqueezeDuration;
+                    enhanced.squeezeBoxHigh = squeezeBoxHigh;
+                    enhanced.squeezeBoxLow = squeezeBoxLow;
 
                     // 计算 Bandwidth Percentile
                     if (bb.bandwidth.length > 0) {
@@ -328,5 +473,110 @@ export class TechnicalIndicators {
         const past = parseFloat(klines[currentIndex - periodsBack].close);
 
         return ((current - past) / past) * 100;
+    }
+
+    private static getTLSData(xValues: number[], yValues: number[]): { beta: number; r2: number } {
+        const n = xValues.length;
+        if (n === 0) return { beta: 0, r2: 0 };
+
+        const xMean = xValues.reduce((a, b) => a + b, 0) / n;
+        const yMean = yValues.reduce((a, b) => a + b, 0) / n;
+        const xCentered = xValues.map((x) => x - xMean);
+        const yCentered = yValues.map((y) => y - yMean);
+
+        let sxx = 0;
+        let syy = 0;
+        let sxy = 0;
+
+        for (let index = 0; index < n; index++) {
+            sxx += xCentered[index] * xCentered[index];
+            syy += yCentered[index] * yCentered[index];
+            sxy += xCentered[index] * yCentered[index];
+        }
+
+        const delta = syy - sxx;
+        const discriminant = delta * delta + 4 * sxy * sxy;
+        const beta = sxy === 0 ? 0 : (delta + Math.sqrt(discriminant)) / (2 * sxy);
+        const alpha = yMean - beta * xMean;
+
+        let ssTotal = 0;
+        let ssResidual = 0;
+        for (let index = 0; index < n; index++) {
+            const predicted = alpha + beta * xValues[index];
+            ssResidual += Math.pow(yValues[index] - predicted, 2);
+            ssTotal += Math.pow(yValues[index] - yMean, 2);
+        }
+
+        return {
+            beta,
+            r2: ssTotal === 0 ? 0 : Math.max(0, 1 - (ssResidual / ssTotal)),
+        };
+    }
+
+    private static getWLSData(xValues: number[], yValues: number[], weights: number[]): { beta: number; r2: number } {
+        const n = xValues.length;
+        if (n === 0 || weights.length !== n) return { beta: 0, r2: 0 };
+
+        const totalWeight = weights.reduce((a, b) => a + b, 0);
+        if (totalWeight === 0) return { beta: 0, r2: 0 };
+        const normalizedWeights = weights.map((weight) => weight / totalWeight);
+
+        const xMean = xValues.reduce((sum, value, index) => sum + value * normalizedWeights[index], 0);
+        const yMean = yValues.reduce((sum, value, index) => sum + value * normalizedWeights[index], 0);
+
+        let numerator = 0;
+        let denominator = 0;
+        let ssTotal = 0;
+        let ssResidual = 0;
+
+        for (let index = 0; index < n; index++) {
+            const weight = normalizedWeights[index];
+            numerator += weight * (xValues[index] - xMean) * (yValues[index] - yMean);
+            denominator += weight * Math.pow(xValues[index] - xMean, 2);
+            ssTotal += weight * Math.pow(yValues[index] - yMean, 2);
+        }
+
+        const beta = denominator === 0 ? 0 : numerator / denominator;
+        const alpha = yMean - beta * xMean;
+
+        for (let index = 0; index < n; index++) {
+            const predicted = alpha + beta * xValues[index];
+            ssResidual += normalizedWeights[index] * Math.pow(yValues[index] - predicted, 2);
+        }
+
+        return {
+            beta,
+            r2: ssTotal === 0 ? 0 : Math.max(0, 1 - (ssResidual / ssTotal)),
+        };
+    }
+
+    private static calculateMedian(values: number[]): number {
+        if (values.length === 0) return 0;
+        const sorted = [...values].sort((a, b) => a - b);
+        const mid = Math.floor(sorted.length / 2);
+        return sorted.length % 2 === 0
+            ? (sorted[mid - 1] + sorted[mid]) / 2
+            : sorted[mid];
+    }
+
+    private static calculateMAD(values: number[]): number {
+        if (values.length === 0) return 0;
+        const median = this.calculateMedian(values);
+        const deviations = values.map((value) => Math.abs(value - median));
+        return this.calculateMedian(deviations);
+    }
+
+    private static calculateEfficiencyRatio(closes: number[], period: number = 10): number {
+        if (closes.length < period + 1) return 0.5;
+
+        const recent = closes.slice(-period - 1);
+        const direction = Math.abs(recent[recent.length - 1] - recent[0]);
+        let volatility = 0;
+
+        for (let index = 1; index < recent.length; index++) {
+            volatility += Math.abs(recent[index] - recent[index - 1]);
+        }
+
+        return volatility === 0 ? 1 : direction / volatility;
     }
 }

@@ -1,5 +1,6 @@
 import { LRUCache } from '@/lib/cache';
 import { fetchBinanceJson } from '@/lib/binanceApi';
+import { fetchCoinalyzeOpenInterestHistory } from '@/lib/coinalyze';
 import { logger } from '@/lib/logger';
 
 interface BinanceOpenInterestCurrentResponse {
@@ -13,6 +14,12 @@ interface BinanceOpenInterestHistEntry {
     sumOpenInterest: string;
     sumOpenInterestValue: string;
     timestamp: number;
+}
+
+interface HistoricalOpenInterestEntry {
+    timestamp: number;
+    openInterest: string;
+    openInterestValue?: string;
 }
 
 export interface OpenInterestHistorySnapshot {
@@ -71,10 +78,18 @@ function parseHistEntries(data: unknown): BinanceOpenInterestHistEntry[] {
         .sort((a, b) => a.timestamp - b.timestamp);
 }
 
+function normalizeOfficialHistEntries(entries: BinanceOpenInterestHistEntry[]): HistoricalOpenInterestEntry[] {
+    return entries.map((entry) => ({
+        timestamp: entry.timestamp,
+        openInterest: entry.sumOpenInterest,
+        openInterestValue: entry.sumOpenInterestValue,
+    }));
+}
+
 function findClosestAtOrBefore(
-    entries: BinanceOpenInterestHistEntry[],
+    entries: HistoricalOpenInterestEntry[],
     targetTimestamp: number
-): BinanceOpenInterestHistEntry | null {
+): HistoricalOpenInterestEntry | null {
     for (let index = entries.length - 1; index >= 0; index -= 1) {
         if (entries[index].timestamp <= targetTimestamp) {
             return entries[index];
@@ -82,6 +97,24 @@ function findClosestAtOrBefore(
     }
 
     return entries[0] || null;
+}
+
+function buildHistorySnapshot(
+    entries: HistoricalOpenInterestEntry[],
+    currentValue?: string
+): OpenInterestHistorySnapshot {
+    const latestEntry = entries[entries.length - 1];
+    const referenceTimestamp = latestEntry.timestamp;
+    const oneHourEntry = findClosestAtOrBefore(entries, referenceTimestamp - 60 * 60 * 1000);
+    const fourHourEntry = findClosestAtOrBefore(entries, referenceTimestamp - 4 * 60 * 60 * 1000);
+    const oneDayEntry = findClosestAtOrBefore(entries, referenceTimestamp - 24 * 60 * 60 * 1000);
+
+    return {
+        current: Number(currentValue || latestEntry.openInterest),
+        oneHourAgo: Number(oneHourEntry?.openInterest || latestEntry.openInterest),
+        fourHoursAgo: Number(fourHourEntry?.openInterest || latestEntry.openInterest),
+        oneDayAgo: Number(oneDayEntry?.openInterest || latestEntry.openInterest),
+    };
 }
 
 function formatOpenInterestValue(openInterest: string | undefined, price: string | undefined, fallbackValue?: string): string | undefined {
@@ -136,28 +169,39 @@ export async function fetchOpenInterestHistorySnapshot(symbol: string): Promise<
     }
 
     const request = (async () => {
-        const [currentResponse, historyResponse] = await Promise.all([
-            fetchOpenInterestCurrent(normalizedSymbol),
-            fetchBinanceJson<unknown>(buildHistoryPath(normalizedSymbol, OI_HISTORY_PERIOD, OI_HISTORY_1D_LIMIT), { revalidate: 300 }),
-        ]);
+        let snapshot: OpenInterestHistorySnapshot | null = null;
 
-        const entries = parseHistEntries(historyResponse);
-        if (entries.length === 0) {
-            throw new Error(`No official open interest history available for ${normalizedSymbol}`);
+        try {
+            const [currentResponse, historyResponse] = await Promise.all([
+                fetchOpenInterestCurrent(normalizedSymbol),
+                fetchBinanceJson<unknown>(buildHistoryPath(normalizedSymbol, OI_HISTORY_PERIOD, OI_HISTORY_1D_LIMIT), { revalidate: 300 }),
+            ]);
+
+            const entries = normalizeOfficialHistEntries(parseHistEntries(historyResponse));
+            if (entries.length > 0) {
+                snapshot = buildHistorySnapshot(entries, currentResponse?.openInterest);
+            }
+        } catch (error) {
+            logger.warn('Failed to fetch official open interest snapshot, trying Coinalyze fallback', {
+                symbol: normalizedSymbol,
+                error: error instanceof Error ? error.message : String(error),
+            });
         }
 
-        const latestEntry = entries[entries.length - 1];
-        const referenceTimestamp = latestEntry.timestamp;
-        const oneHourEntry = findClosestAtOrBefore(entries, referenceTimestamp - 60 * 60 * 1000);
-        const fourHourEntry = findClosestAtOrBefore(entries, referenceTimestamp - 4 * 60 * 60 * 1000);
-        const oneDayEntry = findClosestAtOrBefore(entries, referenceTimestamp - 24 * 60 * 60 * 1000);
+        if (!snapshot) {
+            const fallbackEntries = await fetchCoinalyzeOpenInterestHistory(
+                normalizedSymbol,
+                OI_HISTORY_PERIOD,
+                Date.now() - 24 * 60 * 60 * 1000,
+                Date.now()
+            );
 
-        const snapshot: OpenInterestHistorySnapshot = {
-            current: Number(currentResponse?.openInterest || latestEntry.sumOpenInterest),
-            oneHourAgo: Number(oneHourEntry?.sumOpenInterest || latestEntry.sumOpenInterest),
-            fourHoursAgo: Number(fourHourEntry?.sumOpenInterest || latestEntry.sumOpenInterest),
-            oneDayAgo: Number(oneDayEntry?.sumOpenInterest || latestEntry.sumOpenInterest),
-        };
+            if (fallbackEntries.length === 0) {
+                throw new Error(`No open interest history available for ${normalizedSymbol}`);
+            }
+
+            snapshot = buildHistorySnapshot(fallbackEntries);
+        }
 
         historySnapshotCache.set(cacheKey, snapshot, OI_CACHE_TTL);
         return snapshot;
@@ -204,7 +248,7 @@ export async function fetchOpenInterestMarketSnapshot(
 
             const entries = parseHistEntries(historyResponse);
             if (entries.length === 0) {
-                return null;
+                throw new Error(`No official market open interest history available for ${normalizedSymbol}`);
             }
 
             const latestEntry = entries[entries.length - 1];
@@ -239,7 +283,38 @@ export async function fetchOpenInterestMarketSnapshot(
                 symbol: normalizedSymbol,
                 error: error instanceof Error ? error.message : String(error),
             });
-            return null;
+
+            const fallbackEntries = await fetchCoinalyzeOpenInterestHistory(
+                normalizedSymbol,
+                OI_MARKET_PERIOD,
+                Date.now() - 12 * 60 * 60 * 1000,
+                Date.now()
+            );
+
+            if (fallbackEntries.length === 0) {
+                return null;
+            }
+
+            const latestEntry = fallbackEntries[fallbackEntries.length - 1];
+            const fourHourEntry = findClosestAtOrBefore(
+                fallbackEntries,
+                latestEntry.timestamp - 4 * 60 * 60 * 1000
+            );
+
+            const snapshot: OpenInterestMarketSnapshot = {
+                symbol: normalizedSymbol,
+                currentOpenInterestValue: latestEntry.openInterestValue,
+                changePercent4h: fourHourEntry
+                    ? calculateChangePercent(
+                        latestEntry.openInterestValue || latestEntry.openInterest,
+                        fourHourEntry.openInterestValue || fourHourEntry.openInterest
+                    )
+                    : undefined,
+                asOf: latestEntry.timestamp,
+            };
+
+            marketSnapshotCache.set(cacheKey, snapshot, OI_CACHE_TTL);
+            return snapshot;
         }
     })();
 

@@ -16,6 +16,8 @@ interface ControlBarProps {
 
 const volumeOptions = [
     { label: '全部', value: '0' },
+    { label: '> 5亿', value: '500000000_gt' },
+    { label: '> 1亿', value: '100000000_gt' },
     { label: '< 5M', value: '5000000_lt' },
     { label: '< 10M', value: '10000000_lt' },
     { label: '< 30M', value: '30000000_lt' },

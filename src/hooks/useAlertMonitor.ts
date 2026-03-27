@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { TickerData, AlertConfig, AlertRecord, AlertLevel, HistoricalDataPoint } from '@/lib/types';
 
 // Alert level thresholds
@@ -31,10 +31,38 @@ const STORAGE_KEYS = {
     TRIGGERED: 'alert_triggered',
 };
 
+const MIN_HISTORY_SAMPLE_MS = 5000;
+const MAX_HISTORY_POINTS_PER_SYMBOL = 720;
+
+function pruneHistoryPoints(points: HistoricalDataPoint[], cutoffTime: number): HistoricalDataPoint[] {
+    if (points.length === 0) {
+        return [];
+    }
+
+    let baselineIndex = -1;
+    for (let index = points.length - 1; index >= 0; index--) {
+        if (points[index].timestamp < cutoffTime) {
+            baselineIndex = index;
+            break;
+        }
+    }
+
+    if (baselineIndex >= 0) {
+        return points.slice(baselineIndex);
+    }
+
+    const firstWithinWindow = points.findIndex((point) => point.timestamp >= cutoffTime);
+    if (firstWithinWindow >= 0) {
+        return points.slice(firstWithinWindow);
+    }
+
+    return [points[points.length - 1]];
+}
+
 export function useAlertMonitor(data: TickerData[]) {
     const [alerts, setAlerts] = useState<AlertRecord[]>([]);
     const [config, setConfig] = useState<AlertConfig>(DEFAULT_CONFIG);
-    const [history, setHistory] = useState<Map<string, { oldest: HistoricalDataPoint; newest: HistoricalDataPoint }>>(new Map());
+    const [history, setHistory] = useState<Map<string, HistoricalDataPoint[]>>(new Map());
     const triggeredAlertsRef = useRef<Set<string>>(new Set());
     const [isClient, setIsClient] = useState(false);
 
@@ -70,11 +98,14 @@ export function useAlertMonitor(data: TickerData[]) {
         }
     }, [isClient]);
 
-    // Save config to localStorage
     const updateConfig = useCallback((newConfig: Partial<AlertConfig>) => {
         setConfig(prev => {
             const updated = { ...prev, ...newConfig };
-            localStorage.setItem(STORAGE_KEYS.CONFIG, JSON.stringify(updated));
+            try {
+                localStorage.setItem(STORAGE_KEYS.CONFIG, JSON.stringify(updated));
+            } catch (e) {
+                console.warn('Failed to persist alert config:', e);
+            }
             return updated;
         });
     }, []);
@@ -88,26 +119,44 @@ export function useAlertMonitor(data: TickerData[]) {
 
         setHistory(prev => {
             const newMap = new Map(prev);
+            const activeSymbols = new Set(data.map((ticker) => ticker.symbol));
+
+            for (const [symbol, points] of newMap.entries()) {
+                const nextPoints = pruneHistoryPoints(points, cutoffTime);
+                if (nextPoints.length === 0 && !activeSymbols.has(symbol)) {
+                    newMap.delete(symbol);
+                    continue;
+                }
+                newMap.set(symbol, nextPoints);
+            }
 
             data.forEach(ticker => {
+                const currentPrice = parseFloat(ticker.lastPrice);
+                const currentOI = parseFloat(ticker.openInterestValue || '0');
                 const point: HistoricalDataPoint = {
                     symbol: ticker.symbol,
-                    price: parseFloat(ticker.lastPrice),
-                    openInterestValue: parseFloat(ticker.openInterestValue || '0'),
+                    price: Number.isFinite(currentPrice) ? currentPrice : 0,
+                    openInterestValue: Number.isFinite(currentOI) ? currentOI : 0,
                     timestamp: now,
                 };
 
-                const existing = newMap.get(ticker.symbol);
-                if (!existing) {
-                    newMap.set(ticker.symbol, { oldest: point, newest: point });
-                } else {
-                    // 如果最早的记录过期了，用当前值替代
-                    if (existing.oldest.timestamp < cutoffTime) {
-                        newMap.set(ticker.symbol, { oldest: point, newest: point });
-                    } else {
-                        newMap.set(ticker.symbol, { oldest: existing.oldest, newest: point });
-                    }
+                const existingPoints = pruneHistoryPoints(newMap.get(ticker.symbol) || [], cutoffTime);
+                const lastPoint = existingPoints[existingPoints.length - 1];
+                const shouldAppend = !lastPoint ||
+                    now - lastPoint.timestamp >= MIN_HISTORY_SAMPLE_MS ||
+                    lastPoint.price !== point.price ||
+                    lastPoint.openInterestValue !== point.openInterestValue;
+
+                if (shouldAppend) {
+                    existingPoints.push(point);
                 }
+
+                const overflow = existingPoints.length - MAX_HISTORY_POINTS_PER_SYMBOL;
+                if (overflow > 0) {
+                    existingPoints.splice(0, overflow);
+                }
+
+                newMap.set(ticker.symbol, existingPoints);
             });
 
             return newMap;
@@ -142,10 +191,10 @@ export function useAlertMonitor(data: TickerData[]) {
             const currentPrice = parseFloat(ticker.lastPrice);
             const currentOI = parseFloat(ticker.openInterestValue || '0');
 
-            const entry = history.get(symbol);
-            if (!entry) return;
+            const points = history.get(symbol);
+            if (!points || points.length === 0) return;
 
-            const basePoint = entry.oldest;
+            const basePoint = points[0];
             const basePrice = basePoint.price;
             const baseOI = basePoint.openInterestValue;
 
@@ -210,7 +259,11 @@ export function useAlertMonitor(data: TickerData[]) {
 
         if (newAlerts.length > 0) {
             setAlerts(prev => [...newAlerts, ...prev].slice(0, 50)); // Cap at 50
-            localStorage.setItem(STORAGE_KEYS.TRIGGERED, JSON.stringify([...triggered]));
+            try {
+                localStorage.setItem(STORAGE_KEYS.TRIGGERED, JSON.stringify([...triggered]));
+            } catch (e) {
+                console.warn('Failed to save triggered alerts, possible quota exceeded', e);
+            }
 
             if (config.enableSound) {
                 playAlertSound();
@@ -230,7 +283,11 @@ export function useAlertMonitor(data: TickerData[]) {
     useEffect(() => {
         const interval = setInterval(() => {
             triggeredAlertsRef.current = new Set<string>();
-            localStorage.setItem(STORAGE_KEYS.TRIGGERED, JSON.stringify([]));
+            try {
+                localStorage.setItem(STORAGE_KEYS.TRIGGERED, JSON.stringify([]));
+            } catch (e) {
+                console.warn('Failed to clear triggered alerts:', e);
+            }
         }, config.timeWindow);
 
         return () => clearInterval(interval);
@@ -261,14 +318,19 @@ function shouldShowNotification(alertLevel: AlertLevel, minLevel: AlertLevel): b
     return levelPriority[alertLevel] >= levelPriority[minLevel];
 }
 
-// Helper: Play alert sound
 function playAlertSound() {
     try {
-        const audio = new Audio('/alert.mp3');
-        audio.volume = 0.5;
-        audio.play().catch(e => console.error('Failed to play alert sound:', e));
+        const ctx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.frequency.value = 880;
+        gain.gain.value = 0.3;
+        osc.start();
+        osc.stop(ctx.currentTime + 0.15);
     } catch (e) {
-        console.error('Failed to create audio:', e);
+        console.error('Failed to play alert sound:', e);
     }
 }
 

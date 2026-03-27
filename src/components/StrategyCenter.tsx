@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { TickerData } from '@/lib/types';
 import { StrategySignal } from '@/lib/strategyTypes';
 import { strategyRegistry } from '@/strategies/registry';
 import SignalCard from './SignalCard';
@@ -9,14 +8,13 @@ import { ChevronDown, ChevronUp } from 'lucide-react';
 import styles from './StrategyCenter.module.css';
 
 interface StrategyCenterProps {
-    data: TickerData[];
     signals: StrategySignal[]; // 从父组件接收
-    dismissSignal: (id: string) => void; // 从父组件接收
+    dismissSignal: (signal: StrategySignal) => void; // 从父组件接收
     clearAllSignals?: () => void; // 一键清除全部
     onSymbolClick?: (symbol: string) => void;
 }
 
-export default function StrategyCenter({ data, signals, dismissSignal, clearAllSignals, onSymbolClick }: StrategyCenterProps) {
+export default function StrategyCenter({ signals, dismissSignal, clearAllSignals, onSymbolClick }: StrategyCenterProps) {
     // 使用本地状态存储策略列表，以便响应式更新
     const [allStrategies, setAllStrategies] = useState(() => strategyRegistry.getAll());
 
@@ -36,6 +34,9 @@ export default function StrategyCenter({ data, signals, dismissSignal, clearAllS
     // 重新计算统计数据（基于过滤后的信号）
     const filteredStats = {
         total: filteredSignals.length,
+        activeCount: filteredSignals.filter(s => (s.status ?? 'active') === 'active').length,
+        snapshotCount: filteredSignals.filter(s => s.status === 'snapshot').length,
+        coolingCount: filteredSignals.filter(s => s.status === 'cooling').length,
         longCount: filteredSignals.filter(s => s.direction === 'long').length,
         shortCount: filteredSignals.filter(s => s.direction === 'short').length,
         superSignals: filteredSignals.filter(s => (s.stackCount || 0) >= 3).length,
@@ -83,15 +84,15 @@ export default function StrategyCenter({ data, signals, dismissSignal, clearAllS
                 )}
             </div>
 
-            {/* 右侧：活跃信号 */}
+            {/* 右侧：信号列表 */}
             <div className={styles.right}>
                 <div className={styles.signalHeader}>
                     <h2 className={styles.sectionTitle}>
-                        活跃信号 ({filteredStats.total})
+                        信号池 ({filteredStats.total})
                     </h2>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                         <div className={styles.stats}>
-                            🟢 做多: {filteredStats.longCount} | 🔴 做空: {filteredStats.shortCount}
+                            实时: {filteredStats.activeCount} | 开页已有: {filteredStats.snapshotCount} | 回落保留: {filteredStats.coolingCount} | 🟢 做多: {filteredStats.longCount} | 🔴 做空: {filteredStats.shortCount}
                         </div>
                         {filteredSignals.length > 0 && clearAllSignals && (
                             <button

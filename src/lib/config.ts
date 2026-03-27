@@ -13,7 +13,7 @@ export const APP_CONFIG = {
     // 缓存配置
     CACHE: {
         KLINE_TTL: 5 * 60 * 1000,      // K线数据缓存时间（5分钟）
-        KLINE_MAX_SIZE: 200,           // K线缓存最大条目数
+        KLINE_MAX_SIZE: 2000,          // K线缓存最大条目数
         BTC_RETURNS_TTL: 5 * 60 * 1000, // BTC收益率缓存时间（5分钟）
     },
 
@@ -50,9 +50,16 @@ export const APP_CONFIG = {
         RSRS_COOLDOWN: 120 * 60 * 1000,  // RSRS策略冷却期（120分钟）
     },
 
+    // 默认风控配置（实盘/纸面交易应当从全局 Context 取值，这里做兜底）
+    RISK: {
+        DEFAULT_ACCOUNT_BALANCE: 10000,  // 默认账户资金（USDT）
+        DEFAULT_RISK_PER_TRADE: 1,       // 默认单笔风险百分比
+    },
+
     // 技术指标配置
     INDICATORS: {
-        TOP_SYMBOLS_FOR_INDICATORS: 50,  // 计算技术指标的前N个币种
+        MIN_QUOTE_VOLUME_FOR_FULL_INDICATORS: 5000000, // 完整增强的最低24h成交额
+        MIN_OPEN_INTEREST_VALUE_FOR_FULL_INDICATORS: 2000000, // 完整增强的最低持仓金额
         BOLLINGER_PERIOD: 20,            // 布林带周期
         BOLLINGER_STD_DEV: 2,            // 布林带标准差倍数
         KELTNER_PERIOD: 20,              // 肯特纳通道周期

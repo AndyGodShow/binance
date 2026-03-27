@@ -118,23 +118,3 @@ export function getDataQualityLevel(score: number): {
     }
 }
 
-/**
- * 生成数据质量报告
- */
-export function generateDataQualityReport(metrics: DataQualityMetrics): string {
-    const quality = getDataQualityLevel(metrics.dataQualityScore);
-
-    return `
-数据质量报告
-━━━━━━━━━━━━━━━━━━━━━
-综合评分: ${quality.emoji} ${metrics.dataQualityScore.toFixed(1)}/100 (${quality.label})
-
-详细指标:
-• OI覆盖率: ${metrics.oiCoverage.toFixed(1)}%
-• 资金费率覆盖率: ${metrics.fundingCoverage.toFixed(1)}%
-• 真实数据: ${metrics.realDataPoints}/${metrics.totalDataPoints} 条
-• 模拟数据占比: ${metrics.simulatedDataRatio.toFixed(1)}%
-
-${metrics.dataQualityScore < 60 ? '⚠️ 建议下载更多历史数据以提高回测准确性' : ''}
-  `.trim();
-}

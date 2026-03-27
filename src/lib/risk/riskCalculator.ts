@@ -49,8 +49,7 @@ function calculateBasicRisk(params: RiskCalculationParams): RiskManagement {
         direction,
         confidence,
         atr,
-        accountBalance = 10000,
-        riskPercentage = 1
+        accountBalance = 10000
     } = params;
 
     // 简单的 ATR 止损

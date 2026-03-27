@@ -6,17 +6,13 @@ import {
 } from './compositeStrategies';
 import { rsrsStrategy } from './rsrs';
 import { volatilitySqueezeStrategy } from './volatilitySqueeze';
-import { simpleMAStrategy, simpleMomentumStrategy } from './simpleStrategies';
 
 class StrategyRegistry {
     private strategies: Map<string, TradingStrategy> = new Map();
     private listeners: Set<() => void> = new Set();
+    private enabledStrategyIds: Set<string> = new Set();
 
     constructor() {
-        // 注册简单测试策略（用于回测）
-        this.register(simpleMAStrategy);
-        this.register(simpleMomentumStrategy);
-
         // 注册复合策略（高准确率）
         this.register(strongBreakoutStrategy);
         this.register(trendConfirmationStrategy);
@@ -53,10 +49,17 @@ class StrategyRegistry {
 
     register(strategy: TradingStrategy) {
         this.strategies.set(strategy.id, strategy);
+        // 如果策略默认启用，加入已启用集合
+        if (strategy.enabled) {
+            this.enabledStrategyIds.add(strategy.id);
+        }
     }
 
     getAll(): TradingStrategy[] {
-        return Array.from(this.strategies.values());
+        return Array.from(this.strategies.values()).map(s => ({
+            ...s,
+            enabled: this.enabledStrategyIds.has(s.id)
+        }));
     }
 
     getEnabled(): TradingStrategy[] {
@@ -64,13 +67,21 @@ class StrategyRegistry {
     }
 
     getById(id: string): TradingStrategy | undefined {
-        return this.strategies.get(id);
+        const strategy = this.strategies.get(id);
+        if (!strategy) return undefined;
+        return {
+            ...strategy,
+            enabled: this.enabledStrategyIds.has(id)
+        };
     }
 
     toggleStrategy(id: string) {
-        const strategy = this.strategies.get(id);
-        if (strategy) {
-            strategy.enabled = !strategy.enabled;
+        if (this.strategies.has(id)) {
+            if (this.enabledStrategyIds.has(id)) {
+                this.enabledStrategyIds.delete(id);
+            } else {
+                this.enabledStrategyIds.add(id);
+            }
             this.notify(); // 触发更新通知
         }
     }
@@ -82,4 +93,3 @@ class StrategyRegistry {
 
 // 单例导出
 export const strategyRegistry = new StrategyRegistry();
-

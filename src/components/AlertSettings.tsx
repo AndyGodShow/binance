@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { AlertConfig, AlertLevel } from '@/lib/types';
-import { X, Bell, BellOff } from 'lucide-react';
+import { X, Bell } from 'lucide-react';
 import styles from './AlertSettings.module.css';
 
 interface AlertSettingsProps {

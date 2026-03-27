@@ -3,7 +3,7 @@
  * 基于 Kelly 公式和风险固定法
  */
 
-import { PositionSizing, RiskCalculationParams } from './types';
+import { PositionSizing } from './types';
 
 /**
  * Kelly 公式优化版 - 计算最优仓位

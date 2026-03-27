@@ -19,14 +19,14 @@ export class HistoricalDataFetcher {
         symbol: string,
         interval: string,
         startTime: number,
-        endTime: number
+        endTime: number,
+        options: {
+            includeAuxiliary?: boolean;
+        } = {}
     ): Promise<KlineData[]> {
         const allKlines: KlineData[] = [];
         let currentStart = startTime;
         const limit = 1500; // 单次最大请求数
-
-        // 计算每个K线的时间跨度（毫秒）
-        const intervalMs = this.getIntervalMilliseconds(interval);
 
         while (currentStart < endTime) {
             try {
@@ -37,6 +37,10 @@ export class HistoricalDataFetcher {
                     endTime: endTime.toString(),
                     limit: limit.toString(),
                 });
+
+                if (options.includeAuxiliary === false) {
+                    params.append('includeAuxiliary', 'false');
+                }
 
                 const response = await fetch(`${this.baseUrl}?${params}`);
 
@@ -59,7 +63,7 @@ export class HistoricalDataFetcher {
                 if (klines.length < limit) break;
 
                 // 避免请求过快，添加短暂延迟
-                await this.sleep(100);
+                await this.sleep(options.includeAuxiliary === false ? 20 : 100);
 
             } catch (error) {
                 console.error('获取批量数据失败:', error);
@@ -79,13 +83,16 @@ export class HistoricalDataFetcher {
     async fetchRecentData(
         symbol: string,
         interval: string,
-        count: number = 500
+        count: number = 500,
+        options: {
+            includeAuxiliary?: boolean;
+        } = {}
     ): Promise<KlineData[]> {
         const endTime = Date.now();
         const intervalMs = this.getIntervalMilliseconds(interval);
         const startTime = endTime - (intervalMs * count);
 
-        return this.fetchRangeData(symbol, interval, startTime, endTime);
+        return this.fetchRangeData(symbol, interval, startTime, endTime, options);
     }
 
     /**

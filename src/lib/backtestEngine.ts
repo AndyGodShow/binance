@@ -2,6 +2,9 @@ import { KlineData } from '@/app/api/backtest/klines/route';
 import { TickerData } from './types';
 import { RiskManagement } from './risk/types';
 import { TechnicalIndicators } from './technicalIndicators';
+import { cooldownManager } from './cooldownManager';
+import { trendStateManager } from './trendStateManager';
+import { BacktestExecutionProvider } from './backtestExecutionProvider';
 
 /**
  * 回测结果接口
@@ -10,10 +13,12 @@ export interface BacktestResult {
     // 基本信息
     symbol: string;
     interval: string;
+    executionInterval: string;
     strategyName: string;
     startTime: number;
     endTime: number;
     totalBars: number;
+    executionBarsProcessed: number;
 
     // 交易统计
     totalTrades: number;
@@ -33,7 +38,7 @@ export interface BacktestResult {
     // 风险指标
     maxDrawdown: number; // 最大回撤 (%)
     sharpeRatio: number; // 夏普比率
-    profitFactor: number; // 盈亏比
+    profitFactor: number; // 盈亏比，无亏损单时为 Infinity
     sortinoRatio: number; // Sortino比率 (只考虑下行波动)
     calmarRatio: number; // Calmar比率 (收益/最大回撤)
     expectancy: number; // 期望值 (每笔交易的平均收益)
@@ -49,6 +54,7 @@ export interface BacktestResult {
 
     // 详细交易记录
     trades: Trade[];
+    tradeLegs: Trade[];
 
     // 资金曲线
     equityCurve: EquityPoint[];
@@ -58,6 +64,7 @@ export interface BacktestResult {
  * 单次交易记录
  */
 export interface Trade {
+    symbol?: string;
     entryTime: number;
     exitTime: number;
     entryPrice: number;
@@ -98,6 +105,37 @@ export interface StrategyResult {
     risk?: RiskManagement; // 策略携带的风控信息
 }
 
+interface BacktestPosition {
+    direction: 'long' | 'short';
+    entryPrice: number;
+    entryTime: number;
+    signalEntryTime: number;
+    entryIndex: number;
+    risk?: RiskManagement;
+    highestPrice: number;
+    lowestPrice: number;
+    initialSize: number;
+    remainingSize: number;
+    hitTargetIndices: number[];
+}
+
+interface PendingBacktestEntry {
+    direction: 'long' | 'short';
+    signalTime: number;
+    risk?: RiskManagement;
+}
+
+export interface BacktestRunInput {
+    signalKlines: KlineData[];
+    strategyDetector: StrategyDetector;
+    strategyName: string;
+    symbol: string;
+    signalInterval: string;
+    executionInterval?: string;
+    simulationEndTime?: number;
+    fetchExecutionKlines?: (startTime: number, endTime: number) => Promise<KlineData[]>;
+}
+
 /**
  * 策略检测函数类型
  */
@@ -118,62 +156,274 @@ export class BacktestEngine {
         };
     }
 
-    /**
-     * 运行回测
-     */
-    run(
-        klines: KlineData[],
-        strategyDetector: StrategyDetector,
-        strategyName: string,
-        symbol: string,
-        interval: string
-    ): BacktestResult {
-        if (klines.length === 0) {
-            throw new Error('K线数据为空');
+    private runWithMockedNow<T>(timestamp: number, task: () => T): T {
+        const realDateNow = Date.now;
+        Date.now = () => timestamp;
+        try {
+            return task();
+        } finally {
+            Date.now = realDateNow;
         }
-        if (klines.length < 2) {
-            throw new Error('K线数据不足，至少需要 2 根K线');
+    }
+
+    private calculateProfitPercent(
+        entryPrice: number,
+        exitPrice: number,
+        direction: 'long' | 'short'
+    ): number {
+        if (direction === 'long') {
+            return ((exitPrice - entryPrice) / entryPrice) * 100;
         }
+        return ((entryPrice - exitPrice) / entryPrice) * 100;
+    }
 
-        const trades: Trade[] = [];
-        const equityCurve: EquityPoint[] = [];
-
-        let currentPosition: {
+    private calculateMarkToMarketEquity(
+        realizedEquity: number,
+        currentPosition: {
             direction: 'long' | 'short';
             entryPrice: number;
-            entryTime: number;
-            entryIndex: number;
-            risk?: RiskManagement; // 存储开仓时的风控参数
-            highestPrice: number;  // 持仓期间最高价 (用于跟踪止损)
-            lowestPrice: number;   // 持仓期间最低价 (用于跟踪止损)
-            remainingSize: number; // 剩余仓位 (0-1)
-            hitTargetIndices: number[]; // 已触发的止盈目标索引
-        } | null = null;
+            remainingSize: number;
+        } | null,
+        currentPrice: number
+    ): number {
+        if (!currentPosition || currentPosition.remainingSize <= 0.0001) {
+            return realizedEquity;
+        }
 
-        let equity = 100; // 初始权益百分比
-        let peakEquity = 100;
-        let maxDrawdown = 0;
+        const floatingProfitPercent = this.calculateProfitPercent(
+            currentPosition.entryPrice,
+            currentPrice,
+            currentPosition.direction
+        ) - (this.config.commission + this.config.slippage);
 
-        // 允许短周期/短样本回测继续执行，同时给指标留出合理预热窗口。
-        const preferredWarmupBars = 50;
-        const startIndex = Math.min(preferredWarmupBars, klines.length - 1);
+        return realizedEquity + (floatingProfitPercent * currentPosition.remainingSize);
+    }
 
-        // 遍历所有K线
-        for (let i = startIndex; i < klines.length; i++) {
-            const kline = klines[i];
-            // 使用技术指标计算器生成完整的ticker数据
-            const ticker = TechnicalIndicators.enrichTickerData(klines, i, symbol, interval);
+    private cloneRiskForEntry(
+        risk: RiskManagement | undefined,
+        entryPrice: number,
+        direction: 'long' | 'short'
+    ): RiskManagement | undefined {
+        if (!risk) {
+            return undefined;
+        }
 
-            // 检查是否需要平仓
+        const cloned = JSON.parse(JSON.stringify(risk)) as RiskManagement;
+        cloned.metrics.entryPrice = entryPrice;
+
+        const stopLossDistance = cloned.stopLoss.percentage / 100;
+        cloned.stopLoss.price = direction === 'long'
+            ? entryPrice * (1 - stopLossDistance)
+            : entryPrice * (1 + stopLossDistance);
+
+        cloned.takeProfit.targets = cloned.takeProfit.targets.map((target) => {
+            const targetDistance = target.percentage / 100;
+            return {
+                ...target,
+                price: direction === 'long'
+                    ? entryPrice * (1 + targetDistance)
+                    : entryPrice * (1 - targetDistance),
+            };
+        });
+
+        return cloned;
+    }
+
+    private recordTrade(
+        trades: Trade[],
+        position: BacktestPosition,
+        symbol: string,
+        exitTime: number,
+        exitPrice: number,
+        size: number,
+        exitReason: Trade['exitReason']
+    ): number {
+        const finalProfitPercent = this.calculateProfitPercent(
+            position.entryPrice,
+            exitPrice,
+            position.direction
+        ) - (this.config.commission + this.config.slippage);
+
+        trades.push({
+            symbol,
+            entryTime: position.entryTime,
+            exitTime,
+            entryPrice: position.entryPrice,
+            exitPrice,
+            direction: position.direction,
+            size,
+            profit: finalProfitPercent,
+            profitUSDT: (this.config.initialCapital * finalProfitPercent * size) / 100,
+            holdingTime: exitTime - position.entryTime,
+            exitReason,
+        });
+
+        return finalProfitPercent * size;
+    }
+
+    private getIntervalMs(interval: string): number | null {
+        const match = interval.match(/^(\d+)(m|h|d|w|M)$/);
+        if (!match) {
+            return null;
+        }
+
+        const value = Number.parseInt(match[1], 10);
+        if (!Number.isFinite(value) || value <= 0) {
+            return null;
+        }
+
+        const unit = match[2];
+        switch (unit) {
+            case 'm':
+                return value * 60 * 1000;
+            case 'h':
+                return value * 60 * 60 * 1000;
+            case 'd':
+                return value * 24 * 60 * 60 * 1000;
+            case 'w':
+                return value * 7 * 24 * 60 * 60 * 1000;
+            case 'M':
+                return value * 30 * 24 * 60 * 60 * 1000;
+            default:
+                return null;
+        }
+    }
+
+    private aggregateTradeLegs(tradeLegs: Trade[]): Trade[] {
+        const groups = new Map<string, Trade[]>();
+
+        tradeLegs.forEach((trade) => {
+            const key = [
+                trade.symbol ?? '',
+                trade.entryTime,
+                trade.direction,
+                trade.entryPrice,
+            ].join(':');
+
+            const existing = groups.get(key) || [];
+            existing.push(trade);
+            groups.set(key, existing);
+        });
+
+        return Array.from(groups.values())
+            .map((legs) => {
+                const orderedLegs = [...legs].sort((a, b) => a.exitTime - b.exitTime);
+                const firstLeg = orderedLegs[0];
+                const lastLeg = orderedLegs[orderedLegs.length - 1];
+                const totalSize = orderedLegs.reduce((sum, leg) => sum + leg.size, 0);
+                const weightedProfit = totalSize > 0
+                    ? orderedLegs.reduce((sum, leg) => sum + (leg.profit * leg.size), 0) / totalSize
+                    : 0;
+                const weightedExitPrice = totalSize > 0
+                    ? orderedLegs.reduce((sum, leg) => sum + (leg.exitPrice * leg.size), 0) / totalSize
+                    : lastLeg.exitPrice;
+                const totalProfitUsdt = orderedLegs.reduce((sum, leg) => sum + leg.profitUSDT, 0);
+
+                return {
+                    symbol: firstLeg.symbol,
+                    entryTime: firstLeg.entryTime,
+                    exitTime: lastLeg.exitTime,
+                    entryPrice: firstLeg.entryPrice,
+                    exitPrice: weightedExitPrice,
+                    direction: firstLeg.direction,
+                    size: totalSize > 0 ? totalSize : 1,
+                    profit: weightedProfit,
+                    profitUSDT: totalProfitUsdt,
+                    holdingTime: lastLeg.exitTime - firstLeg.entryTime,
+                    exitReason: lastLeg.exitReason,
+                };
+            })
+            .sort((a, b) => a.entryTime - b.entryTime);
+    }
+
+    private cloneRiskManagement(risk?: RiskManagement): RiskManagement | undefined {
+        return risk ? JSON.parse(JSON.stringify(risk)) as RiskManagement : undefined;
+    }
+
+    private processExecutionBars(params: {
+        bars: KlineData[];
+        currentPosition: BacktestPosition | null;
+        pendingEntry: PendingBacktestEntry | null;
+        pendingExitReason: Trade['exitReason'] | null;
+        tradeLegs: Trade[];
+        symbol: string;
+        equity: number;
+        signalIntervalMs: number | null;
+        isFinalSegment: boolean;
+        fallbackExitTime: number;
+        fallbackExitPrice: number;
+    }): {
+        currentPosition: BacktestPosition | null;
+        pendingEntry: PendingBacktestEntry | null;
+        pendingExitReason: Trade['exitReason'] | null;
+        equity: number;
+        lastProcessedTime: number;
+        lastProcessedPrice: number;
+    } {
+        const {
+            bars,
+            tradeLegs,
+            symbol,
+            signalIntervalMs,
+            isFinalSegment,
+            fallbackExitTime,
+            fallbackExitPrice,
+        } = params;
+
+        let {
+            currentPosition,
+            pendingEntry,
+            pendingExitReason,
+            equity,
+        } = params;
+
+        let lastProcessedTime = fallbackExitTime;
+        let lastProcessedPrice = fallbackExitPrice;
+
+        for (let index = 0; index < bars.length; index++) {
+            const kline = bars[index];
+            const currentOpen = parseFloat(kline.open);
+            const currentClose = parseFloat(kline.close);
+            const currentHigh = parseFloat(kline.high);
+            const currentLow = parseFloat(kline.low);
+            const hasNextBar = index < bars.length - 1;
+
+            if (pendingExitReason && currentPosition && Number.isFinite(currentOpen)) {
+                equity += this.recordTrade(
+                    tradeLegs,
+                    currentPosition,
+                    symbol,
+                    kline.openTime,
+                    currentOpen,
+                    currentPosition.remainingSize,
+                    pendingExitReason
+                );
+                currentPosition = null;
+            }
+            pendingExitReason = null;
+
+            if (pendingEntry && !currentPosition && Number.isFinite(currentOpen)) {
+                currentPosition = {
+                    direction: pendingEntry.direction,
+                    entryPrice: currentOpen,
+                    entryTime: kline.openTime,
+                    signalEntryTime: pendingEntry.signalTime,
+                    entryIndex: index,
+                    risk: this.cloneRiskForEntry(pendingEntry.risk, currentOpen, pendingEntry.direction),
+                    highestPrice: currentOpen,
+                    lowestPrice: currentOpen,
+                    initialSize: 1.0,
+                    remainingSize: 1.0,
+                    hitTargetIndices: [],
+                };
+            }
+            pendingEntry = null;
+
             if (currentPosition) {
-                const currentClose = parseFloat(kline.close);
-                const currentHigh = parseFloat(kline.high);
-                const currentLow = parseFloat(kline.low);
-
                 const entryPrice = currentPosition.entryPrice;
                 const direction = currentPosition.direction;
+                const strategyRisk = currentPosition.risk;
 
-                // 更新持仓期间的极值价格
                 if (currentHigh > currentPosition.highestPrice) {
                     currentPosition.highestPrice = currentHigh;
                 }
@@ -183,319 +433,409 @@ export class BacktestEngine {
 
                 let shouldExit = false;
                 let exitReason: Trade['exitReason'] = 'end_of_data';
-                let exitPrice = currentClose; // 默认以收盘价平仓
-
-                // 1. 优先使用策略自带的风控参数
-                const strategyRisk = currentPosition.risk;
+                let exitPrice = currentClose;
 
                 if (this.config.useStrategyRiskManagement && strategyRisk) {
-                    // --- 跟踪止损更新逻辑 ---
                     if (strategyRisk.stopLoss.type === 'trailing') {
                         if (direction === 'long') {
-                            // 计算新的移动止损位：最高价 * (1 - 止损百分比)
-                            // 注意：这里的 percentage 是相对于入场价的初始百分比用于计算动态距离，或者策略应该提供 trailingDistance，这里复用 stopLoss.percentage 作为回撤阈值
                             const trailingDistance = strategyRisk.stopLoss.percentage / 100;
                             const newStopLoss = currentPosition.highestPrice * (1 - trailingDistance);
-
-                            // 止损只能上移
                             if (newStopLoss > strategyRisk.stopLoss.price) {
                                 strategyRisk.stopLoss.price = newStopLoss;
                             }
                         } else {
-                            // 做空：最低价 * (1 + 止损百分比)
                             const trailingDistance = strategyRisk.stopLoss.percentage / 100;
                             const newStopLoss = currentPosition.lowestPrice * (1 + trailingDistance);
-
-                            // 止损只能下移
                             if (newStopLoss < strategyRisk.stopLoss.price) {
                                 strategyRisk.stopLoss.price = newStopLoss;
                             }
                         }
                     }
-                    // --- 策略止损逻辑 (Intra-bar High/Low 检测) ---
-                    const stopLossPrice = strategyRisk.stopLoss.price;
 
+                    const stopLossPrice = strategyRisk.stopLoss.price;
                     if (direction === 'long') {
-                        //做多：如果最低价跌破止损价
                         if (currentLow <= stopLossPrice) {
                             shouldExit = true;
                             exitReason = 'stop_loss';
-                            // 模拟在止损价成交（考虑滑点）此时不应优于止损价，通常会有滑点
                             exitPrice = stopLossPrice;
                         }
-                    } else {
-                        //做空：如果最高价涨破止损价
-                        if (currentHigh >= stopLossPrice) {
-                            shouldExit = true;
-                            exitReason = 'stop_loss';
-                            exitPrice = stopLossPrice;
-                        }
+                    } else if (currentHigh >= stopLossPrice) {
+                        shouldExit = true;
+                        exitReason = 'stop_loss';
+                        exitPrice = stopLossPrice;
                     }
 
-                    // --- 策略止盈 & 保本 & 分批平仓逻辑 ---
                     if (!shouldExit && strategyRisk.takeProfit && strategyRisk.takeProfit.targets.length > 0) {
-                        strategyRisk.takeProfit.targets.forEach((target, index) => {
-                            // 如果已经全仓由于其他原因退出，或者该目标已触发，跳过
-                            if (shouldExit || currentPosition!.hitTargetIndices.includes(index)) return;
-
-                            let isHit = false;
-                            if (direction === 'long') {
-                                if (currentHigh >= target.price) isHit = true;
-                            } else {
-                                if (currentLow <= target.price) isHit = true;
+                        strategyRisk.takeProfit.targets.forEach((target, targetIndex) => {
+                            if (shouldExit || currentPosition!.hitTargetIndices.includes(targetIndex)) {
+                                return;
                             }
 
-                            if (isHit) {
-                                // 标记该目标已触发
-                                currentPosition!.hitTargetIndices.push(index);
+                            const isHit = direction === 'long'
+                                ? currentHigh >= target.price
+                                : currentLow <= target.price;
 
-                                // 1. 保本逻辑
-                                if (target.moveStopToEntry) {
-                                    const breakEvenPrice = entryPrice;
-                                    if (direction === 'long') {
-                                        if (breakEvenPrice > strategyRisk.stopLoss.price) {
-                                            strategyRisk.stopLoss.price = breakEvenPrice;
-                                            strategyRisk.stopLoss.reason = "保本止损(T" + (index + 1) + "触发)";
-                                        }
-                                    } else {
-                                        if (breakEvenPrice < strategyRisk.stopLoss.price) {
-                                            strategyRisk.stopLoss.price = breakEvenPrice;
-                                            strategyRisk.stopLoss.reason = "保本止损(T" + (index + 1) + "触发)";
-                                        }
-                                    }
+                            if (!isHit) {
+                                return;
+                            }
 
-                                    // 立即检查当前K线是否同时也触发了新的止损 (保本损)
-                                    if (!shouldExit) {
-                                        const currentNewStop = strategyRisk.stopLoss.price;
-                                        if ((direction === 'long' && parseFloat(kline.low) <= currentNewStop) ||
-                                            (direction === 'short' && parseFloat(kline.high) >= currentNewStop)) {
-                                            shouldExit = true;
-                                            exitReason = 'stop_loss';
-                                            exitPrice = currentNewStop;
-                                        }
+                            currentPosition!.hitTargetIndices.push(targetIndex);
+
+                            if (target.moveStopToEntry) {
+                                const breakEvenPrice = entryPrice;
+                                if (direction === 'long') {
+                                    if (breakEvenPrice > strategyRisk.stopLoss.price) {
+                                        strategyRisk.stopLoss.price = breakEvenPrice;
+                                        strategyRisk.stopLoss.reason = `保本止损(T${targetIndex + 1}触发)`;
                                     }
+                                } else if (breakEvenPrice < strategyRisk.stopLoss.price) {
+                                    strategyRisk.stopLoss.price = breakEvenPrice;
+                                    strategyRisk.stopLoss.reason = `保本止损(T${targetIndex + 1}触发)`;
                                 }
 
-                                // 2. 分批平仓逻辑
-                                const closeRatio = target.closePercentage / 100;
-                                const exitSize = currentPosition!.remainingSize * closeRatio;
-
-                                if (!shouldExit && exitSize > 0.0001) {
-                                    // 记录一笔分批平仓交易
-                                    // 重新计算该部分的盈亏
-                                    let finalProfitPercent = 0;
-                                    const tpPrice = target.price; // 假设在目标价成交
-                                    if (direction === 'long') {
-                                        finalProfitPercent = ((tpPrice - entryPrice) / entryPrice) * 100;
-                                    } else {
-                                        finalProfitPercent = ((entryPrice - tpPrice) / entryPrice) * 100;
-                                    }
-
-                                    // 扣除手续费和滑点
-                                    finalProfitPercent -= (this.config.commission + this.config.slippage);
-
-                                    const trade: Trade = {
-                                        entryTime: currentPosition!.entryTime,
-                                        exitTime: kline.closeTime,
-                                        entryPrice: entryPrice,
-                                        exitPrice: tpPrice,
-                                        direction: direction,
-                                        size: exitSize, // 记录仓位大小
-                                        profit: finalProfitPercent,
-                                        profitUSDT: (this.config.initialCapital * finalProfitPercent * exitSize) / 100,
-                                        holdingTime: kline.closeTime - currentPosition!.entryTime,
-                                        exitReason: 'take_profit',
-                                    };
-                                    trades.push(trade);
-
-                                    // 更新资金权益
-                                    equity += finalProfitPercent * exitSize;
-
-                                    // 更新剩余仓位
-                                    currentPosition!.remainingSize -= exitSize;
-                                }
-
-                                // 如果剩余仓位极小，视为全部平仓
-                                if (currentPosition!.remainingSize <= 0.0001) {
+                                const currentNewStop = strategyRisk.stopLoss.price;
+                                if (
+                                    (direction === 'long' && currentLow <= currentNewStop) ||
+                                    (direction === 'short' && currentHigh >= currentNewStop)
+                                ) {
                                     shouldExit = true;
-                                    exitReason = 'take_profit';
-                                    exitPrice = target.price;
+                                    exitReason = 'stop_loss';
+                                    exitPrice = currentNewStop;
                                 }
+                            }
+
+                            const exitSize = Math.min(
+                                currentPosition!.remainingSize,
+                                currentPosition!.initialSize * (target.closePercentage / 100)
+                            );
+
+                            if (!shouldExit && exitSize > 0.0001) {
+                                equity += this.recordTrade(
+                                    tradeLegs,
+                                    currentPosition!,
+                                    symbol,
+                                    kline.closeTime,
+                                    target.price,
+                                    exitSize,
+                                    'take_profit'
+                                );
+                                currentPosition!.remainingSize -= exitSize;
+                            }
+
+                            if (currentPosition!.remainingSize <= 0.0001) {
+                                shouldExit = true;
+                                exitReason = 'take_profit';
+                                exitPrice = target.price;
                             }
                         });
                     }
-
                 } else {
-                    // --- 默认固定百分比逻辑（无策略风控时的兜底） ---
-                    let profitPercent = 0;
-                    if (direction === 'long') {
-                        profitPercent = ((currentClose - entryPrice) / entryPrice) * 100;
-                    } else {
-                        profitPercent = ((entryPrice - currentClose) / entryPrice) * 100;
-                    }
-
-                    // 兜底止损 5%
-                    const fallbackStopLoss = 5;
-                    if (profitPercent <= -fallbackStopLoss) {
+                    const profitPercent = this.calculateProfitPercent(entryPrice, currentClose, direction);
+                    if (profitPercent <= -5) {
                         shouldExit = true;
                         exitReason = 'stop_loss';
                         exitPrice = currentClose;
                     }
-
-                    // 兜底止盈 10%
-                    const fallbackTakeProfit = 10;
-                    if (profitPercent >= fallbackTakeProfit) {
+                    if (profitPercent >= 10) {
                         shouldExit = true;
                         exitReason = 'take_profit';
                         exitPrice = currentClose;
                     }
                 }
 
-                // 时间止损：达到最大持仓K线数但收益未达阈值时平仓
-                if (!shouldExit && strategyRisk?.timeStop) {
-                    const barsHeld = i - currentPosition.entryIndex + 1;
-                    if (barsHeld >= strategyRisk.timeStop.maxHoldBars) {
-                        let floatingProfitPercent = 0;
-                        if (direction === 'long') {
-                            floatingProfitPercent = ((currentClose - entryPrice) / entryPrice) * 100;
-                        } else {
-                            floatingProfitPercent = ((entryPrice - currentClose) / entryPrice) * 100;
-                        }
-
+                if (!shouldExit && strategyRisk?.timeStop && signalIntervalMs) {
+                    const heldDuration = kline.closeTime - currentPosition.signalEntryTime;
+                    const maxHoldDuration = strategyRisk.timeStop.maxHoldBars * signalIntervalMs;
+                    if (heldDuration >= maxHoldDuration) {
+                        const floatingProfitPercent = this.calculateProfitPercent(
+                            entryPrice,
+                            currentClose,
+                            direction
+                        );
                         if (floatingProfitPercent < strategyRisk.timeStop.profitThreshold) {
-                            shouldExit = true;
-                            exitReason = 'time_stop';
-                            exitPrice = currentClose;
+                            if (hasNextBar) {
+                                pendingExitReason = 'time_stop';
+                            } else if (isFinalSegment) {
+                                shouldExit = true;
+                                exitReason = 'time_stop';
+                                exitPrice = currentClose;
+                            } else {
+                                pendingExitReason = 'time_stop';
+                            }
                         }
                     }
                 }
 
-                // 检查反向信号 (始终生效)
-                if (!shouldExit) {
-                    const strategyResult = strategyDetector(ticker);
-                    if (strategyResult && strategyResult.signal && strategyResult.signal !== direction) {
-                        shouldExit = true;
-                        exitReason = 'signal';
-                        exitPrice = currentClose;
-                    }
-                }
-
-                // 最后一根K线强制平仓
-                if (!shouldExit && i === klines.length - 1) {
-                    shouldExit = true;
-                    exitReason = 'end_of_data';
-                    exitPrice = currentClose;
-                }
-
-                // 执行最终平仓 (StopLoss / Signal / End / Remaining TP)
-                if (shouldExit && currentPosition!.remainingSize > 0.0001) {
-                    // 重新计算最终盈亏，基于确定的 exitPrice
-                    let finalProfitPercent = 0;
-                    if (direction === 'long') {
-                        finalProfitPercent = ((exitPrice - entryPrice) / entryPrice) * 100;
-                    } else {
-                        finalProfitPercent = ((entryPrice - exitPrice) / entryPrice) * 100;
-                    }
-
-                    // 扣除手续费和滑点
-                    const totalCost = this.config.commission + this.config.slippage;
-                    finalProfitPercent -= totalCost;
-
-                    const trade: Trade = {
-                        entryTime: currentPosition!.entryTime,
-                        exitTime: kline.closeTime,
-                        entryPrice: entryPrice,
-                        exitPrice: exitPrice,
-                        direction: direction,
-                        size: currentPosition!.remainingSize, // 使用剩余仓位
-                        profit: finalProfitPercent,
-                        profitUSDT: (this.config.initialCapital * finalProfitPercent * currentPosition!.remainingSize) / 100,
-                        holdingTime: kline.closeTime - currentPosition!.entryTime,
-                        exitReason, // 这里可能是 stop_loss, time_stop, signal, end_of_data
-                    };
-
-                    trades.push(trade);
-                    equity += finalProfitPercent * currentPosition!.remainingSize;
-                }
-
-                if (shouldExit || (currentPosition && currentPosition.remainingSize <= 0.0001)) {
-                    // ... 资金曲线更新保持不变 ...
-
-                    // 更新最大回撤
-                    if (equity > peakEquity) {
-                        peakEquity = equity;
-                    }
-                    const drawdown = ((peakEquity - equity) / peakEquity) * 100;
-                    if (drawdown > maxDrawdown) {
-                        maxDrawdown = drawdown;
-                    }
-
-                    // 记录资金曲线
-                    equityCurve.push({
-                        time: kline.closeTime,
-                        equity: equity,
-                        drawdown: drawdown,
-                    });
-
+                if (shouldExit && currentPosition.remainingSize > 0.0001) {
+                    equity += this.recordTrade(
+                        tradeLegs,
+                        currentPosition,
+                        symbol,
+                        kline.closeTime,
+                        exitPrice,
+                        currentPosition.remainingSize,
+                        exitReason
+                    );
                     currentPosition = null;
-                    continue; // 🔥 FIXED: Skip to the next K-line. Do not evaluate entry signals on the same candle we just closed on.
+                } else if (currentPosition && currentPosition.remainingSize <= 0.0001) {
+                    currentPosition = null;
                 }
             }
 
-            // 检查开仓信号
-            if (!currentPosition) {
-                const strategyResult = strategyDetector(ticker);
-                if (strategyResult && strategyResult.signal) {
-                    currentPosition = {
-                        direction: strategyResult.signal,
-                        entryPrice: parseFloat(kline.close),
-                        entryTime: kline.closeTime,
-                        entryIndex: i,
-                        risk: strategyResult && strategyResult.risk ? JSON.parse(JSON.stringify(strategyResult.risk)) : undefined, // Deep Clone 防止引用污染
-                        highestPrice: parseFloat(kline.high), // 初始化最高价
-                        lowestPrice: parseFloat(kline.low),    // 初始化最低价
-                        remainingSize: 1.0, // 初始仓位 100%
-                        hitTargetIndices: [] // 初始化目标记录
-                    };
-                }
-            }
+            lastProcessedTime = kline.closeTime;
+            lastProcessedPrice = currentClose;
         }
 
-        // 计算统计指标
-        return this.calculateMetrics(
-            trades,
-            equityCurve,
-            maxDrawdown,
-            symbol,
-            interval,
-            strategyName,
-            klines[startIndex].openTime,
-            klines[klines.length - 1].closeTime,
-            klines.length - startIndex
-        );
+        if (isFinalSegment) {
+            if (pendingExitReason && currentPosition) {
+                equity += this.recordTrade(
+                    tradeLegs,
+                    currentPosition,
+                    symbol,
+                    lastProcessedTime,
+                    lastProcessedPrice,
+                    currentPosition.remainingSize,
+                    pendingExitReason
+                );
+                currentPosition = null;
+                pendingExitReason = null;
+            }
+
+            if (currentPosition) {
+                equity += this.recordTrade(
+                    tradeLegs,
+                    currentPosition,
+                    symbol,
+                    lastProcessedTime,
+                    lastProcessedPrice,
+                    currentPosition.remainingSize,
+                    'end_of_data'
+                );
+                currentPosition = null;
+            }
+
+            pendingEntry = null;
+        }
+
+        return {
+            currentPosition,
+            pendingEntry,
+            pendingExitReason,
+            equity,
+            lastProcessedTime,
+            lastProcessedPrice,
+        };
     }
 
     /**
-     * 将K线数据转换为Ticker数据
+     * 运行回测
      */
-    private klineToTicker(kline: KlineData, symbol: string): TickerData {
-        return {
+    async run(input: BacktestRunInput): Promise<BacktestResult> {
+        const {
+            signalKlines,
+            strategyDetector,
+            strategyName,
             symbol,
-            lastPrice: kline.close,
-            priceChange: '0',
-            priceChangePercent: '0',
-            weightedAvgPrice: kline.close,
-            prevClosePrice: kline.open,
-            highPrice: kline.high,
-            lowPrice: kline.low,
-            volume: kline.volume,
-            quoteVolume: kline.quoteVolume,
-            openTime: kline.openTime,
-            closeTime: kline.closeTime,
-            fundingRate: '0',
-            openInterest: '0',
-            openInterestValue: '0',
-        };
+            signalInterval,
+            executionInterval: requestedExecutionInterval,
+            simulationEndTime: requestedSimulationEndTime,
+            fetchExecutionKlines,
+        } = input;
+
+        if (signalKlines.length === 0) {
+            throw new Error('K线数据为空');
+        }
+        if (signalKlines.length < 2) {
+            throw new Error('K线数据不足，至少需要 2 根K线');
+        }
+
+        const executionInterval = requestedExecutionInterval || signalInterval;
+        const signalIntervalMs = this.getIntervalMs(signalInterval);
+        const executionIntervalMs = this.getIntervalMs(executionInterval);
+
+        if (!signalIntervalMs || !executionIntervalMs) {
+            throw new Error('回测周期无效');
+        }
+        if (executionIntervalMs > signalIntervalMs) {
+            throw new Error('执行周期不能大于信号周期');
+        }
+        if (executionInterval !== signalInterval && !fetchExecutionKlines) {
+            throw new Error('缺少细粒度执行数据源');
+        }
+
+        const cooldownSnapshot = cooldownManager.snapshot();
+        const trendStateSnapshot = trendStateManager.snapshot();
+        cooldownManager.clear();
+        trendStateManager.clear();
+
+        try {
+            const tradeLegs: Trade[] = [];
+            const equityCurve: EquityPoint[] = [];
+
+            let currentPosition: BacktestPosition | null = null;
+            let pendingEntry: PendingBacktestEntry | null = null;
+            let pendingExitReason: Trade['exitReason'] | null = null;
+            let executionBarsProcessed = 0;
+            let finalEvaluationTime = signalKlines[signalKlines.length - 1].closeTime;
+            let finalEvaluationPrice = parseFloat(signalKlines[signalKlines.length - 1].close);
+
+            let equity = 100; // 初始权益百分比
+            let peakEquity = 100;
+            let maxDrawdown = 0;
+
+            // 允许短周期/短样本回测继续执行，同时给指标留出合理预热窗口。
+            const preferredWarmupBars = 50;
+            const startIndex = Math.min(preferredWarmupBars, signalKlines.length - 1);
+            const simulationEndTime = requestedSimulationEndTime ?? signalKlines[signalKlines.length - 1].closeTime;
+            const executionProvider = new BacktestExecutionProvider({
+                interval: executionInterval,
+                startTime: signalKlines[startIndex].closeTime,
+                endTime: simulationEndTime,
+                baseKlines: executionInterval === signalInterval ? signalKlines : undefined,
+                fetchRangeData: executionInterval === signalInterval ? undefined : fetchExecutionKlines,
+            });
+
+            let previousSignalCloseTime: number | null = null;
+
+            for (let i = startIndex; i < signalKlines.length; i++) {
+                const kline = signalKlines[i];
+                const currentClose = parseFloat(kline.close);
+
+                if (previousSignalCloseTime !== null && (currentPosition || pendingEntry || pendingExitReason)) {
+                    const executionBars = await executionProvider.getBarsBetween(previousSignalCloseTime, kline.closeTime);
+                    executionBarsProcessed += executionBars.length;
+
+                    const executionState = this.processExecutionBars({
+                        bars: executionBars,
+                        currentPosition,
+                        pendingEntry,
+                        pendingExitReason,
+                        tradeLegs,
+                        symbol,
+                        equity,
+                        signalIntervalMs,
+                        isFinalSegment: false,
+                        fallbackExitTime: kline.closeTime,
+                        fallbackExitPrice: currentClose,
+                    });
+
+                    currentPosition = executionState.currentPosition;
+                    pendingEntry = executionState.pendingEntry;
+                    pendingExitReason = executionState.pendingExitReason;
+                    equity = executionState.equity;
+                    finalEvaluationTime = executionState.lastProcessedTime;
+                    finalEvaluationPrice = executionState.lastProcessedPrice;
+                }
+
+                finalEvaluationTime = kline.closeTime;
+                finalEvaluationPrice = currentClose;
+
+                const ticker = TechnicalIndicators.enrichTickerData(signalKlines, i, symbol, signalInterval);
+                const strategyResult = this.runWithMockedNow(kline.closeTime, () => strategyDetector(ticker));
+
+                if (!pendingExitReason && currentPosition && strategyResult && strategyResult.signal && strategyResult.signal !== currentPosition.direction) {
+                    pendingExitReason = 'signal';
+                    pendingEntry = {
+                        direction: strategyResult.signal,
+                        signalTime: kline.closeTime,
+                        risk: this.cloneRiskManagement(strategyResult.risk),
+                    };
+                } else if (!currentPosition && strategyResult && strategyResult.signal) {
+                    pendingEntry = {
+                        direction: strategyResult.signal,
+                        signalTime: kline.closeTime,
+                        risk: this.cloneRiskManagement(strategyResult.risk),
+                    };
+                }
+
+                const markToMarketEquity = this.calculateMarkToMarketEquity(
+                    equity,
+                    currentPosition,
+                    currentClose
+                );
+
+                if (markToMarketEquity > peakEquity) {
+                    peakEquity = markToMarketEquity;
+                }
+                const drawdown = ((peakEquity - markToMarketEquity) / peakEquity) * 100;
+                if (drawdown > maxDrawdown) {
+                    maxDrawdown = drawdown;
+                }
+
+                equityCurve.push({
+                    time: kline.closeTime,
+                    equity: markToMarketEquity,
+                    drawdown,
+                });
+
+                previousSignalCloseTime = kline.closeTime;
+            }
+
+            if (previousSignalCloseTime !== null && (currentPosition || pendingEntry || pendingExitReason)) {
+                const executionBars = await executionProvider.getBarsBetween(previousSignalCloseTime, simulationEndTime);
+                executionBarsProcessed += executionBars.length;
+
+                const executionState = this.processExecutionBars({
+                    bars: executionBars,
+                    currentPosition,
+                    pendingEntry,
+                    pendingExitReason,
+                    tradeLegs,
+                    symbol,
+                    equity,
+                    signalIntervalMs,
+                    isFinalSegment: true,
+                    fallbackExitTime: finalEvaluationTime,
+                    fallbackExitPrice: finalEvaluationPrice,
+                });
+
+                currentPosition = executionState.currentPosition;
+                pendingEntry = executionState.pendingEntry;
+                pendingExitReason = executionState.pendingExitReason;
+                equity = executionState.equity;
+                finalEvaluationTime = executionState.lastProcessedTime;
+                finalEvaluationPrice = executionState.lastProcessedPrice;
+
+                if (equity > peakEquity) {
+                    peakEquity = equity;
+                }
+                const finalDrawdown = peakEquity > 0 ? ((peakEquity - equity) / peakEquity) * 100 : 0;
+                maxDrawdown = Math.max(maxDrawdown, finalDrawdown);
+
+                const lastEquityPoint = equityCurve[equityCurve.length - 1];
+                if (!lastEquityPoint || lastEquityPoint.time < finalEvaluationTime) {
+                    equityCurve.push({
+                        time: finalEvaluationTime,
+                        equity,
+                        drawdown: finalDrawdown,
+                    });
+                } else {
+                    lastEquityPoint.equity = equity;
+                    lastEquityPoint.drawdown = finalDrawdown;
+                }
+            }
+
+            const trades = this.aggregateTradeLegs(tradeLegs);
+
+            // 计算统计指标
+            return this.calculateMetrics(
+                trades,
+                tradeLegs,
+                equityCurve,
+                maxDrawdown,
+                symbol,
+                signalInterval,
+                executionInterval,
+                strategyName,
+                signalKlines[startIndex].openTime,
+                Math.max(signalKlines[signalKlines.length - 1].closeTime, finalEvaluationTime),
+                signalKlines.length - startIndex,
+                executionBarsProcessed
+            );
+        } finally {
+            cooldownManager.restore(cooldownSnapshot);
+            trendStateManager.restore(trendStateSnapshot);
+        }
     }
 
     /**
@@ -503,49 +843,60 @@ export class BacktestEngine {
      */
     private calculateMetrics(
         trades: Trade[],
+        tradeLegs: Trade[],
         equityCurve: EquityPoint[],
         maxDrawdown: number,
         symbol: string,
         interval: string,
+        executionInterval: string,
         strategyName: string,
         startTime: number,
         endTime: number,
-        totalBars: number
+        totalBars: number,
+        executionBarsProcessed: number
     ): BacktestResult {
         const totalTrades = trades.length;
         const winningTrades = trades.filter(t => t.profit > 0).length;
         const losingTrades = trades.filter(t => t.profit < 0).length;
         const winRate = totalTrades > 0 ? (winningTrades / totalTrades) * 100 : 0;
 
-        const totalProfit = trades.reduce((sum, t) => sum + (t.profit * (t.size || 1)), 0); // 加权总盈亏
+        const totalProfit = trades.reduce((sum, t) => sum + (t.profit * (t.size || 1)), 0);
         const totalProfitUSDT = trades.reduce((sum, t) => sum + t.profitUSDT, 0);
-        const averageProfit = totalTrades > 0 ? totalProfit / totalTrades : 0; // 这变成了平均每笔(部分)交易对总账户的贡献百分比，可能有点小
-
-        // 或者 averageProfit 保持为 "平均单次交易盈亏幅"，不加权?
-        // 不，如果不加权，一个 1% 仓位的 100% 盈利会拉高平均值，误导性强。加权更合理。
+        const averageProfit = totalTrades > 0 ? totalProfit / totalTrades : 0;
 
         const wins = trades.filter(t => t.profit > 0);
         const losses = trades.filter(t => t.profit < 0);
         const averageWin = wins.length > 0 ? wins.reduce((sum, t) => sum + (t.profit * (t.size || 1)), 0) / wins.length : 0;
         const averageLoss = losses.length > 0 ? losses.reduce((sum, t) => sum + (t.profit * (t.size || 1)), 0) / losses.length : 0;
 
-        // 最大盈利/亏损也应该看绝对贡献? 或者看原始幅度? 通常看原始幅度代表策略能力。
-        // 但为了资金对齐，这里保持原始幅度可能更好用于观察“抓住多大行情”，而加权用于评估“赚了多少钱”。
-        // 让我们只修改 totalProfit 和 averageWin/Loss 的*统计口径*为加权值，这样能反映对账户的真实影响。
-
-        const largestWin = wins.length > 0 ? Math.max(...wins.map(t => t.profit)) : 0; // 保持原始幅度
-        const largestLoss = losses.length > 0 ? Math.min(...losses.map(t => t.profit)) : 0; // 保持原始幅度
+        const largestWin = wins.length > 0 ? Math.max(...wins.map(t => t.profit)) : 0;
+        const largestLoss = losses.length > 0 ? Math.min(...losses.map(t => t.profit)) : 0;
 
         const totalWin = wins.reduce((sum, t) => sum + (t.profit * (t.size || 1)), 0);
         const totalLoss = Math.abs(losses.reduce((sum, t) => sum + (t.profit * (t.size || 1)), 0));
-        const profitFactor = totalLoss > 0 ? totalWin / totalLoss : 0;
+        const profitFactor = totalLoss > 0
+            ? totalWin / totalLoss
+            : totalWin > 0
+                ? Number.POSITIVE_INFINITY
+                : 0;
 
-        // 计算夏普比率（简化版本）
-        const returns = trades.map(t => t.profit);
-        const avgReturn = averageProfit;
-        const variance = returns.reduce((sum, r) => sum + Math.pow(r - avgReturn, 2), 0) / (returns.length || 1);
+        const intervalMs = this.getIntervalMs(interval);
+        const yearMs = 365.25 * 24 * 60 * 60 * 1000;
+        const barsPerYear = intervalMs ? yearMs / intervalMs : 365.25;
+        const equityReturns = equityCurve.slice(1)
+            .map((point, index) => {
+                const previous = equityCurve[index]?.equity ?? 100;
+                return previous > 0 ? (point.equity - previous) / previous : 0;
+            })
+            .filter((value) => Number.isFinite(value));
+        const avgReturn = equityReturns.length > 0
+            ? equityReturns.reduce((sum, value) => sum + value, 0) / equityReturns.length
+            : 0;
+        const variance = equityReturns.length > 0
+            ? equityReturns.reduce((sum, value) => sum + Math.pow(value - avgReturn, 2), 0) / equityReturns.length
+            : 0;
         const stdDev = Math.sqrt(variance);
-        const sharpeRatio = stdDev > 0 ? (avgReturn / stdDev) * Math.sqrt(252) : 0; // 年化
+        const sharpeRatio = stdDev > 0 ? (avgReturn / stdDev) * Math.sqrt(barsPerYear) : 0;
 
         // 持仓时间统计
         const holdingTimes = trades.map(t => t.holdingTime);
@@ -556,27 +907,27 @@ export class BacktestEngine {
         // 🔥 新增风险指标计算
 
         // 1. Sortino比率 (只考虑下行波动)
-        const downsideReturns = returns.filter(r => r < 0);
+        const downsideReturns = equityReturns.filter(r => r < 0);
         const downsideVariance = downsideReturns.length > 0
-            ? downsideReturns.reduce((sum, r) => sum + r * r, 0) / downsideReturns.length
+            ? downsideReturns.reduce((sum, value) => sum + Math.pow(value, 2), 0) / downsideReturns.length
             : 0;
         const downsideDeviation = Math.sqrt(downsideVariance);
-        const sortinoRatio = downsideDeviation > 0 ? (avgReturn / downsideDeviation) * Math.sqrt(252) : 0;
+        const sortinoRatio = downsideDeviation > 0 ? (avgReturn / downsideDeviation) * Math.sqrt(barsPerYear) : 0;
 
-        // 2. Calmar比率 (年化收益 / 最大回撤)
-        const tradingDays = Math.max(1, (endTime - startTime) / (24 * 60 * 60 * 1000));
-        const annualizedReturn = totalProfit * (252 / tradingDays);
-        const calmarRatio = maxDrawdown > 0 ? annualizedReturn / maxDrawdown : 0;
+        const durationMs = Math.max(1, endTime - startTime);
+        const endingEquity = equityCurve[equityCurve.length - 1]?.equity ?? 100;
+        const annualizedReturn = endingEquity > 0
+            ? Math.pow(endingEquity / 100, yearMs / durationMs) - 1
+            : -1;
+        const maxDrawdownDecimal = maxDrawdown / 100;
+        const calmarRatio = maxDrawdownDecimal > 0 ? annualizedReturn / maxDrawdownDecimal : 0;
 
-        // 3. 期望值 (每笔交易的平均收益，考虑胜率)
         const expectancy = totalTrades > 0
             ? (winRate / 100) * averageWin + ((100 - winRate) / 100) * averageLoss
             : 0;
 
-        // 4. 恢复因子 (净利润 / 最大回撤)
         const recoveryFactor = maxDrawdown > 0 ? totalProfit / maxDrawdown : 0;
 
-        // 5. 最大连续盈利/亏损次数
         let maxConsecutiveWins = 0;
         let maxConsecutiveLosses = 0;
         let currentStreak = { type: 'win' as 'win' | 'loss', count: 0 };
@@ -612,10 +963,12 @@ export class BacktestEngine {
         return {
             symbol,
             interval,
+            executionInterval,
             strategyName,
             startTime,
             endTime,
             totalBars,
+            executionBarsProcessed,
             totalTrades,
             winningTrades,
             losingTrades,
@@ -641,6 +994,7 @@ export class BacktestEngine {
             maxHoldingTime,
             minHoldingTime,
             trades,
+            tradeLegs,
             equityCurve,
         };
     }

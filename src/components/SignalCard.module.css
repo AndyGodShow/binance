@@ -13,6 +13,11 @@
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
 
+.coolingCard {
+    opacity: 0.78;
+    border-style: dashed;
+}
+
 .card.long {
     border-left: 3px solid rgb(34, 197, 94);
 }
@@ -92,6 +97,47 @@
     font-size: 14px;
     font-weight: 700;
     color: var(--primary);
+}
+
+.statusRow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+}
+
+.statusBadge {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+}
+
+.statusActive {
+    color: rgb(134, 239, 172);
+    background: rgba(34, 197, 94, 0.15);
+    border: 1px solid rgba(34, 197, 94, 0.25);
+}
+
+.statusCooling {
+    color: rgb(253, 224, 71);
+    background: rgba(245, 158, 11, 0.15);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.statusSnapshot {
+    color: rgb(191, 219, 254);
+    background: rgba(59, 130, 246, 0.14);
+    border: 1px solid rgba(96, 165, 250, 0.28);
+}
+
+.statusHint {
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.55);
 }
 
 .closeBtn {
@@ -235,6 +281,17 @@
     font-size: 11px;
     color: rgba(255, 255, 255, 0.4);
     font-family: 'Courier New', monospace;
+}
+
+.timeGroup {
+    margin-top: 10px;
+}
+
+.secondaryTime {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.3);
+    font-family: 'Courier New', monospace;
+    margin-top: 4px;
 }
 
 /* 🔥 风险管理样式 */

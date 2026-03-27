@@ -3,6 +3,7 @@
  * 用于缓存K线数据和其他频繁访问的数据
  */
 
+import { APP_CONFIG } from './config';
 import { logger } from './logger';
 
 interface CacheEntry<T> {
@@ -153,9 +154,15 @@ export class LRUCache<T> {
 }
 
 // 导出全局K线缓存实例
-export const klineCache = new LRUCache(200, 5 * 60 * 1000); // 最多200个条目，5分钟TTL
+export const klineCache = new LRUCache(
+    APP_CONFIG.CACHE.KLINE_MAX_SIZE,
+    APP_CONFIG.CACHE.KLINE_TTL
+);
 
-// 定期清理过期缓存
-setInterval(() => {
-    klineCache.cleanupExpired();
-}, 60 * 1000); // 每分钟清理一次
+// 定期清理过期缓存（使用 globalThis 标记防止热重载时重复创建 interval）
+if (!(globalThis as Record<string, unknown>)['__klineCacheCleanupStarted']) {
+    (globalThis as Record<string, unknown>)['__klineCacheCleanupStarted'] = true;
+    setInterval(() => {
+        klineCache.cleanupExpired();
+    }, 60 * 1000); // 每分钟清理一次
+}

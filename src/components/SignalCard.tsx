@@ -1,11 +1,12 @@
 "use client";
 
 import { StrategySignal } from '@/lib/strategyTypes';
+import { formatPrice } from '@/lib/risk/priceUtils';
 import styles from './SignalCard.module.css';
 
 interface SignalCardProps {
     signal: StrategySignal;
-    onDismiss: (symbol: string) => void;
+    onDismiss: (signal: StrategySignal) => void;
     onSymbolClick?: (symbol: string) => void;
 }
 
@@ -14,6 +15,18 @@ export default function SignalCard({ signal, onDismiss, onSymbolClick }: SignalC
     const directionColor = signal.direction === 'long' ? styles.long : styles.short;
     const directionIcon = signal.direction === 'long' ? '🟢' : '🔴';
     const directionText = signal.direction === 'long' ? '做多' : '做空';
+    const isCooling = signal.status === 'cooling';
+    const isSnapshot = signal.status === 'snapshot';
+    const risk = signal.risk;
+    const formatDateTime = (value: number) => new Date(value).toLocaleString('zh-CN', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+    });
 
     // 叠加信号等级标识
     const stackCount = signal.stackCount || 1;
@@ -31,14 +44,31 @@ export default function SignalCard({ signal, onDismiss, onSymbolClick }: SignalC
         cardStyle = `${styles.card} ${styles.strongSignal}`;
     }
 
+    const statusClassName = isCooling
+        ? styles.statusCooling
+        : isSnapshot
+            ? styles.statusSnapshot
+            : styles.statusActive;
+    const statusLabel = isCooling
+        ? '回落保留'
+        : isSnapshot
+            ? '打开时已满足'
+            : '实时触发';
+    const statusHint = isCooling
+        ? '条件已回落，手动关闭前会一直保留'
+        : isSnapshot
+            ? '页面打开时该信号已经成立，无法确认精确触发时点'
+            : null;
+    const primaryTimeLabel = isSnapshot ? '首次记录' : '触发时间';
+
     return (
-        <div className={`${cardStyle} ${directionColor}`}>
+        <div className={`${cardStyle} ${directionColor} ${isCooling ? styles.coolingCard : ''}`}>
             <div className={styles.header}>
                 <div className={styles.symbol} onClick={() => onSymbolClick?.(signal.symbol)}>
                     {directionIcon} {cleanSymbol}
                     {signal.price && (
                         <span className={styles.price}>
-                            ${signal.price < 1 ? signal.price.toFixed(4) : signal.price.toFixed(2)}
+                            ${formatPrice(signal.price)}
                         </span>
                     )}
                 </div>
@@ -49,13 +79,24 @@ export default function SignalCard({ signal, onDismiss, onSymbolClick }: SignalC
                         className={styles.closeBtn}
                         onClick={(e) => {
                             e.stopPropagation();
-                            onDismiss(signal.symbol);
+                            onDismiss(signal);
                         }}
                         title="关闭此信号"
                     >
                         ✕
                     </button>
                 </div>
+            </div>
+
+            <div className={styles.statusRow}>
+                <span className={`${styles.statusBadge} ${statusClassName}`}>
+                    {statusLabel}
+                </span>
+                {statusHint && (
+                    <span className={styles.statusHint}>
+                        {statusHint}
+                    </span>
+                )}
             </div>
 
             {/* 叠加策略信息 */}
@@ -93,13 +134,13 @@ export default function SignalCard({ signal, onDismiss, onSymbolClick }: SignalC
             )}
 
             {/* 🔥 风险管理信息 */}
-            {signal.risk && (
+            {risk && (
                 <div className={styles.riskManagement}>
                     {/* 止损 */}
                     <div className={styles.riskRow}>
                         <span className={styles.riskLabel}>止损:</span>
                         <span className={`${styles.riskValue} ${styles.stopLoss}`}>
-                            ${signal.risk.stopLoss.price.toFixed(2)} ({signal.direction === 'long' ? '-' : '+'}{signal.risk.stopLoss.percentage.toFixed(1)}%)
+                            ${formatPrice(risk.stopLoss.price, signal.price ?? risk.metrics.entryPrice, 1)} ({signal.direction === 'long' ? '-' : '+'}{risk.stopLoss.percentage.toFixed(1)}%)
                         </span>
                     </div>
 
@@ -107,8 +148,8 @@ export default function SignalCard({ signal, onDismiss, onSymbolClick }: SignalC
                     <div className={styles.riskRow}>
                         <span className={styles.riskLabel}>止盈:</span>
                         <span className={`${styles.riskValue} ${styles.takeProfit}`}>
-                            {signal.risk.takeProfit.targets.map((t, i) =>
-                                `$${t.price.toFixed(2)} (+${t.percentage.toFixed(1)}%)[${t.closePercentage}%]`
+                            {risk.takeProfit.targets.map((t) =>
+                                `$${formatPrice(t.price, signal.price ?? risk.metrics.entryPrice, 1)} (+${t.percentage.toFixed(1)}%)[${t.closePercentage}%]`
                             ).join(' | ')}
                         </span>
                     </div>
@@ -117,7 +158,7 @@ export default function SignalCard({ signal, onDismiss, onSymbolClick }: SignalC
                     <div className={styles.riskRow}>
                         <span className={styles.riskLabel}>盈亏比:</span>
                         <span className={`${styles.riskValue} ${styles.rrRatio}`}>
-                            1:{signal.risk.takeProfit.riskRewardRatio.toFixed(1)}
+                            1:{risk.takeProfit.riskRewardRatio.toFixed(1)}
                         </span>
                     </div>
 
@@ -125,7 +166,7 @@ export default function SignalCard({ signal, onDismiss, onSymbolClick }: SignalC
                     <div className={styles.riskRow}>
                         <span className={styles.riskLabel}>建议仓位:</span>
                         <span className={styles.riskValue}>
-                            {signal.risk.positionSizing.percentage}% (杠杆{signal.risk.positionSizing.leverage}x)
+                            {risk.positionSizing.percentage}% (杠杆{risk.positionSizing.leverage}x)
                         </span>
                     </div>
                 </div>
@@ -143,16 +184,15 @@ export default function SignalCard({ signal, onDismiss, onSymbolClick }: SignalC
                 </div>
             )}
 
-            <div className={styles.time}>
-                {new Date(signal.timestamp).toLocaleString('zh-CN', {
-                    year: 'numeric',
-                    month: '2-digit',
-                    day: '2-digit',
-                    hour: '2-digit',
-                    minute: '2-digit',
-                    second: '2-digit',
-                    hour12: false
-                })}
+            <div className={styles.timeGroup}>
+                <div className={styles.time}>
+                    {primaryTimeLabel}: {formatDateTime(signal.timestamp)}
+                </div>
+                {isCooling && signal.lastSeenAt && (
+                    <div className={styles.secondaryTime}>
+                        最后满足: {formatDateTime(signal.lastSeenAt)}
+                    </div>
+                )}
             </div>
         </div>
     );

@@ -2,9 +2,10 @@ import { TradingStrategy, StrategySignal, CompositeCondition } from '../lib/stra
 import { TickerData } from '../lib/types';
 import { cooldownManager } from '../lib/cooldownManager';
 import { logger } from '../lib/logger';
-import { calculateRiskManagement } from '@/lib/risk/riskCalculator';
+import { calculateRiskManagement } from '../lib/risk/riskCalculator';
+import { APP_CONFIG } from '../lib/config';
 
-// 辅助函数：检查条件并创建条件对象
+// 策略参数配置：检查条件并创建条件对象
 function checkCondition(
     name: string,
     description: string,
@@ -248,9 +249,9 @@ export const rsrsStrategy: TradingStrategy = {
                             bollingerLower: ticker.bollingerLower,
                             bollingerUpper: ticker.bollingerUpper,
                             rsrsZScore: zScore,
-                            rsrsR2: r2,
-                            accountBalance: 10000,
-                            riskPercentage: 1
+                             // 从全局配置读取风控设置
+                    accountBalance: APP_CONFIG.RISK.DEFAULT_ACCOUNT_BALANCE, // TODO: 支持从前端用户设置传入
+                    riskPercentage: APP_CONFIG.RISK.DEFAULT_RISK_PER_TRADE,
                         });
                     } catch (error) {
                         logger.error('RSRS risk calculation failed', error as Error, { symbol: ticker.symbol });

@@ -44,10 +44,13 @@ export function calculateVolumeProfile(
         };
     }
 
-    // 找出价格范围
-    const prices = candles.flatMap(c => [c.high, c.low]);
-    const minPrice = Math.min(...prices);
-    const maxPrice = Math.max(...prices);
+    // 找出价格范围（使用 reduce 避免大数组时 Math.min/max spread 栈溢出）
+    let minPrice = Infinity;
+    let maxPrice = -Infinity;
+    for (const c of candles) {
+        if (c.low < minPrice) minPrice = c.low;
+        if (c.high > maxPrice) maxPrice = c.high;
+    }
     const priceStep = (maxPrice - minPrice) / numBins;
 
     // 初始化价格区间
@@ -139,36 +142,3 @@ function calculateValueArea(
     return { vah, val };
 }
 
-/**
- * 判断价格是否突破 VAH
- * 
- * @param currentPrice 当前价格
- * @param vah Value Area High
- * @returns true = 已突破
- */
-export function isAboveVAH(currentPrice: number, vah: number): boolean {
-    return currentPrice > vah;
-}
-
-/**
- * 判断价格是否跌破 VAL
- * 
- * @param currentPrice 当前价格
- * @param val Value Area Low
- * @returns true = 已跌破
- */
-export function isBelowVAL(currentPrice: number, val: number): boolean {
-    return currentPrice < val;
-}
-
-/**
- * 计算价格距离 POC 的偏离度
- * 
- * @param currentPrice 当前价格
- * @param poc Point of Control
- * @returns 偏离百分比
- */
-export function getDistanceFromPOC(currentPrice: number, poc: number): number {
-    if (poc === 0) return 0;
-    return ((currentPrice - poc) / poc) * 100;
-}

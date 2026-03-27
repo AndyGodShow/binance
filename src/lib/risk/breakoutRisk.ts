@@ -142,9 +142,9 @@ export function calculateBreakoutRisk(params: RiskCalculationParams): RiskManage
             profitThreshold: 1.0
         },
         metrics: {
-            entryPrice,
-            riskAmount: roundPercentage(riskAmount),
-            potentialProfit: roundPercentage(potentialProfit),
+            entryPrice: roundPrice(entryPrice),
+            riskAmount: Math.round(riskAmount * 100) / 100,
+            potentialProfit: Math.round(potentialProfit * 100) / 100,
             winRate: 0.55,
             expectedValue: Math.round((potentialProfit * 0.55 - riskAmount * 0.45) * 100) / 100
         }

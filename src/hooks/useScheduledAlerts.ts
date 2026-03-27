@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { TickerData, ScheduledAlertRecord, FundingRateItem } from '@/lib/types';
 
-export function useScheduledAlerts(data: TickerData[], enabled: boolean) {
+export function useScheduledAlerts(data: TickerData[], enabled: boolean, config?: { enableSound: boolean; enableNotification: boolean }) {
     const [scheduledAlerts, setScheduledAlerts] = useState<ScheduledAlertRecord[]>([]);
     const lastTriggeredRef = useRef<number>(-1);
     const dataRef = useRef<TickerData[]>(data);
@@ -43,9 +43,13 @@ export function useScheduledAlerts(data: TickerData[], enabled: boolean) {
         };
 
         setScheduledAlerts(prev => [alert, ...prev.slice(0, 9)]);
-        showFundingRateNotification(alert);
-        playAlertSound();
-    }, []);
+        if (config?.enableNotification !== false) {
+            showFundingRateNotification(alert);
+        }
+        if (config?.enableSound !== false) {
+            playAlertSound();
+        }
+    }, [config?.enableNotification, config?.enableSound]);
 
     useEffect(() => {
         if (!enabled) return;
@@ -57,7 +61,8 @@ export function useScheduledAlerts(data: TickerData[], enabled: boolean) {
 
             // 在整点或半点的前10秒内触发（加大窗口，防止错过）
             if ((minutes === 0 || minutes === 30) && seconds < 10) {
-                const currentIdentifier = now.getHours() * 100 + minutes;
+                const dateKey = now.getFullYear() * 10000 + (now.getMonth() + 1) * 100 + now.getDate();
+                const currentIdentifier = dateKey * 10000 + now.getHours() * 100 + minutes;
                 if (lastTriggeredRef.current !== currentIdentifier) {
                     lastTriggeredRef.current = currentIdentifier;
                     triggerFundingRateAlert();
@@ -109,10 +114,16 @@ function showFundingRateNotification(alert: ScheduledAlertRecord) {
 // Helper: 播放提示音
 function playAlertSound() {
     try {
-        const audio = new Audio('/alert.mp3');
-        audio.volume = 0.3; // 定时推送音量稍小
-        audio.play().catch(e => console.error('Failed to play sound:', e));
+        const ctx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.frequency.value = 880;
+        gain.gain.value = 0.2;
+        osc.start();
+        osc.stop(ctx.currentTime + 0.12);
     } catch (e) {
-        console.error('Failed to create audio:', e);
+        console.error('Failed to play alert sound:', e);
     }
 }

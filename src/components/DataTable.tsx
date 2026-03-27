@@ -204,6 +204,7 @@ export default memo(DataTable, (prevProps, nextProps) => {
         prevProps.data === nextProps.data &&
         prevProps.sortConfig === nextProps.sortConfig &&
         prevProps.compactMode === nextProps.compactMode &&
+        prevProps.maxVolume === nextProps.maxVolume &&
         prevProps.onSort === nextProps.onSort &&
         prevProps.onSymbolClick === nextProps.onSymbolClick
     );

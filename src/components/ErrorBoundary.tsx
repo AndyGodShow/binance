@@ -58,39 +58,43 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
                     minHeight: '400px',
                     padding: '20px',
                     textAlign: 'center',
-                    backgroundColor: '#fff',
+                    backgroundColor: '#1a1a2e',
                     borderRadius: '8px',
-                    boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
                     margin: '20px'
                 }}>
                     <div style={{ fontSize: '48px', marginBottom: '20px' }}>⚠️</div>
-                    <h2 style={{ color: '#d32f2f', marginBottom: '10px' }}>出错了</h2>
-                    <p style={{ color: '#666', marginBottom: '20px', maxWidth: '500px' }}>
+                    <h2 style={{ color: '#ff6b6b', marginBottom: '10px' }}>出错了</h2>
+                    <p style={{ color: '#a0a0b8', marginBottom: '20px', maxWidth: '500px' }}>
                         应用遇到了一个错误。您可以尝试刷新页面，或者联系技术支持。
                     </p>
 
                     {this.state.error && (
                         <details style={{
-                            marginBottom: '20px',
+                            marginTop: '20px',
                             padding: '10px',
-                            backgroundColor: '#f5f5f5',
+                            background: 'rgba(255,255,255,0.05)',
                             borderRadius: '4px',
-                            maxWidth: '600px',
-                            width: '100%',
                             textAlign: 'left'
                         }}>
                             <summary style={{ cursor: 'pointer', fontWeight: 'bold', marginBottom: '10px' }}>
-                                错误详情
+                                错误详情 (仅开发环境可见)
                             </summary>
                             <pre style={{
                                 fontSize: '12px',
                                 overflow: 'auto',
                                 whiteSpace: 'pre-wrap',
-                                wordWrap: 'break-word'
+                                wordWrap: 'break-word',
+                                display: process.env.NODE_ENV === 'development' ? 'block' : 'none'
                             }}>
                                 {this.state.error.toString()}
                                 {this.state.errorInfo && '\n\n' + this.state.errorInfo.componentStack}
                             </pre>
+                            {process.env.NODE_ENV !== 'development' && (
+                                <p style={{ fontSize: '12px', color: '#888' }}>
+                                    出于安全原因，生产环境不再展示详细调用栈。请联系开发人员获取日志。
+                                </p>
+                            )}
                         </details>
                     )}
 

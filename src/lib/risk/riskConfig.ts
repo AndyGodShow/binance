@@ -135,18 +135,20 @@ export const DEFAULT_RISK_CONFIGS: Record<string, StrategyRiskConfig> = {
         stopLoss: {
             type: 'indicator',  // KC 下轨
             fixedPercentage: 1.5,
-            maxPercentage: 3,
+            maxPercentage: 2.5,
         },
         takeProfit: {
             targets: [
-                { stopMultiplier: 2, closePercentage: 50, moveStopToEntry: true },
-                { stopMultiplier: 3, closePercentage: 100, moveStopToEntry: false },
+                { stopMultiplier: 2.0, closePercentage: 40, moveStopToEntry: true },
+                { stopMultiplier: 3.5, closePercentage: 30, moveStopToEntry: false },
+                { stopMultiplier: 5.0, closePercentage: 30, moveStopToEntry: false },
             ],
         },
-        maxLeverage: 4,
-        historicalWinRate: 0.65,
-        historicalAvgWin: 5.5,
-        historicalAvgLoss: 1.5,
+        timeStop: { maxBars: 10, profitThreshold: 0.8 },
+        maxLeverage: 3,
+        historicalWinRate: 0.58,
+        historicalAvgWin: 4.8,
+        historicalAvgLoss: 1.7,
     },
 };
 

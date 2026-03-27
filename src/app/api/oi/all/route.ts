@@ -2,10 +2,12 @@ import { NextResponse } from 'next/server';
 import { fetchBinanceJson } from '@/lib/binanceApi';
 import { logger } from '@/lib/logger';
 
-// Simple in-memory cache to prevent hitting rate limits
-let cache: { time: number; data: Record<string, string> } | null = null;
+// Keep a short live cache plus a stale snapshot so repeat visits can render immediately.
+let liveCache: { time: number; data: Record<string, string> } | null = null;
+let lastSuccessfulData: Record<string, string> | null = null;
+let lastSuccessfulAt = 0;
 let inflightBuild: Promise<Record<string, string>> | null = null;
-const CACHE_DURATION = 120000; // 2 minutes cache for full list (extended for all symbols)
+const LIVE_CACHE_DURATION = 15000;
 
 interface BinanceTicker24h {
     symbol: string;
@@ -53,7 +55,7 @@ async function buildOpenInterestMap(): Promise<Record<string, string>> {
 
     // 2. Batch fetch OI with moderate concurrency to reduce rate limits.
     const chunkArray = (arr: string[], size: number) => {
-        return Array.from({ length: Math.ceil(arr.length / size) }, (v, i) =>
+        return Array.from({ length: Math.ceil(arr.length / size) }, (_, i) =>
             arr.slice(i * size, i * size + size)
         );
     };
@@ -74,14 +76,26 @@ async function buildOpenInterestMap(): Promise<Record<string, string>> {
         await new Promise(r => setTimeout(r, 25));
     }
 
-    cache = { time: Date.now(), data: oiData };
+    liveCache = { time: Date.now(), data: oiData };
+    lastSuccessfulData = oiData;
+    lastSuccessfulAt = Date.now();
     return oiData;
+}
+
+function ensureOpenInterestBuild(): Promise<Record<string, string>> {
+    if (!inflightBuild) {
+        inflightBuild = buildOpenInterestMap().finally(() => {
+            inflightBuild = null;
+        });
+    }
+
+    return inflightBuild;
 }
 
 export async function GET() {
     const now = Date.now();
-    if (cache && (now - cache.time < CACHE_DURATION)) {
-        return NextResponse.json(cache.data, {
+    if (liveCache && (now - liveCache.time < LIVE_CACHE_DURATION)) {
+        return NextResponse.json(liveCache.data, {
             headers: {
                 'Cache-Control': 'public, s-maxage=15, stale-while-revalidate=30',
                 'X-Data-Source': 'memory-cache',
@@ -89,13 +103,23 @@ export async function GET() {
         });
     }
 
-    const ownsInflight = !inflightBuild;
-    if (!inflightBuild) {
-        inflightBuild = buildOpenInterestMap();
+    if (lastSuccessfulData && Object.keys(lastSuccessfulData).length > 0) {
+        void ensureOpenInterestBuild().catch((error) => {
+            logger.error('Background open interest refresh failed', error as Error);
+        });
+
+        return NextResponse.json(lastSuccessfulData, {
+            headers: {
+                'Cache-Control': 'public, s-maxage=15, stale-while-revalidate=30',
+                'X-Data-Source': 'stale-memory-cache-refreshing',
+                'X-Cache-Age-Seconds': Math.floor((Date.now() - lastSuccessfulAt) / 1000).toString(),
+            }
+        });
     }
 
+    const ownsInflight = !inflightBuild;
     try {
-        const data = await inflightBuild;
+        const data = await ensureOpenInterestBuild();
         return NextResponse.json(data, {
             headers: {
                 'Cache-Control': 'public, s-maxage=15, stale-while-revalidate=30',
@@ -104,11 +128,12 @@ export async function GET() {
         });
     } catch (error) {
         logger.error('Failed to fetch open interest data', error as Error);
-        if (cache && Object.keys(cache.data).length > 0) {
-            return NextResponse.json(cache.data, {
+        if (lastSuccessfulData && Object.keys(lastSuccessfulData).length > 0) {
+            return NextResponse.json(lastSuccessfulData, {
                 headers: {
                     'Cache-Control': 'public, s-maxage=15, stale-while-revalidate=30',
                     'X-Data-Source': 'stale-memory-cache',
+                    'X-Cache-Age-Seconds': Math.floor((Date.now() - lastSuccessfulAt) / 1000).toString(),
                 }
             });
         }
@@ -118,9 +143,5 @@ export async function GET() {
                 'X-Data-Source': 'empty-fallback',
             }
         });
-    } finally {
-        if (ownsInflight) {
-            inflightBuild = null;
-        }
     }
 }

@@ -35,8 +35,44 @@ export function EquityCurveChart({ data, trades }: EquityCurveChartProps) {
     }));
 
     // 找出最大盈利和最大亏损的交易
-    const maxWinTrade = trades.reduce((max, t) => t.profit > max.profit ? t : max, trades[0]);
-    const maxLossTrade = trades.reduce((min, t) => t.profit < min.profit ? t : min, trades[0]);
+    if (trades.length === 0) {
+        return (
+            <div className={styles.chartContainer}>
+                <h4>📈 资金曲线</h4>
+                <ResponsiveContainer width="100%" height={300}>
+                    <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+                        <XAxis dataKey="time" stroke="rgba(255,255,255,0.5)" style={{ fontSize: 12 }} />
+                        <YAxis
+                            stroke="rgba(255,255,255,0.5)"
+                            style={{ fontSize: 12 }}
+                            label={{ value: '权益 (%)', angle: -90, position: 'insideLeft', fill: 'rgba(255,255,255,0.7)' }}
+                        />
+                        <Tooltip
+                            contentStyle={{
+                                background: 'rgba(30, 30, 46, 0.95)',
+                                border: '1px solid rgba(255,255,255,0.2)',
+                                borderRadius: '8px',
+                                color: '#fff'
+                            }}
+                            formatter={(value: number | undefined) => value !== undefined ? [`${value.toFixed(2)}%`, '权益'] : ['', '']}
+                        />
+                        <Legend wrapperStyle={{ color: '#fff' }} />
+                        <ReferenceLine y={100} stroke="rgba(255,255,255,0.3)" strokeDasharray="3 3" />
+                        <Line
+                            type="monotone"
+                            dataKey="equity"
+                            stroke="#22c55e"
+                            strokeWidth={2}
+                            dot={false}
+                            name="权益曲线"
+                            animationDuration={1000}
+                        />
+                    </LineChart>
+                </ResponsiveContainer>
+            </div>
+        );
+    }
 
     return (
         <div className={styles.chartContainer}>
@@ -247,7 +283,7 @@ export function HoldingTimeChart({ trades }: HoldingTimeChartProps) {
                             borderRadius: '8px',
                             color: '#fff'
                         }}
-                        formatter={((value: any, name: any, props: any) => {
+                        formatter={((value: any, _name: any, props: any) => {
                             if (!value) return ['', ''];
                             return [`${value} 笔 (${props.payload?.percentage || 0}%)`, '交易'];
                         }) as any}

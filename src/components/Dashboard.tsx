@@ -49,6 +49,8 @@ export default function Dashboard({ processedData: externalData, onSymbolClick }
             const threshold = Number(val);
             if (op === 'lt') {
                 result = result.filter((t) => Number(t.quoteVolume) < threshold);
+            } else if (op === 'gt') {
+                result = result.filter((t) => Number(t.quoteVolume) > threshold);
             }
         }
 
@@ -88,6 +90,12 @@ export default function Dashboard({ processedData: externalData, onSymbolClick }
         return result;
     }, [externalData, search, volumeFilter, sortConfig]);
 
+    // BUG-1: Calculate maxVolume for DataTable progress bars
+    const maxVolume = useMemo(() => {
+        if (filteredData.length === 0) return 0;
+        return Math.max(...filteredData.map(t => Number(t.quoteVolume) || 0));
+    }, [filteredData]);
+
     const alertData = externalData || [];
 
     // Alert Monitor Hook
@@ -96,7 +104,8 @@ export default function Dashboard({ processedData: externalData, onSymbolClick }
     // Scheduled Alerts Hook
     const { scheduledAlerts, dismissAlert: dismissScheduledAlert } = useScheduledAlerts(
         alertData,
-        alertConfig.enableScheduledAlerts
+        alertConfig.enableScheduledAlerts,
+        { enableSound: alertConfig.enableSound, enableNotification: alertConfig.enableNotification }
     );
 
     const handleSort = useCallback((key: SortableKey) => {
@@ -137,6 +146,7 @@ export default function Dashboard({ processedData: externalData, onSymbolClick }
                 onSort={handleSort}
                 sortConfig={sortConfig}
                 compactMode={compactMode}
+                maxVolume={maxVolume}
             />
 
             {/* Alert Notifications */}

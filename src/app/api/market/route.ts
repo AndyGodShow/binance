@@ -12,7 +12,17 @@ let lastSuccessfulAt = 0;
 let liveMarketCache: { time: number; data: TickerData[] } | null = null;
 let inflightMarketBuild: Promise<TickerData[]> | null = null;
 
-const LIVE_CACHE_DURATION = 2500;
+const LIVE_CACHE_DURATION = 5000;
+
+function ensureMarketBuild(): Promise<TickerData[]> {
+    if (!inflightMarketBuild) {
+        inflightMarketBuild = buildMarketData().finally(() => {
+            inflightMarketBuild = null;
+        });
+    }
+
+    return inflightMarketBuild;
+}
 
 interface BinanceExchangeInfoSymbol {
     symbol: string;
@@ -77,56 +87,76 @@ async function buildMarketData(): Promise<TickerData[]> {
 
     // ========== 🔥 技术指标增强（分级计算） ==========
 
-    // 1. 获取 BTC 参考数据（用于 Beta 计算）
-    const btcReturns = await getBTCReturns();
-
-    // 2. 按成交量排序，确定需要计算指标的币种
-    const sortedByVolume = merged
-        .sort((a, b) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume));
-
-    const topTickerInputs = sortedByVolume
-        .slice(0, APP_CONFIG.INDICATORS.TOP_SYMBOLS_FOR_INDICATORS)
-        .map((ticker) => ({
-            symbol: ticker.symbol,
-            price: ticker.markPrice || ticker.lastPrice,
-        }));
-
+    // 1. 动态筛选需要完整增强的币种
     const oiTickerInputs = merged.map((ticker) => ({
         symbol: ticker.symbol,
         price: ticker.markPrice || ticker.lastPrice,
     }));
 
-    const topSymbols = topTickerInputs.map((ticker) => ticker.symbol);
-
-    // 3. 批量获取 K 线数据（使用配置的批大小）
-    const [klinesMap, oiSnapshotMap] = await Promise.all([
-        fetchKlinesBatch(topSymbols, APP_CONFIG.API.BATCH_SIZE),
+    const [btcReturns, oiSnapshotMap] = await Promise.all([
+        getBTCReturns(),
         fetchOpenInterestMarketSnapshotsBatch(oiTickerInputs, 25),
     ]);
 
-    // 4. 增强数据（添加技术指标）
+    const sortedByVolume = merged
+        .sort((a, b) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume));
+
+    const eligibleTickerInputs = sortedByVolume
+        .filter((ticker) => {
+            const quoteVolume = parseFloat(ticker.quoteVolume || '0');
+            const oiSnapshot = oiSnapshotMap.get(ticker.symbol);
+            const openInterestValue = parseFloat(oiSnapshot?.currentOpenInterestValue || '0');
+
+            return (
+                quoteVolume >= APP_CONFIG.INDICATORS.MIN_QUOTE_VOLUME_FOR_FULL_INDICATORS ||
+                openInterestValue >= APP_CONFIG.INDICATORS.MIN_OPEN_INTEREST_VALUE_FOR_FULL_INDICATORS
+            );
+        })
+        .map((ticker) => ({
+            symbol: ticker.symbol,
+            price: ticker.markPrice || ticker.lastPrice,
+        }));
+
+    const eligibleSymbols = eligibleTickerInputs.map((ticker) => ticker.symbol);
+
+    // 2. 仅为通过流动性筛选的币种批量获取 K 线数据
+    const [klinesMap, trend5mKlinesMap, daily1dKlinesMap] = await Promise.all([
+        fetchKlinesBatch(eligibleSymbols, APP_CONFIG.API.BATCH_SIZE, '15m', 50),
+        fetchKlinesBatch(eligibleSymbols, APP_CONFIG.API.BATCH_SIZE, '5m', 120),
+        fetchKlinesBatch(eligibleSymbols, APP_CONFIG.API.BATCH_SIZE, '1d', 30),
+    ]);
+
+    logger.info('Built market enhancement universe', {
+        totalSymbols: merged.length,
+        eligibleSymbols: eligibleSymbols.length,
+        minQuoteVolume: APP_CONFIG.INDICATORS.MIN_QUOTE_VOLUME_FOR_FULL_INDICATORS,
+        minOpenInterestValue: APP_CONFIG.INDICATORS.MIN_OPEN_INTEREST_VALUE_FOR_FULL_INDICATORS,
+    });
+
+    // 3. 增强数据（添加技术指标）
     merged = merged.map(ticker => {
         const klines = klinesMap.get(ticker.symbol);
         const oiSnapshot = oiSnapshotMap.get(ticker.symbol);
-
-        // 🔥 分级计算：只为有K线数据的币种计算指标
-        if (klines && klines.length >= APP_CONFIG.INDICATORS.MIN_KLINES_FOR_SQUEEZE) {
-            const enhanced = enhanceTickerData(ticker, klines, btcReturns);
-            return {
-                ...enhanced,
-                markPrice: enhanced.markPrice || ticker.markPrice || ticker.lastPrice,
-                fundingRate: enhanced.fundingRate || '0',
-                openInterest: oiSnapshot?.currentOpenInterest || enhanced.openInterest,
-                openInterestValue: oiSnapshot?.currentOpenInterestValue || enhanced.openInterestValue,
-            };
-        }
+        const trend5mKlines = trend5mKlinesMap.get(ticker.symbol);
+        const daily1dKlines = daily1dKlinesMap.get(ticker.symbol);
+        const canEnhance = Boolean(
+            (klines && klines.length > 0) ||
+            (trend5mKlines && trend5mKlines.length > 0) ||
+            (daily1dKlines && daily1dKlines.length > 0)
+        );
+        const enhanced = canEnhance
+            ? enhanceTickerData(ticker, klines || [], btcReturns, {
+                trend5m: trend5mKlines,
+                daily1d: daily1dKlines,
+            })
+            : ticker;
 
         return {
-            ...ticker,
-            markPrice: ticker.markPrice || ticker.lastPrice,
-            fundingRate: ticker.fundingRate || '0',
-            openInterest: oiSnapshot?.currentOpenInterest || ticker.openInterest,
-            openInterestValue: oiSnapshot?.currentOpenInterestValue || ticker.openInterestValue,
+            ...enhanced,
+            markPrice: enhanced.markPrice || ticker.markPrice || ticker.lastPrice,
+            fundingRate: enhanced.fundingRate || '0',
+            openInterest: oiSnapshot?.currentOpenInterest || enhanced.openInterest,
+            openInterestValue: oiSnapshot?.currentOpenInterestValue || enhanced.openInterestValue,
         };
     });
 
@@ -178,13 +208,23 @@ export async function GET() {
         });
     }
 
-    const ownsInflight = !inflightMarketBuild;
-    if (!inflightMarketBuild) {
-        inflightMarketBuild = buildMarketData();
+    if (lastSuccessfulMarketData && lastSuccessfulMarketData.length > 0) {
+        void ensureMarketBuild().catch((error) => {
+            logger.error('Background market refresh failed', error as Error);
+        });
+
+        return NextResponse.json(lastSuccessfulMarketData, {
+            headers: {
+                'Cache-Control': 'public, s-maxage=3, stale-while-revalidate=10',
+                'X-Data-Source': 'stale-memory-cache-refreshing',
+                'X-Cache-Age-Seconds': Math.floor((Date.now() - lastSuccessfulAt) / 1000).toString(),
+            }
+        });
     }
 
+    const ownsInflight = !inflightMarketBuild;
     try {
-        const data = await inflightMarketBuild;
+        const data = await ensureMarketBuild();
         return NextResponse.json(data, {
             headers: {
                 'Cache-Control': 'public, s-maxage=3, stale-while-revalidate=10',
@@ -203,9 +243,5 @@ export async function GET() {
             });
         }
         return NextResponse.json({ error: 'Failed to fetch market data' }, { status: 500 });
-    } finally {
-        if (ownsInflight) {
-            inflightMarketBuild = null;
-        }
     }
 }

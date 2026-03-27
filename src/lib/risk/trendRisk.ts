@@ -20,8 +20,6 @@ export function calculateTrendRisk(params: RiskCalculationParams): RiskManagemen
         confidence,
         atr,
         keltnerMid,
-        keltnerUpper,
-        keltnerLower,
         fundingRateTrend,
         accountBalance,
         riskPercentage = 1,
@@ -163,7 +161,7 @@ export function calculateTrendRisk(params: RiskCalculationParams): RiskManagemen
             profitThreshold: 1.5 // 如果10根K线还没赚1.5%，平仓
         },
         metrics: {
-            entryPrice,
+            entryPrice: roundPrice(entryPrice),
             riskAmount: Math.round(riskAmount * 100) / 100,
             potentialProfit: Math.round(potentialProfit * 100) / 100,
             winRate: 0.62,

@@ -34,13 +34,16 @@ interface BinanceFetchOptions {
     init?: NextFetchInit;
 }
 
-function buildInit(options: BinanceFetchOptions): NextFetchInit {
+function buildAttemptInit(options: BinanceFetchOptions): NextFetchInit {
     const { revalidate, timeoutMs = 8000, init } = options;
     const merged: NextFetchInit = {
         ...(init || {}),
         redirect: 'follow',
-        signal: init?.signal || AbortSignal.timeout(timeoutMs),
     };
+
+    // Create a fresh timeout signal for every retry attempt.
+    // Reusing the same AbortSignal.timeout() would abort all later mirrors immediately.
+    merged.signal = init?.signal ?? AbortSignal.timeout(timeoutMs);
 
     if (typeof revalidate === 'number') {
         merged.next = { ...(init?.next || {}), revalidate };
@@ -62,13 +65,13 @@ function getCandidateBases(path: string): string[] {
 
 export async function fetchBinance(path: string, options: BinanceFetchOptions = {}): Promise<Response> {
     const errors: string[] = [];
-    const init = buildInit(options);
     const candidateBases = getCandidateBases(path);
 
     for (let i = 0; i < candidateBases.length; i++) {
         const idx = (preferredBaseIndex + i) % candidateBases.length;
         const base = candidateBases[idx];
         const url = `${base}${path}`;
+        const init = buildAttemptInit(options);
 
         try {
             const res = await fetch(url, init);
@@ -89,13 +92,13 @@ export async function fetchBinance(path: string, options: BinanceFetchOptions = 
 
 export async function fetchBinanceJson<T>(path: string, options: BinanceFetchOptions = {}): Promise<T> {
     const errors: string[] = [];
-    const init = buildInit(options);
     const candidateBases = getCandidateBases(path);
 
     for (let i = 0; i < candidateBases.length; i++) {
         const idx = (preferredBaseIndex + i) % candidateBases.length;
         const base = candidateBases[idx];
         const url = `${base}${path}`;
+        const init = buildAttemptInit(options);
 
         try {
             const res = await fetch(url, init);

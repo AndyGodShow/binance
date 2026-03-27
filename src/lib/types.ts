@@ -20,6 +20,18 @@ export interface TickerData {
     change15m?: number;
     change1h?: number;
     change4h?: number;
+    breakout21dHigh?: number;         // 过去21根已完成日线高点
+    breakout21dPercent?: number;      // 当前价格相对21日高点突破幅度
+    ema5m20?: number;
+    ema5m60?: number;
+    ema5m100?: number;
+    ema5mDistancePercent?: number;    // 当前价格相对5m EMA20偏离幅度
+    gmmaTrend?: 'bullish' | 'bearish' | 'mixed';
+    gmmaShortScore?: number;          // 顾比短期组同向排列得分
+    gmmaLongScore?: number;           // 顾比长期组同向排列得分
+    gmmaSeparationPercent?: number;   // 顾比短长期组均值分离幅度
+    multiEmaTrend?: 'bullish' | 'bearish' | 'mixed';
+    multiEmaAlignmentScore?: number;  // 多重均线相邻排列得分
     // RSRS fields
     rsrs?: number;              // Beta (斜率)
     rsrsZScore?: number;        // 修正后的 Z-Score
@@ -37,6 +49,7 @@ export interface TickerData {
     bollingerLower?: number;    // 布林带下轨
     // Volume
     volumeMA?: number;          // 成交量移动平均
+    volumeRatio?: number;       // 当前成交量相对均量的倍数
 
     // 🔥 Advanced Technical Indicators
     atr?: number;                    // 平均真实波幅（波动率测量）
@@ -72,7 +85,11 @@ export interface TickerData {
     squeezeStatus?: 'on' | 'off';         // Squeeze 状态
     prevSqueezeStatus?: 'on' | 'off';     // 前一个 Squeeze 状态（用于检测释放）
     squeezeDuration?: number;              // 挤压持续 K 线数
+    lastSqueezeDuration?: number;          // 最近一次完成的挤压持续 K 线数
     squeezeStrength?: number;              // 挤压强度 (0-1)
+    releaseBarsAgo?: number;               // 距离最近一次挤压释放过去了几根 K 线（0 表示当前刚释放）
+    squeezeBoxHigh?: number;               // 最近一次挤压区间上沿
+    squeezeBoxLow?: number;                // 最近一次挤压区间下沿
 
     // Keltner Channels
     keltnerUpper?: number;
@@ -106,6 +123,8 @@ export interface OHLC {
     low: number;
     close: number;
     volume: number;
+    quoteVolume?: number;
+    takerBuyQuoteVolume?: number;
 }
 
 export interface PremiumIndex {

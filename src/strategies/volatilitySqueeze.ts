@@ -2,9 +2,10 @@ import { TradingStrategy, StrategySignal, CompositeCondition } from '../lib/stra
 import { TickerData } from '../lib/types';
 import { cooldownManager } from '../lib/cooldownManager';
 import { logger } from '../lib/logger';
-import { calculateRiskManagement } from '@/lib/risk/riskCalculator';
+import { APP_CONFIG } from '../lib/config';
+import { calculateRiskManagement } from '../lib/risk/riskCalculator';
 
-// 辅助函数：检查条件并创建条件对象
+// ========== Squeeze 策略所需参数 ==========：检查条件并创建条件对象
 function checkCondition(
     name: string,
     description: string,
@@ -17,12 +18,37 @@ function checkCondition(
 
 // 冷却期：60分钟 - 狙击型策略
 const COOLDOWN_PERIOD = 60 * 60 * 1000;
+const MIN_SQUEEZE_DURATION = 10;
+const MAX_RELEASE_BARS_AGO = 1;
+const MAX_SQUEEZE_BANDWIDTH_PERCENTILE = 12;
+const STRONG_SQUEEZE_BANDWIDTH_PERCENTILE = 8;
+const MIN_VOLUME_RATIO = 1.5;
+const MIN_ADX = 20;
+const STRONG_ADX = 25;
+const MIN_BREAKOUT_BODY_PERCENT = 1.0;
+const MIN_CONFIDENCE = 85;
+
+function buildRecentBreakoutLevels(ticker: TickerData): { recentHigh: number | null; recentLow: number | null; bodyPercent: number } {
+    const candles = ticker.ohlc || [];
+    const latest = candles[candles.length - 1];
+    const priorCandles = candles.slice(-6, -1);
+
+    const recentHigh = priorCandles.length > 0 ? Math.max(...priorCandles.map(candle => candle.high)) : null;
+    const recentLow = priorCandles.length > 0 ? Math.min(...priorCandles.map(candle => candle.low)) : null;
+
+    let bodyPercent = 0;
+    if (latest && latest.open > 0) {
+        bodyPercent = Math.abs((latest.close - latest.open) / latest.open) * 100;
+    }
+
+    return { recentHigh, recentLow, bodyPercent };
+}
 
 // ==================== 策略 5: 波动率挤压（狙击型）====================
 export const volatilitySqueezeStrategy: TradingStrategy = {
     id: 'volatility-squeeze',
     name: '🎯 波动率挤压',
-    description: 'BB/KC挤压 + 动能突破 + 狙击入场',
+    description: '高质量挤压释放 + 放量突破 + 首段启动',
     category: 'trend',
     enabled: true,
 
@@ -33,170 +59,210 @@ export const volatilitySqueezeStrategy: TradingStrategy = {
         }
 
         // 需要完整的 Squeeze 数据
-        if (!ticker.squeezeStatus || !ticker.momentumColor || !ticker.keltnerMid) {
+        if (!ticker.squeezeStatus || !ticker.momentumColor || !ticker.keltnerMid || !ticker.ohlc || ticker.ohlc.length < 6) {
             return null;
         }
 
         const conditions: CompositeCondition[] = [];
-
-        // ========== 条件1: Squeeze 状态释放 ==========
-        const squeezeStatus = ticker.squeezeStatus;
-        const squeezeDuration = ticker.squeezeDuration || 0;
-        const squeezeStrength = ticker.squeezeStrength || 0;
-        const prevSqueezeStatus = ticker.prevSqueezeStatus || 'off'; // 需要追踪前一状态
-
-        // 检测 Squeeze Off（从 On 转为 Off）
-        const isSqueezeRelease = prevSqueezeStatus === 'on' && squeezeStatus === 'off';
-
-        // 要求至少蓄力 9 根 K 线
-        const hasSufficientCompression = squeezeDuration >= 9 || prevSqueezeStatus === 'on';
-
-        const squeezeCondition = isSqueezeRelease && hasSufficientCompression;
-
-        conditions.push(checkCondition(
-            'squeeze-release',
-            `挤压释放 (蓄力${squeezeDuration}根K线[≥ 9根], 强度${(squeezeStrength * 100).toFixed(0)}%)`,
-            squeezeCondition,
-            squeezeDuration,
-            9
-        ));
-
-        // ========== 条件2: 动能方向确认 ==========
-        const momentumColor = ticker.momentumColor;
-        const momentumValue = ticker.momentumValue || 0;
-
-        // 做多：青色（正向加速）
-        // 做空：红色（负向加速）
-        const isLongMomentum = momentumColor === 'cyan';
-        const isShortMomentum = momentumColor === 'red';
-
-        if (!isLongMomentum && !isShortMomentum) {
-            return null; // 没有明确的方向信号
+        const currentPrice = parseFloat(ticker.lastPrice);
+        if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
+            return null;
         }
 
-        const direction: 'long' | 'short' = isLongMomentum ? 'long' : 'short';
-        const momentumCondition = true; // 已通过方向筛选
+        // ========== 条件1: 高质量挤压背景 ==========
+        const squeezeDuration = ticker.lastSqueezeDuration || ticker.squeezeDuration || 0;
+        const squeezeStrength = ticker.squeezeStrength || 0;
+        const bandwidthPercentile = ticker.bandwidthPercentile ?? 100;
+        const hasQualifiedSqueeze = squeezeDuration >= MIN_SQUEEZE_DURATION && bandwidthPercentile < MAX_SQUEEZE_BANDWIDTH_PERCENTILE;
+
+        conditions.push(checkCondition(
+            'squeeze-quality',
+            `挤压背景 (持续${squeezeDuration}根, 带宽分位${bandwidthPercentile.toFixed(1)}[< ${MAX_SQUEEZE_BANDWIDTH_PERCENTILE}])`,
+            hasQualifiedSqueeze,
+            squeezeDuration,
+            MIN_SQUEEZE_DURATION
+        ));
+
+        // ========== 条件2: 释放窗口 ==========
+        const releaseBarsAgo = ticker.releaseBarsAgo;
+        const inReleaseWindow =
+            typeof releaseBarsAgo === 'number' &&
+            Number.isFinite(releaseBarsAgo) &&
+            releaseBarsAgo >= 0 &&
+            releaseBarsAgo <= MAX_RELEASE_BARS_AGO;
+
+        conditions.push(checkCondition(
+            'release-window',
+            inReleaseWindow
+                ? `释放窗口内 (距释放${releaseBarsAgo}根K线)`
+                : '释放过久或未检测到释放',
+            inReleaseWindow,
+            typeof releaseBarsAgo === 'number' ? releaseBarsAgo : undefined,
+            MAX_RELEASE_BARS_AGO
+        ));
+
+        // ========== 条件3: 动能方向确认 ==========
+        const momentumColor = ticker.momentumColor;
+        const momentumValue = ticker.momentumValue || 0;
+        const strongLongMomentum = momentumColor === 'cyan';
+        const strongShortMomentum = momentumColor === 'red';
+        const longMomentum = strongLongMomentum || (momentumColor === 'blue' && momentumValue > 0);
+        const shortMomentum = strongShortMomentum || (momentumColor === 'yellow' && momentumValue < 0);
+
+        if (!longMomentum && !shortMomentum) {
+            return null;
+        }
+
+        const direction: 'long' | 'short' = longMomentum ? 'long' : 'short';
+        const momentumCondition = Math.abs(momentumValue) > 0;
 
         conditions.push(checkCondition(
             'momentum-direction',
-            `动能${direction === 'long' ? '正向加速' : '负向加速'} (${momentumColor})`,
+            `动能${direction === 'long' ? '向上' : '向下'} (${momentumColor})`,
             momentumCondition,
             Math.abs(momentumValue),
             0
         ));
 
-        // ========== 条件3: 价格位置验证 ==========
-        const currentPrice = parseFloat(ticker.lastPrice);
+        // ========== 条件4: 价格位置与突破 ==========
         const keltnerMid = ticker.keltnerMid;
+        const { recentHigh, recentLow, bodyPercent } = buildRecentBreakoutLevels(ticker);
+        const squeezeBoxHigh = ticker.squeezeBoxHigh;
+        const squeezeBoxLow = ticker.squeezeBoxLow;
 
         const pricePositionValid = direction === 'long'
-            ? currentPrice > keltnerMid
-            : currentPrice < keltnerMid;
+            ? currentPrice > keltnerMid &&
+                (recentHigh === null || currentPrice > recentHigh) &&
+                (squeezeBoxHigh === undefined || currentPrice > squeezeBoxHigh)
+            : currentPrice < keltnerMid &&
+                (recentLow === null || currentPrice < recentLow) &&
+                (squeezeBoxLow === undefined || currentPrice < squeezeBoxLow);
 
-        const priceDistance = ((currentPrice - keltnerMid) / keltnerMid * 100);
+        const breakoutBarrier = direction === 'long'
+            ? Math.max(recentHigh ?? -Infinity, squeezeBoxHigh ?? -Infinity)
+            : Math.min(recentLow ?? Infinity, squeezeBoxLow ?? Infinity);
 
         conditions.push(checkCondition(
-            'price-position',
-            `价格${direction === 'long' ? '站上' : '跌破'}KC中轨 (距${Math.abs(priceDistance).toFixed(2)}%)`,
+            'price-breakout',
+            direction === 'long'
+                ? `价格站上中轨并突破压缩区 (${Number.isFinite(breakoutBarrier) ? breakoutBarrier.toFixed(4) : '无盒体'})`
+                : `价格跌破中轨并跌穿压缩区 (${Number.isFinite(breakoutBarrier) ? breakoutBarrier.toFixed(4) : '无盒体'})`,
             pricePositionValid,
             currentPrice,
-            keltnerMid
+            Number.isFinite(breakoutBarrier) ? breakoutBarrier : keltnerMid
         ));
 
-        // ========== 条件4: 进阶过滤（可选但推荐）==========
-        const bandwidthPercentile = ticker.bandwidthPercentile || 50;
-        const adx = ticker.adx || 0;
-
-        // 带宽处于低 10% 分位（严格挤压）
-        const isTightSqueeze = bandwidthPercentile < 10;
-
-        // ADX > 20 表示趋势强度足够
-        const hasTrendStrength = adx > 20;
-
-        const advancedFilter = isTightSqueeze || hasTrendStrength;
+        // ========== 条件5: 放量实体 ==========
+        const volumeRatio = ticker.volumeRatio ?? (ticker.volumeMA ? parseFloat(ticker.quoteVolume) / ticker.volumeMA : 1);
+        const volumeExpansion = Number.isFinite(volumeRatio) && volumeRatio >= MIN_VOLUME_RATIO && bodyPercent >= MIN_BREAKOUT_BODY_PERCENT;
 
         conditions.push(checkCondition(
-            'advanced-filter',
-            `${isTightSqueeze ? '✓严格挤压' : ''} ${hasTrendStrength ? `ADX=${adx.toFixed(1)}` : ''}`,
-            advancedFilter,
-            bandwidthPercentile,
-            10
+            'volume-expansion',
+            `量比${Number.isFinite(volumeRatio) ? volumeRatio.toFixed(2) : '0.00'}x, 实体${bodyPercent.toFixed(2)}%`,
+            volumeExpansion,
+            Number.isFinite(volumeRatio) ? volumeRatio : undefined,
+            MIN_VOLUME_RATIO
         ));
 
-        // 🔥 严格模式: 必须满足全部4个条件
+        // ========== 条件6: 趋势过滤 ==========
+        const adx = ticker.adx || 0;
+        const plusDI = ticker.plusDI || 0;
+        const minusDI = ticker.minusDI || 0;
+        const trendFilter = adx >= MIN_ADX && (
+            direction === 'long'
+                ? plusDI > minusDI
+                : minusDI > plusDI
+        );
+
+        conditions.push(checkCondition(
+            'trend-filter',
+            `ADX=${adx.toFixed(1)}, +DI=${plusDI.toFixed(1)}, -DI=${minusDI.toFixed(1)}`,
+            trendFilter,
+            adx,
+            MIN_ADX
+        ));
+
         const conditionsMet = conditions.filter(c => c.met).length;
-
-        if (conditionsMet >= 4) {
-            // 计算置信度
-            let confidence = 75 + (conditionsMet * 6);
-
-            // 蓄力时间越长，置信度越高
-            if (squeezeDuration >= 15) {
-                confidence += 10; // 超长挤压
-            } else if (squeezeDuration >= 10) {
-                confidence += 5;
-            }
-
-            // 严格挤压 + ADX 双重确认
-            if (isTightSqueeze && hasTrendStrength) {
-                confidence += 5;
-            }
-
-            // 🔥 严格模式: 最低置信度过滤
-            if (confidence < 85) {
-                return null;
-            }
-
-            const metConditions = conditions.filter(c => c.met).map(c => c.description);
-            cooldownManager.record(ticker.symbol, 'volatility-squeeze');
-
-            // 🔥 计算风险管理参数
-            let riskManagement;
-            try {
-                riskManagement = calculateRiskManagement('volatility-squeeze', {
-                    entryPrice: currentPrice,
-                    direction,
-                    confidence: Math.min(95, confidence),
-                    keltnerUpper: ticker.keltnerUpper,
-                    keltnerLower: ticker.keltnerLower,
-                    keltnerMid,
-                    momentumColor,
-                    squeezeDuration,
-                    bandwidthPercentile,
-                    adx,
-                    accountBalance: 10000, // TODO: 从用户设置获取
-                    riskPercentage: 1
-                });
-            } catch (error) {
-                logger.error('Risk calculation failed for volatility-squeeze', error as Error, { symbol: ticker.symbol });
-            }
-
-            return {
-                symbol: ticker.symbol,
-                strategyId: 'volatility-squeeze',
-                strategyName: '🎯 波动率挤压',
-                direction,
-                confidence: Math.min(95, confidence),
-                reason: `${conditionsMet}/4 条件满足：${metConditions.join(' | ')}`,
-                metrics: {
-                    squeezeDuration,
-                    squeezeStrength,
-                    momentumValue,
-                    keltnerMid,
-                    currentPrice,
-                    bandwidthPercentile,
-                    adx,
-                    conditionsMet
-                },
-                timestamp: Date.now(),
-                isComposite: true,
-                conditions,
-                conditionsMet,
-                totalConditions: 4,
-                risk: riskManagement // 🔥 附加风控信息
-            };
+        if (conditionsMet < conditions.length) {
+            return null;
         }
 
-        return null;
+        // 100分制：专门筛高质量首段启动
+        let confidence = 0;
+
+        // 挤压质量 30分
+        confidence += 18;
+        confidence += bandwidthPercentile < STRONG_SQUEEZE_BANDWIDTH_PERCENTILE ? 7 : 4;
+        confidence += squeezeDuration >= 14 ? 5 : 3;
+
+        // 释放与动能 30分
+        confidence += releaseBarsAgo === 0 ? 15 : 11;
+        confidence += (direction === 'long' ? strongLongMomentum : strongShortMomentum) ? 15 : 11;
+
+        // 结构确认 25分
+        confidence += 15;
+        confidence += bodyPercent >= 1.4 ? 10 : 7;
+
+        // 量能与趋势 15分
+        confidence += volumeRatio >= 1.8 ? 8 : 6;
+        confidence += adx >= STRONG_ADX ? 7 : 5;
+
+        confidence = Math.min(95, confidence);
+        if (confidence < MIN_CONFIDENCE) {
+            return null;
+        }
+
+        const metConditions = conditions.filter(c => c.met).map(c => c.description);
+        cooldownManager.record(ticker.symbol, 'volatility-squeeze');
+
+        // 🔥 计算风险管理参数
+        let riskManagement;
+        try {
+            riskManagement = calculateRiskManagement('volatility-squeeze', {
+                entryPrice: currentPrice,
+                direction,
+                confidence: Math.min(95, confidence),
+                atr: ticker.atr,
+                keltnerUpper: ticker.keltnerUpper,
+                keltnerLower: ticker.keltnerLower,
+                keltnerMid,
+                momentumColor,
+                squeezeDuration,
+                bandwidthPercentile,
+                adx,
+                accountBalance: APP_CONFIG.RISK.DEFAULT_ACCOUNT_BALANCE,
+                riskPercentage: 0.8,
+            });
+        } catch (error) {
+            logger.error('Risk calculation failed for volatility-squeeze', error as Error, { symbol: ticker.symbol });
+        }
+
+        return {
+            symbol: ticker.symbol,
+            strategyId: 'volatility-squeeze',
+            strategyName: '🎯 波动率挤压',
+            direction,
+            confidence: Math.min(95, confidence),
+            reason: `${conditionsMet}/6 条件满足：${metConditions.join(' | ')}`,
+            metrics: {
+                squeezeDuration,
+                squeezeStrength,
+                momentumValue,
+                keltnerMid,
+                currentPrice,
+                bandwidthPercentile,
+                adx,
+                volumeRatio,
+                releaseBarsAgo: releaseBarsAgo ?? -1,
+                bodyPercent,
+                conditionsMet
+            },
+            timestamp: Date.now(),
+            isComposite: true,
+            conditions,
+            conditionsMet,
+            totalConditions: 6,
+            risk: riskManagement
+        };
     }
 };

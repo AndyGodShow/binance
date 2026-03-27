@@ -8,88 +8,22 @@ interface BinanceTicker24h {
     quoteVolume: string;
 }
 
-function isBinanceTicker24h(value: unknown): value is BinanceTicker24h {
-    return typeof value === 'object' &&
-        value !== null &&
-        typeof (value as BinanceTicker24h).symbol === 'string' &&
-        typeof (value as BinanceTicker24h).quoteVolume === 'string';
-}
+type BinanceKline = [
+    number,
+    string,
+    string,
+    string,
+    string,
+    string,
+    number,
+    string,
+    number,
+    string,
+    string,
+    ...unknown[]
+];
 
-export async function GET() {
-    try {
-        // 1. Fetch all tickers to find top volume assets
-        const allTickers = await fetchBinanceJson<unknown>('/fapi/v1/ticker/24hr', { revalidate: 300 });
-        if (!Array.isArray(allTickers)) {
-            throw new Error('Unexpected ticker response from Binance');
-        }
-
-        // Filter USDT pairs and sort by Quote Volume (descending)
-        // Limit to top 30 to avoid timeout/rate limits
-        const topTickers = allTickers
-            .filter(isBinanceTicker24h)
-            .filter((t) => t.symbol.endsWith('USDT'))
-            .sort((a: BinanceTicker24h, b: BinanceTicker24h) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
-            .slice(0, 30);
-
-        const rsrsMap: Record<string, {
-            beta: number;
-            zScore: number;
-            r2: number;
-            rsrsFinal: number;
-            dynamicLongThreshold: number;
-            dynamicShortThreshold: number;
-            bollingerUpper: number;
-            bollingerMid: number;
-            bollingerLower: number;
-            volumeMA: number;
-            rsrsROC: number;
-            rsrsAcceleration: number;
-            adaptiveWindow: number;
-            method: string;
-        }> = {};
-
-        // 2. Fetch history and calculate RSRS for each
-        // Use larger buffer to accommodate adaptive window (max 30 days + 100 days history + buffer)
-        const TOTAL_CANDLES = 150;
-
-        // We run in parallel but limited batches to be nice to API
-        const batchSize = 5;
-        for (let i = 0; i < topTickers.length; i += batchSize) {
-            const batch = topTickers.slice(i, i + batchSize);
-            const promises = batch.map(async (t: BinanceTicker24h) => {
-                try {
-                    const klines = await fetchBinanceJson<any[]>(
-                        `/fapi/v1/klines?symbol=${t.symbol}&interval=1d&limit=${TOTAL_CANDLES}`,
-                        { revalidate: 3600 } // Cache for 1 hour
-                    );
-
-                    if (Array.isArray(klines) && klines.length >= 40) { // Minimum data requirement
-                        const result = calculateRSRS(klines);
-                        if (result) {
-                            rsrsMap[t.symbol] = result;
-                        }
-                    }
-                } catch (e) {
-                    console.error(`Failed to calc RSRS for ${t.symbol}`, e);
-                }
-            });
-            await Promise.all(promises);
-        }
-
-        return NextResponse.json(rsrsMap, {
-            headers: {
-                'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=7200', // Cache 1 hour (daily data changes infrequently)
-            }
-        });
-
-    } catch (error) {
-        console.error('RSRS API Error:', error);
-        return NextResponse.json({ error: 'Failed to calculate RSRS' }, { status: 500 });
-    }
-}
-
-// Stats Helpers
-function calculateRSRS(klines: any[]): {
+interface RsrsMetrics {
     beta: number;
     zScore: number;
     r2: number;
@@ -100,11 +34,163 @@ function calculateRSRS(klines: any[]): {
     bollingerMid: number;
     bollingerLower: number;
     volumeMA: number;
-    rsrsROC: number;          // 🔥 新增：RSRS 变化率
-    rsrsAcceleration: number; // 🔥 新增：RSRS 加速度
-    adaptiveWindow: number;   // 🔥 新增：自适应窗口大小
-    method: string;           // 🔥 新增：回归方法标识
-} | null {
+    rsrsROC: number;
+    rsrsAcceleration: number;
+    adaptiveWindow: number;
+    method: string;
+}
+
+function isBinanceTicker24h(value: unknown): value is BinanceTicker24h {
+    return typeof value === 'object' &&
+        value !== null &&
+        typeof (value as BinanceTicker24h).symbol === 'string' &&
+        typeof (value as BinanceTicker24h).quoteVolume === 'string';
+}
+
+function isBinanceKline(value: unknown): value is BinanceKline {
+    return Array.isArray(value) &&
+        value.length >= 11 &&
+        typeof value[0] === 'number' &&
+        typeof value[1] === 'string' &&
+        typeof value[2] === 'string' &&
+        typeof value[3] === 'string' &&
+        typeof value[4] === 'string' &&
+        typeof value[5] === 'string';
+}
+
+// RSRS Stale Cache for fallback when API times out (very common with heavy math)
+type RsrsMap = Record<string, RsrsMetrics>;
+
+let rsrsStaleCache: RsrsMap | null = null;
+let rsrsLiveCache: { data: RsrsMap; updatedAt: number; expiresAt: number } | null = null;
+let inflightRsrsBuild: Promise<RsrsMap> | null = null;
+
+const RSRS_CACHE_TTL = 60 * 60 * 1000;
+
+async function buildRsrsData(): Promise<RsrsMap> {
+    // 1. Fetch all tickers to find top volume assets
+    const allTickers = await fetchBinanceJson<unknown>('/fapi/v1/ticker/24hr', { revalidate: 300 });
+    if (!Array.isArray(allTickers)) {
+        throw new Error('Unexpected ticker response from Binance');
+    }
+
+    // Filter USDT pairs and sort by Quote Volume (descending)
+    // Limit to top 30 to avoid timeout/rate limits
+    const topTickers = allTickers
+        .filter(isBinanceTicker24h)
+        .filter((t) => t.symbol.endsWith('USDT'))
+        .sort((a: BinanceTicker24h, b: BinanceTicker24h) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
+        .slice(0, 30);
+
+    const rsrsMap: RsrsMap = {};
+
+    // 2. Fetch history and calculate RSRS for each
+    // Use larger buffer to accommodate adaptive window (max 30 days + 100 days history + buffer)
+    const TOTAL_CANDLES = 150;
+
+    // We run in parallel but limited batches to be nice to API
+    const batchSize = 5;
+    for (let i = 0; i < topTickers.length; i += batchSize) {
+        const batch = topTickers.slice(i, i + batchSize);
+        const promises = batch.map(async (t: BinanceTicker24h) => {
+            try {
+                const rawKlines = await fetchBinanceJson<unknown>(
+                    `/fapi/v1/klines?symbol=${t.symbol}&interval=1d&limit=${TOTAL_CANDLES}`,
+                    { revalidate: 3600 } // Cache for 1 hour
+                );
+
+                if (!Array.isArray(rawKlines)) {
+                    return;
+                }
+
+                const klines = rawKlines.filter(isBinanceKline);
+                if (klines.length >= 40) { // Minimum data requirement
+                    const result = calculateRSRS(klines);
+                    if (result) {
+                        rsrsMap[t.symbol] = result;
+                    }
+                }
+            } catch (e) {
+                console.error(`Failed to calc RSRS for ${t.symbol}`, e);
+            }
+        });
+        await Promise.all(promises);
+    }
+
+    rsrsStaleCache = rsrsMap;
+    rsrsLiveCache = {
+        data: rsrsMap,
+        updatedAt: Date.now(),
+        expiresAt: Date.now() + RSRS_CACHE_TTL,
+    };
+
+    return rsrsMap;
+}
+
+function ensureRsrsBuild(): Promise<RsrsMap> {
+    if (!inflightRsrsBuild) {
+        inflightRsrsBuild = buildRsrsData().finally(() => {
+            inflightRsrsBuild = null;
+        });
+    }
+
+    return inflightRsrsBuild;
+}
+
+export async function GET() {
+    const now = Date.now();
+
+    if (rsrsLiveCache && now < rsrsLiveCache.expiresAt) {
+        return NextResponse.json(rsrsLiveCache.data, {
+            headers: {
+                'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=7200',
+                'X-Data-Source': 'memory-cache',
+            }
+        });
+    }
+
+    if (rsrsLiveCache && Object.keys(rsrsLiveCache.data).length > 0) {
+        void ensureRsrsBuild().catch((error) => {
+            console.error('RSRS background refresh failed:', error);
+        });
+
+        return NextResponse.json(rsrsLiveCache.data, {
+            headers: {
+                'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=7200',
+                'X-Data-Source': 'stale-memory-cache-refreshing',
+                'X-Cache-Age-Seconds': Math.floor((now - rsrsLiveCache.updatedAt) / 1000).toString(),
+            }
+        });
+    }
+
+    try {
+        const data = await ensureRsrsBuild();
+        return NextResponse.json(data, {
+            headers: {
+                'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=7200',
+                'X-Data-Source': 'live',
+            }
+        });
+    } catch (error) {
+        console.error('RSRS API Error:', error);
+
+        // Return stale data if available to prevent breaking the UI on timeout
+        if (rsrsStaleCache && Object.keys(rsrsStaleCache).length > 0) {
+            console.info('Returning RSRS stale cache due to error');
+            return NextResponse.json(rsrsStaleCache, {
+                headers: {
+                    'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=600',
+                    'X-Data-Source': 'stale-memory-cache'
+                }
+            });
+        }
+
+        return NextResponse.json({ error: 'Failed to calculate RSRS' }, { status: 500 });
+    }
+}
+
+// Stats Helpers
+function calculateRSRS(klines: BinanceKline[]): RsrsMetrics | null {
     // K-line format: [time, open, high, low, close, vol, ...]
     // values are strings, need parse
     const highs = klines.map(k => parseFloat(k[2]));
@@ -254,41 +340,6 @@ function calculateRSRS(klines: any[]): {
         adaptiveWindow: N_DAYS,
         method: 'VW-TLS + Median/MAD'
     };
-}
-
-function getOLSData(xValues: number[], yValues: number[]): { beta: number; r2: number } {
-    // OLS回归: y = a + beta * x
-    // 返回 beta (斜率) 和 R² (决定系数)
-    const n = xValues.length;
-    if (n === 0) return { beta: 0, r2: 0 };
-
-    const xMean = xValues.reduce((a, b) => a + b, 0) / n;
-    const yMean = yValues.reduce((a, b) => a + b, 0) / n;
-
-    let numerator = 0;      // Cov(x,y)
-    let denominator = 0;    // Var(x)
-    let ssTotal = 0;        // Total sum of squares
-    let ssResidual = 0;     // Residual sum of squares
-
-    for (let i = 0; i < n; i++) {
-        numerator += (xValues[i] - xMean) * (yValues[i] - yMean);
-        denominator += Math.pow(xValues[i] - xMean, 2);
-        ssTotal += Math.pow(yValues[i] - yMean, 2);
-    }
-
-    const beta = denominator === 0 ? 0 : numerator / denominator;
-    const alpha = yMean - beta * xMean;
-
-    // 计算残差平方和
-    for (let i = 0; i < n; i++) {
-        const predicted = alpha + beta * xValues[i];
-        ssResidual += Math.pow(yValues[i] - predicted, 2);
-    }
-
-    // R² = 1 - (SS_res / SS_tot)
-    const r2 = ssTotal === 0 ? 0 : 1 - (ssResidual / ssTotal);
-
-    return { beta, r2: Math.max(0, r2) }; // R²不应为负
 }
 
 // ========== 🔥 Advanced Math Functions ==========

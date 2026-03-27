@@ -18,9 +18,9 @@ export function calculateSqueezeRisk(params: RiskCalculationParams): RiskManagem
         entryPrice,
         direction,
         confidence,
+        atr,
         keltnerUpper,
         keltnerLower,
-        momentumColor,
         squeezeDuration = 0,
         bandwidthPercentile,
         adx,
@@ -29,23 +29,35 @@ export function calculateSqueezeRisk(params: RiskCalculationParams): RiskManagem
     } = params;
 
     // ========== 止损逻辑 ==========
-    // 基于 KC 另一侧边缘（紧密止损）
+    // 高质量版本：优先使用 KC 另一侧，超限则退回 ATR 后备。
     let stopLossPrice: number;
     let stopLossReason: string;
+    const atrDistance = atr && atr > 0 ? entryPrice * (atr / 100) * 1.5 : 0;
 
     if (direction === 'long') {
-        stopLossPrice = keltnerLower || entryPrice * 0.985; // 后备：1.5%
+        stopLossPrice = keltnerLower || (atrDistance > 0 ? entryPrice - atrDistance : entryPrice * 0.985);
         stopLossReason = keltnerLower
-            ? "跌破KC下轨（突破失败）"
-            : "固定1.5%止损";
+            ? "跌回KC下轨下方（突破失效）"
+            : atrDistance > 0
+                ? "1.5ATR 后备止损"
+                : "固定1.5%止损";
     } else {
-        stopLossPrice = keltnerUpper || entryPrice * 1.015;
+        stopLossPrice = keltnerUpper || (atrDistance > 0 ? entryPrice + atrDistance : entryPrice * 1.015);
         stopLossReason = keltnerUpper
-            ? "涨破KC上轨（突破失败）"
-            : "固定1.5%止损";
+            ? "涨回KC上轨上方（突破失效）"
+            : atrDistance > 0
+                ? "1.5ATR 后备止损"
+                : "固定1.5%止损";
     }
 
-    const stopLossPercentage = Math.abs((stopLossPrice - entryPrice) / entryPrice) * 100;
+    let stopLossPercentage = Math.abs((stopLossPrice - entryPrice) / entryPrice) * 100;
+    if (stopLossPercentage > 2.5) {
+        stopLossPrice = direction === 'long'
+            ? entryPrice * (1 - 0.025)
+            : entryPrice * (1 + 0.025);
+        stopLossPercentage = 2.5;
+        stopLossReason += "（受2.5%上限约束）";
+    }
 
     const stopLoss: StopLoss = {
         price: roundPrice(stopLossPrice),
@@ -57,35 +69,38 @@ export function calculateSqueezeRisk(params: RiskCalculationParams): RiskManagem
     // ========== 止盈逻辑 ==========
     const targets: TakeProfitTarget[] = [];
 
-    // 目标1：动能减速（50%平仓）
-    const isLongMomentumWeakening = direction === 'long' && momentumColor === 'blue';
-    const isShortMomentumWeakening = direction === 'short' && momentumColor === 'yellow';
+    const tp1Price = direction === 'long'
+        ? entryPrice * (1 + stopLossPercentage / 100 * 2.0)
+        : entryPrice * (1 - stopLossPercentage / 100 * 2.0);
 
-    if (isLongMomentumWeakening || isShortMomentumWeakening) {
-        const tp1Price = direction === 'long'
-            ? entryPrice * (1 + stopLossPercentage / 100 * 2) // 2倍止损距离
-            : entryPrice * (1 - stopLossPercentage / 100 * 2);
+    targets.push({
+        price: roundPrice(tp1Price),
+        percentage: roundPercentage(Math.abs((tp1Price - entryPrice) / entryPrice) * 100),
+        closePercentage: 40,
+        reason: "首段突破兑现 2.0R",
+        moveStopToEntry: true
+    });
 
-        targets.push({
-            price: roundPrice(tp1Price),
-            percentage: roundPercentage(Math.abs((tp1Price - entryPrice) / entryPrice) * 100),
-            closePercentage: 50,
-            reason: "动能由加速转减速",
-            moveStopToEntry: true
-        });
-    }
-
-    // 目标2：基于挤压时长的预期利润
-    const expectedProfitMultiplier = Math.min(5, 2 + squeezeDuration * 0.2); // 挤压越久，目标越高
+    const tp2Multiplier = 3.5;
     const tp2Price = direction === 'long'
-        ? entryPrice * (1 + stopLossPercentage / 100 * expectedProfitMultiplier)
-        : entryPrice * (1 - stopLossPercentage / 100 * expectedProfitMultiplier);
-
+        ? entryPrice * (1 + stopLossPercentage / 100 * tp2Multiplier)
+        : entryPrice * (1 - stopLossPercentage / 100 * tp2Multiplier);
     targets.push({
         price: roundPrice(tp2Price),
         percentage: roundPercentage(Math.abs((tp2Price - entryPrice) / entryPrice) * 100),
-        closePercentage: 100,
-        reason: `达到${expectedProfitMultiplier.toFixed(1)}倍止损距离（蓄力${squeezeDuration}根）`
+        closePercentage: 30,
+        reason: `趋势延续目标 ${tp2Multiplier.toFixed(1)}R（蓄力${squeezeDuration}根）`
+    });
+
+    const tp3Multiplier = 5.0;
+    const tp3Price = direction === 'long'
+        ? entryPrice * (1 + stopLossPercentage / 100 * tp3Multiplier)
+        : entryPrice * (1 - stopLossPercentage / 100 * tp3Multiplier);
+    targets.push({
+        price: roundPrice(tp3Price),
+        percentage: roundPercentage(Math.abs((tp3Price - entryPrice) / entryPrice) * 100),
+        closePercentage: 30,
+        reason: "尾仓趋势跟随目标 5.0R"
     });
 
     // 计算盈亏比
@@ -103,15 +118,21 @@ export function calculateSqueezeRisk(params: RiskCalculationParams): RiskManagem
     // 基于挤压时长
     let strategyBonus = 0;
 
-    if (squeezeDuration >= 15) {
-        strategyBonus += 10; // 超长挤压
+    if (squeezeDuration >= 16) {
+        strategyBonus += 6;
+    } else if (squeezeDuration >= 12) {
+        strategyBonus += 4;
     } else if (squeezeDuration >= 10) {
+        strategyBonus += 2;
+    }
+
+    if (confidence >= 90) {
         strategyBonus += 5;
     }
 
     // 严格挤压 + ADX 确认
-    if (bandwidthPercentile && bandwidthPercentile < 10 && adx && adx > 20) {
-        strategyBonus += 5;
+    if (bandwidthPercentile && bandwidthPercentile < 8 && adx && adx >= 25) {
+        strategyBonus += 4;
     }
 
     const positionSizing = calculateOptimalPosition({
@@ -121,14 +142,13 @@ export function calculateSqueezeRisk(params: RiskCalculationParams): RiskManagem
         entryPrice,
         stopLoss: stopLossPrice,
         strategyBonus,
-        // Squeeze 策略历史数据（示例）
-        winRate: 0.65,
-        avgWin: 5.5,
-        avgLoss: 1.5
+        winRate: 0.58,
+        avgWin: 4.8,
+        avgLoss: 1.7
     });
 
-    // 🔥 添加杠杆上限：Squeeze策略，高胜率，可用中等杠杆
-    positionSizing.leverage = Math.min(positionSizing.leverage, 4);
+    // 高质量首段启动，依然以保守杠杆为主
+    positionSizing.leverage = Math.min(positionSizing.leverage, 3);
 
     // ========== 风控指标 ==========
     const riskAmount = positionSizing.maxRiskAmount;
@@ -139,11 +159,15 @@ export function calculateSqueezeRisk(params: RiskCalculationParams): RiskManagem
         takeProfit,
         positionSizing,
         metrics: {
-            entryPrice,
+            entryPrice: roundPrice(entryPrice),
             riskAmount: Math.round(riskAmount * 100) / 100,
             potentialProfit: Math.round(potentialProfit * 100) / 100,
-            winRate: 0.65,
-            expectedValue: Math.round((potentialProfit * 0.65 - riskAmount * 0.35) * 100) / 100
+            winRate: 0.58,
+            expectedValue: Math.round((potentialProfit * 0.58 - riskAmount * 0.42) * 100) / 100
+        },
+        timeStop: {
+            maxHoldBars: 10,
+            profitThreshold: 0.8
         }
     };
 }

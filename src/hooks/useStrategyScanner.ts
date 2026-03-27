@@ -2,37 +2,178 @@
 
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { TickerData } from '@/lib/types';
-import { StrategySignal } from '@/lib/strategyTypes';
+import { StrategySignal, StrategySignalStatus } from '@/lib/strategyTypes';
+import { APP_CONFIG } from '@/lib/config';
 import { strategyRegistry } from '@/strategies/registry';
+
+const MAX_SIGNAL_COUNT = APP_CONFIG.UI.MAX_ACTIVE_SIGNALS;
+const DISMISSED_SIGNALS_STORAGE_KEY = 'dismissedSignals';
+const STORED_SIGNALS_STORAGE_KEY = 'strategySignals';
+const STRONG_BREAKOUT_ID = 'strong-breakout';
+
+type DismissedSignalMap = Record<string, number>;
+type SignalStats = {
+    total: number;
+    activeCount: number;
+    snapshotCount: number;
+    coolingCount: number;
+    longCount: number;
+    shortCount: number;
+    superSignals: number;
+    strongSignals: number;
+};
+
+const STATUS_PRIORITY: Record<StrategySignalStatus, number> = {
+    active: 2,
+    snapshot: 1,
+    cooling: 0,
+};
+
+function normalizeStoredSignal(signal: StrategySignal): StrategySignal {
+    return {
+        ...signal,
+        status: signal.status === 'cooling' ? 'cooling' : 'snapshot',
+    };
+}
+
+function compareSignals(a: StrategySignal, b: StrategySignal) {
+    const aStatus = a.status ?? 'active';
+    const bStatus = b.status ?? 'active';
+    const statusDelta = STATUS_PRIORITY[bStatus] - STATUS_PRIORITY[aStatus];
+    if (statusDelta !== 0) {
+        return statusDelta;
+    }
+    return b.timestamp - a.timestamp;
+}
+
+function hasStrongBreakoutReset(ticker: TickerData): boolean {
+    const breakoutHigh = ticker.breakout21dHigh;
+    const currentPrice = parseFloat(ticker.lastPrice);
+
+    return typeof breakoutHigh === 'number'
+        && Number.isFinite(breakoutHigh)
+        && Number.isFinite(currentPrice)
+        && currentPrice <= breakoutHigh;
+}
+
+function loadDismissedSignals(): DismissedSignalMap {
+    if (typeof window === 'undefined') {
+        return {};
+    }
+
+    const saved = localStorage.getItem(DISMISSED_SIGNALS_STORAGE_KEY);
+    if (!saved) {
+        return {};
+    }
+
+    try {
+        const parsed = JSON.parse(saved);
+        if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') {
+            return {};
+        }
+
+        const next: DismissedSignalMap = {};
+        Object.entries(parsed).forEach(([symbol, value]) => {
+            if (typeof value === 'number' && Number.isFinite(value)) {
+                next[symbol] = value;
+            }
+        });
+        return next;
+    } catch (err) {
+        console.error('Failed to load dismissed signals:', err);
+        return {};
+    }
+}
+
+function persistDismissedSignals(value: DismissedSignalMap) {
+    if (typeof window === 'undefined') {
+        return;
+    }
+
+    try {
+        localStorage.setItem(DISMISSED_SIGNALS_STORAGE_KEY, JSON.stringify(value));
+    } catch (e) {
+        console.warn('Failed to persist dismissed signals:', e);
+    }
+}
+
+function loadStoredSignals(): StrategySignal[] {
+    if (typeof window === 'undefined') {
+        return [];
+    }
+
+    const saved = localStorage.getItem(STORED_SIGNALS_STORAGE_KEY);
+    if (!saved) {
+        return [];
+    }
+
+    try {
+        const parsed = JSON.parse(saved);
+        if (!Array.isArray(parsed)) {
+            return [];
+        }
+
+        return parsed
+            .filter((item): item is StrategySignal => {
+                return Boolean(
+                    item &&
+                    typeof item === 'object' &&
+                    typeof item.symbol === 'string' &&
+                    typeof item.strategyId === 'string' &&
+                    typeof item.strategyName === 'string' &&
+                    (item.direction === 'long' || item.direction === 'short') &&
+                    typeof item.confidence === 'number' &&
+                    typeof item.reason === 'string' &&
+                    item.metrics &&
+                    typeof item.metrics === 'object' &&
+                    typeof item.timestamp === 'number'
+                );
+            })
+            .map(normalizeStoredSignal)
+            .sort(compareSignals)
+            .slice(0, MAX_SIGNAL_COUNT);
+    } catch (err) {
+        console.error('Failed to load stored strategy signals:', err);
+        return [];
+    }
+}
+
+function persistSignals(value: StrategySignal[]) {
+    if (typeof window === 'undefined') {
+        return;
+    }
+
+    try {
+        localStorage.setItem(STORED_SIGNALS_STORAGE_KEY, JSON.stringify(value));
+    } catch (e) {
+        console.warn('Failed to persist strategy signals:', e);
+    }
+}
 
 export function useStrategyScanner(data: TickerData[]) {
     const [signals, setSignals] = useState<StrategySignal[]>([]);
-    // 使用 useRef 保存已存在信号的时间戳，key为 symbol-strategyId
-    const signalTimestamps = useRef<Map<string, number>>(new Map());
+    const signalsRef = useRef<StrategySignal[]>([]);
+    const breakoutResetRef = useRef<Map<string, boolean>>(new Map());
 
     // 保存上一次的数据摘要，用于检测变化
     const prevDataDigest = useRef<Map<string, string>>(new Map());
     const prevStrategyVersion = useRef(0);
 
-    // 🔧 修复 Hydration Mismatch：初始化为空，然后在客户端加载
-    const [dismissedSignals, setDismissedSignals] = useState<Set<string>>(new Set());
-    const dismissedSignalsRef = useRef<Set<string>>(new Set());
+    const dismissedSignalsRef = useRef<DismissedSignalMap>({});
     const [strategyVersion, setStrategyVersion] = useState(0);
+    const [isHydrated, setIsHydrated] = useState(false);
+    const hasCompletedInitialScan = useRef(false);
 
     // 在客户端加载后从 localStorage 读取
     useEffect(() => {
-        if (typeof window !== 'undefined') {
-            const saved = localStorage.getItem('dismissedSignals');
-            if (saved) {
-                try {
-                    const parsed = new Set<string>(JSON.parse(saved));
-                    setDismissedSignals(parsed);
-                    dismissedSignalsRef.current = parsed;
-                } catch (err) {
-                    console.error('Failed to load dismissed signals:', err);
-                }
-            }
-        }
+        const parsed = loadDismissedSignals();
+        const storedSignals = loadStoredSignals();
+        dismissedSignalsRef.current = parsed;
+        signalsRef.current = storedSignals;
+        // 首次挂载时恢复本地缓存，避免把老信号当成新信号。
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setSignals(storedSignals);
+        setIsHydrated(true);
     }, []);
 
     useEffect(() => {
@@ -41,23 +182,26 @@ export function useStrategyScanner(data: TickerData[]) {
         });
     }, []);
 
+    useEffect(() => {
+        signalsRef.current = signals;
+    }, [signals]);
+
     // 扫描并生成信号
     useEffect(() => {
-        if (!data || data.length === 0) return;
+        if (!isHydrated || !data || data.length === 0) return;
 
+        const now = Date.now();
         const enabledStrategies = strategyRegistry.getEnabled();
         const forceRescan = prevStrategyVersion.current !== strategyVersion;
+        const isInitialScan = !hasCompletedInitialScan.current;
+
+        const existingSignalsMap = new Map<string, StrategySignal>();
+        signalsRef.current.forEach((sig) => {
+            existingSignalsMap.set(sig.symbol, sig);
+        });
 
         const currentDataDigest = new Map<string, string>();
         const scanResults = new Map<string, StrategySignal | null>();
-        const releasedDismissals = new Set<string>();
-        const clearSignalTimestamps = (symbol: string) => {
-            Array.from(signalTimestamps.current.keys()).forEach((key) => {
-                if (key.startsWith(`${symbol}-`)) {
-                    signalTimestamps.current.delete(key);
-                }
-            });
-        };
 
         data.forEach(ticker => {
             const digest = JSON.stringify({
@@ -66,6 +210,18 @@ export function useStrategyScanner(data: TickerData[]) {
                 change15m: ticker.change15m,
                 change1h: ticker.change1h,
                 change4h: ticker.change4h,
+                breakout21dHigh: ticker.breakout21dHigh,
+                breakout21dPercent: ticker.breakout21dPercent,
+                ema5m20: ticker.ema5m20,
+                ema5m60: ticker.ema5m60,
+                ema5m100: ticker.ema5m100,
+                ema5mDistancePercent: ticker.ema5mDistancePercent,
+                gmmaTrend: ticker.gmmaTrend,
+                gmmaShortScore: ticker.gmmaShortScore,
+                gmmaLongScore: ticker.gmmaLongScore,
+                gmmaSeparationPercent: ticker.gmmaSeparationPercent,
+                multiEmaTrend: ticker.multiEmaTrend,
+                multiEmaAlignmentScore: ticker.multiEmaAlignmentScore,
                 quoteVolume: ticker.quoteVolume,
                 openInterest: ticker.openInterest,
                 openInterestValue: ticker.openInterestValue,
@@ -81,6 +237,7 @@ export function useStrategyScanner(data: TickerData[]) {
                 rsrsDynamicShortThreshold: ticker.rsrsDynamicShortThreshold,
                 atr: ticker.atr,
                 volumeMA: ticker.volumeMA,
+                volumeRatio: ticker.volumeRatio,
                 betaToBTC: ticker.betaToBTC,
                 correlationToBTC: ticker.correlationToBTC,
                 cvd: ticker.cvd,
@@ -96,7 +253,11 @@ export function useStrategyScanner(data: TickerData[]) {
                 squeezeStatus: ticker.squeezeStatus,
                 prevSqueezeStatus: ticker.prevSqueezeStatus,
                 squeezeDuration: ticker.squeezeDuration,
+                lastSqueezeDuration: ticker.lastSqueezeDuration,
                 squeezeStrength: ticker.squeezeStrength,
+                releaseBarsAgo: ticker.releaseBarsAgo,
+                squeezeBoxHigh: ticker.squeezeBoxHigh,
+                squeezeBoxLow: ticker.squeezeBoxLow,
                 momentumValue: ticker.momentumValue,
                 momentumColor: ticker.momentumColor,
                 adx: ticker.adx,
@@ -115,16 +276,13 @@ export function useStrategyScanner(data: TickerData[]) {
             enabledStrategies.forEach(strategy => {
                 const signal = strategy.detect(ticker);
                 if (signal) {
-                    if (signal.confidence < 85) return;
+                    if (signal.confidence < APP_CONFIG.STRATEGY.MIN_CONFIDENCE) return;
                     signal.price = parseFloat(ticker.lastPrice);
-                    const signalId = `${signal.symbol}-${signal.strategyId}`;
-                    const existingTimestamp = signalTimestamps.current.get(signalId);
-                    if (existingTimestamp) {
-                        signal.timestamp = existingTimestamp;
-                    } else {
-                        signalTimestamps.current.set(signalId, signal.timestamp);
-                    }
-                    symbolSignals.push(signal);
+                    symbolSignals.push({
+                        ...signal,
+                        status: 'active',
+                        lastSeenAt: now,
+                    });
                 }
             });
 
@@ -151,112 +309,149 @@ export function useStrategyScanner(data: TickerData[]) {
                 });
             } else {
                 scanResults.set(ticker.symbol, null);
-                releasedDismissals.add(ticker.symbol);
-                clearSignalTimestamps(ticker.symbol);
             }
         });
 
         prevDataDigest.current = currentDataDigest;
         prevStrategyVersion.current = strategyVersion;
 
-        if (releasedDismissals.size > 0) {
-            setDismissedSignals((prev) => {
-                const next = new Set(prev);
-                let changed = false;
+        const updatedSignals: StrategySignal[] = [];
+        data.forEach((ticker) => {
+            const symbol = ticker.symbol;
+            const scanResult = scanResults.get(symbol);
+            const existing = existingSignalsMap.get(symbol);
+            const dismissedAt = dismissedSignalsRef.current[symbol];
+            const breakoutReset = hasStrongBreakoutReset(ticker);
 
-                releasedDismissals.forEach((symbol) => {
-                    if (next.delete(symbol)) {
-                        changed = true;
-                    }
-                });
+            if (breakoutReset) {
+                breakoutResetRef.current.set(symbol, true);
+            }
 
-                if (changed) {
-                    dismissedSignalsRef.current = next;
-                    localStorage.setItem('dismissedSignals', JSON.stringify(Array.from(next)));
-                    return next;
-                }
-
-                return prev;
-            });
-        }
-
-        setSignals(prev => {
-            const existingSignalsMap = new Map<string, StrategySignal>();
-            prev.forEach(sig => {
-                existingSignalsMap.set(sig.symbol, sig);
-            });
-
-            const updatedSignals: StrategySignal[] = [];
-            data.forEach((ticker) => {
-                const symbol = ticker.symbol;
-                const scanResult = scanResults.get(symbol);
-
-                if (scanResult === undefined) {
-                    const existing = existingSignalsMap.get(symbol);
-                    if (existing && !dismissedSignalsRef.current.has(symbol)) {
-                        updatedSignals.push(existing);
-                    }
+            if (scanResult === undefined) {
+                if (!existing || dismissedAt === existing.timestamp) {
                     return;
                 }
 
-                if (scanResult === null || dismissedSignalsRef.current.has(symbol)) {
+                updatedSignals.push(existing);
+                return;
+            }
+
+            if (scanResult) {
+                const existingStatus = existing?.status ?? 'active';
+                const nextStatus: StrategySignalStatus = isInitialScan && existingStatus !== 'cooling'
+                    ? 'snapshot'
+                    : existing
+                        ? (existingStatus === 'cooling' ? (isInitialScan ? 'snapshot' : 'active') : existingStatus)
+                        : (isInitialScan ? 'snapshot' : 'active');
+                const canRefreshStrongBreakout =
+                    scanResult.strategyId === STRONG_BREAKOUT_ID &&
+                    breakoutResetRef.current.get(symbol) === true;
+                const nextTimestamp =
+                    existing?.status === 'cooling'
+                        ? (
+                            scanResult.strategyId === STRONG_BREAKOUT_ID
+                                ? (canRefreshStrongBreakout ? scanResult.timestamp : existing.timestamp)
+                                : scanResult.timestamp
+                        )
+                        : (existing?.timestamp ?? scanResult.timestamp);
+                const nextSignal = existing
+                    ? {
+                        ...scanResult,
+                        status: nextStatus,
+                        timestamp: nextTimestamp,
+                    }
+                    : {
+                        ...scanResult,
+                        status: nextStatus,
+                    };
+
+                if (scanResult.strategyId === STRONG_BREAKOUT_ID) {
+                    breakoutResetRef.current.set(symbol, false);
+                }
+
+                if (dismissedAt === nextSignal.timestamp) {
                     return;
                 }
 
-                const existing = existingSignalsMap.get(symbol);
-                updatedSignals.push(existing
-                    ? { ...scanResult, timestamp: existing.timestamp }
-                    : scanResult
-                );
-            });
+                updatedSignals.push(nextSignal);
+                return;
+            }
 
-            return updatedSignals
-                .sort((a, b) => b.timestamp - a.timestamp)
-                .slice(0, 50);
+            if (!existing) {
+                return;
+            }
+
+            if (dismissedAt === existing.timestamp) {
+                return;
+            }
+
+            updatedSignals.push({
+                ...existing,
+                status: 'cooling',
+            });
         });
 
-        // 清理过期的触发记录和时间戳（5分钟）
-        const cleanupTimer = setTimeout(() => {
-            signalTimestamps.current = new Map();
-        }, 5 * 60 * 1000);
+        const nextSignals = updatedSignals
+            .sort(compareSignals)
+            .slice(0, MAX_SIGNAL_COUNT);
 
-        return () => clearTimeout(cleanupTimer);
-    }, [data, strategyVersion]);
+        signalsRef.current = nextSignals;
+        // 扫描结果需要落到状态里驱动 UI，这是本 hook 的主职责。
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setSignals(nextSignals);
+        hasCompletedInitialScan.current = true;
 
-    // 按时间戳倒序排序的活跃信号（最新的在上面）
+    }, [data, isHydrated, strategyVersion]);
+
+    useEffect(() => {
+        if (!isHydrated) {
+            return;
+        }
+
+        persistSignals(signals);
+    }, [isHydrated, signals]);
+
+    // 按状态和时间排序后的信号列表（实时触发 > 打开时已满足 > 回落保留）
     const sortedSignals = useMemo(() => {
-        return [...signals].sort((a, b) => b.timestamp - a.timestamp);
+        return [...signals].sort(compareSignals);
     }, [signals]);
 
     // 统计数据
-    const stats = useMemo(() => {
+    const stats = useMemo<SignalStats>(() => {
         const total = signals.length;
+        const activeCount = signals.filter(s => (s.status ?? 'active') === 'active').length;
+        const snapshotCount = signals.filter(s => s.status === 'snapshot').length;
+        const coolingCount = signals.filter(s => s.status === 'cooling').length;
         const longCount = signals.filter(s => s.direction === 'long').length;
         const shortCount = signals.filter(s => s.direction === 'short').length;
         const superSignals = signals.filter(s => (s.stackCount || 0) >= 3).length;
         const strongSignals = signals.filter(s => (s.stackCount || 0) === 2).length;
 
-        return { total, longCount, shortCount, superSignals, strongSignals };
+        return { total, activeCount, snapshotCount, coolingCount, longCount, shortCount, superSignals, strongSignals };
     }, [signals]);
 
-    const dismissSignal = (id: string) => {
-        setDismissedSignals(prev => {
-            const newSet = new Set(prev);
-            newSet.add(id);
-            dismissedSignalsRef.current = newSet;
-            // 🔧 保存到 localStorage
-            localStorage.setItem('dismissedSignals', JSON.stringify(Array.from(newSet)));
-            return newSet;
+    const dismissSignal = (signal: StrategySignal) => {
+        const nextDismissedSignals = {
+            ...dismissedSignalsRef.current,
+            [signal.symbol]: signal.timestamp,
+        };
+        dismissedSignalsRef.current = nextDismissedSignals;
+        persistDismissedSignals(nextDismissedSignals);
+        setSignals(prev => {
+            const nextSignals = prev.filter(s => !(s.symbol === signal.symbol && s.timestamp === signal.timestamp));
+            signalsRef.current = nextSignals;
+            return nextSignals;
         });
-        setSignals(prev => prev.filter(s => s.symbol !== id));
     };
 
     const clearAll = () => {
+        signalsRef.current = [];
+        breakoutResetRef.current.clear();
         setSignals([]);
-        signalTimestamps.current = new Map();
-        setDismissedSignals(new Set()); // 🔧 清空黑名单
-        dismissedSignalsRef.current = new Set();
-        localStorage.removeItem('dismissedSignals'); // 🔧 清空 localStorage
+        dismissedSignalsRef.current = {};
+        hasCompletedInitialScan.current = false;
+        localStorage.removeItem(DISMISSED_SIGNALS_STORAGE_KEY);
+        localStorage.removeItem(STORED_SIGNALS_STORAGE_KEY);
     };
 
     return {

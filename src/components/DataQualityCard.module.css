@@ -135,21 +135,3 @@
     font-size: 13px;
     color: #fbbf24;
 }
-
-.downloadBtn {
-    padding: 6px 12px;
-    background: rgba(245, 158, 11, 0.2);
-    border: 1px solid #f59e0b;
-    border-radius: 6px;
-    color: #fbbf24;
-    font-size: 12px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s;
-    flex-shrink: 0;
-}
-
-.downloadBtn:hover {
-    background: rgba(245, 158, 11, 0.3);
-    transform: translateY(-1px);
-}

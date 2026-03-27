@@ -119,9 +119,11 @@ class HistoricalDataTracker {
      * 启动自动清理
      */
     private startAutoCleanup(): void {
-        if (this.cleanupInterval) {
-            return; // 已经启动
-        }
+        if (this.cleanupInterval) return;
+        // 使用 globalThis 标记防止 Next.js 热重载时重复创建 interval
+        const guardKey = '__historicalTrackerCleanupStarted';
+        if ((globalThis as Record<string, unknown>)[guardKey]) return;
+        (globalThis as Record<string, unknown>)[guardKey] = true;
 
         this.cleanupInterval = setInterval(() => {
             this.cleanup();
