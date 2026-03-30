@@ -42,6 +42,8 @@ export interface PortfolioBacktestResult {
 
 interface CandidateTrade extends Trade {
     symbol: string;
+    equityCurve: EquityPoint[];
+    entryBaselineEquity: number;
 }
 
 interface ActivePosition {
@@ -49,10 +51,99 @@ interface ActivePosition {
     allocatedCapital: number;
 }
 
+function findEquityAtOrBefore(curve: EquityPoint[], timestamp: number): number | null {
+    if (curve.length === 0) {
+        return null;
+    }
+
+    let left = 0;
+    let right = curve.length - 1;
+    let result = -1;
+
+    while (left <= right) {
+        const mid = Math.floor((left + right) / 2);
+        if (curve[mid].time <= timestamp) {
+            result = mid;
+            left = mid + 1;
+        } else {
+            right = mid - 1;
+        }
+    }
+
+    return result >= 0 ? curve[result].equity : null;
+}
+
+function interpolateEquity(curve: EquityPoint[], timestamp: number): number | null {
+    if (curve.length === 0) {
+        return null;
+    }
+
+    if (timestamp <= curve[0].time) {
+        return curve[0].equity;
+    }
+
+    const lastPoint = curve[curve.length - 1];
+    if (timestamp >= lastPoint.time) {
+        return lastPoint.equity;
+    }
+
+    let left = 0;
+    let right = curve.length - 1;
+
+    while (left <= right) {
+        const mid = Math.floor((left + right) / 2);
+        const point = curve[mid];
+
+        if (point.time === timestamp) {
+            return point.equity;
+        }
+
+        if (point.time < timestamp) {
+            left = mid + 1;
+        } else {
+            right = mid - 1;
+        }
+    }
+
+    const prevPoint = curve[Math.max(0, right)];
+    const nextPoint = curve[Math.min(curve.length - 1, left)];
+    if (!prevPoint || !nextPoint || nextPoint.time === prevPoint.time) {
+        return prevPoint?.equity ?? nextPoint?.equity ?? null;
+    }
+
+    const progress = (timestamp - prevPoint.time) / (nextPoint.time - prevPoint.time);
+    return prevPoint.equity + (nextPoint.equity - prevPoint.equity) * progress;
+}
+
+function getMarkedPositionValue(position: ActivePosition, timestamp: number): number {
+    if (timestamp <= position.trade.entryTime) {
+        return position.allocatedCapital;
+    }
+
+    const sampleTime = Math.min(timestamp, position.trade.exitTime);
+    const sampledEquity = interpolateEquity(position.trade.equityCurve, sampleTime);
+    const baselineEquity = position.trade.entryBaselineEquity;
+
+    if (
+        sampledEquity !== null &&
+        Number.isFinite(sampledEquity) &&
+        Number.isFinite(baselineEquity) &&
+        baselineEquity > 0
+    ) {
+        return position.allocatedCapital * (sampledEquity / baselineEquity);
+    }
+
+    const duration = Math.max(1, position.trade.exitTime - position.trade.entryTime);
+    const elapsed = Math.max(0, Math.min(sampleTime - position.trade.entryTime, duration));
+    const progress = elapsed / duration;
+    return position.allocatedCapital * (1 + (position.trade.profit * progress) / 100);
+}
+
 function computeMetrics(
     executedTrades: Trade[],
     equityCurve: EquityPoint[],
     initialCapital: number,
+    finalCapital: number,
     maxDrawdown: number
 ) {
     const totalTrades = executedTrades.length;
@@ -60,10 +151,12 @@ function computeMetrics(
     const losingTrades = executedTrades.filter((trade) => trade.profit < 0).length;
     const winRate = totalTrades > 0 ? (winningTrades / totalTrades) * 100 : 0;
 
-    const totalProfitUSDT = executedTrades.reduce((sum, trade) => sum + trade.profitUSDT, 0);
+    const totalProfitUSDT = finalCapital - initialCapital;
     const totalProfit = initialCapital > 0 ? (totalProfitUSDT / initialCapital) * 100 : 0;
 
-    const averageProfit = totalTrades > 0 ? totalProfit / totalTrades : 0;
+    const averageProfit = totalTrades > 0
+        ? executedTrades.reduce((sum, trade) => sum + trade.profit, 0) / totalTrades
+        : 0;
     const wins = executedTrades.filter((trade) => trade.profit > 0);
     const losses = executedTrades.filter((trade) => trade.profit < 0);
     const averageWin = wins.length > 0 ? wins.reduce((sum, trade) => sum + trade.profit, 0) / wins.length : 0;
@@ -79,26 +172,44 @@ function computeMetrics(
             ? Number.POSITIVE_INFINITY
             : 0;
 
-    const returns = executedTrades.map((trade) => trade.profit);
-    const avgReturn = totalTrades > 0 ? returns.reduce((sum, value) => sum + value, 0) / totalTrades : 0;
-    const variance = totalTrades > 0
-        ? returns.reduce((sum, value) => sum + Math.pow(value - avgReturn, 2), 0) / totalTrades
+    const yearMs = 365.25 * 24 * 60 * 60 * 1000;
+    const durationMs = Math.max(1, (equityCurve[equityCurve.length - 1]?.time ?? 0) - (equityCurve[0]?.time ?? 0));
+    const equityReturns = equityCurve
+        .slice(1)
+        .map((point, index) => {
+            const previous = equityCurve[index]?.equity ?? 100;
+            return previous > 0 ? (point.equity - previous) / previous : 0;
+        })
+        .filter((value) => Number.isFinite(value));
+    const avgReturn = equityReturns.length > 0
+        ? equityReturns.reduce((sum, value) => sum + value, 0) / equityReturns.length
+        : 0;
+    const variance = equityReturns.length > 0
+        ? equityReturns.reduce((sum, value) => sum + Math.pow(value - avgReturn, 2), 0) / equityReturns.length
         : 0;
     const stdDev = Math.sqrt(variance);
-    const sharpeRatio = stdDev > 0 ? (avgReturn / stdDev) * Math.sqrt(252) : 0;
+    const observationsPerYear = equityReturns.length > 1
+        ? (equityReturns.length / durationMs) * yearMs
+        : 0;
+    const sharpeRatio = stdDev > 0 && observationsPerYear > 0
+        ? (avgReturn / stdDev) * Math.sqrt(observationsPerYear)
+        : 0;
 
-    const downsideReturns = returns.filter((value) => value < 0);
+    const downsideReturns = equityReturns.filter((value) => value < 0);
     const downsideVariance = downsideReturns.length > 0
         ? downsideReturns.reduce((sum, value) => sum + value * value, 0) / downsideReturns.length
         : 0;
     const downsideDeviation = Math.sqrt(downsideVariance);
-    const sortinoRatio = downsideDeviation > 0 ? (avgReturn / downsideDeviation) * Math.sqrt(252) : 0;
+    const sortinoRatio = downsideDeviation > 0 && observationsPerYear > 0
+        ? (avgReturn / downsideDeviation) * Math.sqrt(observationsPerYear)
+        : 0;
 
     const startTime = equityCurve[0]?.time ?? 0;
     const endTime = equityCurve[equityCurve.length - 1]?.time ?? startTime;
-    const tradingDays = Math.max(1, (endTime - startTime) / (24 * 60 * 60 * 1000));
-    const annualizedReturn = totalProfit * (252 / tradingDays);
-    const calmarRatio = maxDrawdown > 0 ? annualizedReturn / maxDrawdown : 0;
+    const annualizedReturn = initialCapital > 0 && finalCapital > 0
+        ? Math.pow(finalCapital / initialCapital, yearMs / Math.max(1, endTime - startTime)) - 1
+        : -1;
+    const calmarRatio = maxDrawdown > 0 ? annualizedReturn / (maxDrawdown / 100) : 0;
     const expectancy = totalTrades > 0
         ? (winRate / 100) * averageWin + ((100 - winRate) / 100) * averageLoss
         : 0;
@@ -163,6 +274,8 @@ export function runPortfolioBacktest(
             run.result.trades.map((trade) => ({
                 ...trade,
                 symbol: trade.symbol || run.symbol,
+                equityCurve: run.result.equityCurve,
+                entryBaselineEquity: findEquityAtOrBefore(run.result.equityCurve, trade.entryTime) ?? 100,
             }))
         )
         .sort((a, b) => {
@@ -183,7 +296,7 @@ export function runPortfolioBacktest(
     const equityCurve: EquityPoint[] = [];
 
     const pushEquityPoint = (time: number) => {
-        const equity = cash + activePositions.reduce((sum, position) => sum + position.allocatedCapital, 0);
+        const equity = cash + activePositions.reduce((sum, position) => sum + getMarkedPositionValue(position, time), 0);
         peakEquity = Math.max(peakEquity, equity);
         const drawdown = peakEquity > 0 ? ((peakEquity - equity) / peakEquity) * 100 : 0;
         maxDrawdown = Math.max(maxDrawdown, drawdown);
@@ -252,8 +365,8 @@ export function runPortfolioBacktest(
         pushEquityPoint(Date.now());
     }
 
-    const metrics = computeMetrics(executedTrades, equityCurve, config.initialCapital, maxDrawdown);
     const finalCapital = cash;
+    const metrics = computeMetrics(executedTrades, equityCurve, config.initialCapital, finalCapital, maxDrawdown);
 
     return {
         initialCapital: config.initialCapital,

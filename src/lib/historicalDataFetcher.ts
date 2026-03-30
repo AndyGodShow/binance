@@ -1,5 +1,17 @@
 import { KlineData } from '@/app/api/backtest/klines/route';
 
+function parseUtcDateString(date: string): number {
+    const match = date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) {
+        return NaN;
+    }
+
+    const year = Number.parseInt(match[1], 10);
+    const month = Number.parseInt(match[2], 10);
+    const day = Number.parseInt(match[3], 10);
+    return Date.UTC(year, month - 1, day);
+}
+
 /**
  * 批量获取历史K线数据
  * 自动处理分页，突破单次1500条的限制
@@ -127,8 +139,8 @@ export class HistoricalDataFetcher {
         startDate: string, // 格式: 'YYYY-MM-DD'
         endDate: string    // 格式: 'YYYY-MM-DD'
     ): { startTime: number; endTime: number } {
-        const startTime = new Date(startDate).getTime();
-        const endTime = new Date(endDate).getTime();
+        const startTime = parseUtcDateString(startDate);
+        const endTime = parseUtcDateString(endDate);
         return { startTime, endTime };
     }
 

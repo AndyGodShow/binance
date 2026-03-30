@@ -3,7 +3,7 @@ node_modules
 .git
 .env
 .env.*
-data
+/data
 .playwright-cli
 output
 docs

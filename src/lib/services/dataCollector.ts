@@ -4,11 +4,32 @@ import { execFile } from 'child_process';
 import util from 'util';
 
 const execFilePromise = util.promisify(execFile);
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 // 检测是否在 Serverless 环境（Vercel 等）
 const isServerless = !!(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.SERVERLESS);
 
 export type DataType = 'metrics' | 'fundingRate';
+
+function parseUtcDateString(date: string): number {
+    const match = date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) {
+        return NaN;
+    }
+
+    const year = Number.parseInt(match[1], 10);
+    const month = Number.parseInt(match[2], 10);
+    const day = Number.parseInt(match[3], 10);
+    return Date.UTC(year, month - 1, day);
+}
+
+function formatUtcDateString(timestamp: number): string {
+    const date = new Date(timestamp);
+    const year = date.getUTCFullYear();
+    const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(date.getUTCDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
 
 export class DataCollector {
     private dataDir: string;
@@ -35,8 +56,11 @@ export class DataCollector {
         if (!/^[A-Z0-9]+$/i.test(symbol)) {
             throw new Error(`Invalid symbol: ${symbol}`);
         }
-        const start = new Date(startDate);
-        const end = new Date(endDate);
+        const start = parseUtcDateString(startDate);
+        const end = parseUtcDateString(endDate);
+        if (!Number.isFinite(start) || !Number.isFinite(end) || start > end) {
+            throw new Error(`Invalid date range: ${startDate} - ${endDate}`);
+        }
         const symbolDir = path.join(this.dataDir, symbol.toUpperCase(), type);
 
         if (!fs.existsSync(symbolDir)) {
@@ -45,8 +69,8 @@ export class DataCollector {
 
         console.log(`Starting download for ${symbol} ${type} from ${startDate} to ${endDate}...`);
 
-        for (let d = new Date(start); d <= end; d = new Date(d.getTime() + 86400000)) {
-            const dateStr = d.toISOString().split('T')[0];
+        for (let currentDay = start; currentDay <= end; currentDay += DAY_MS) {
+            const dateStr = formatUtcDateString(currentDay);
             const fileName = `${symbol.toUpperCase()}-${type}-${dateStr}`;
             const zipName = `${fileName}.zip`;
             const localZipPath = path.join(symbolDir, zipName);
@@ -101,19 +125,22 @@ export class DataCollector {
         if (isServerless) {
             return { coveragePercent: 0, totalDays: 0, availableDays: 0, missingDates: [] };
         }
-        const start = new Date(startDate);
-        const end = new Date(endDate);
+        const start = parseUtcDateString(startDate);
+        const end = parseUtcDateString(endDate);
+        if (!Number.isFinite(start) || !Number.isFinite(end) || start > end) {
+            return { coveragePercent: 0, totalDays: 0, availableDays: 0, missingDates: [] };
+        }
         const symbolDir = path.join(this.dataDir, symbol.toUpperCase(), type);
 
-        const totalDays = Math.ceil((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000)) + 1;
+        const totalDays = Math.floor((end - start) / DAY_MS) + 1;
         let availableDays = 0;
         const missingDates: string[] = [];
 
         // Check if directory exists
         if (!fs.existsSync(symbolDir)) {
             // No data at all
-            for (let d = new Date(start); d <= end; d = new Date(d.getTime() + 86400000)) {
-                missingDates.push(d.toISOString().split('T')[0]);
+            for (let currentDay = start; currentDay <= end; currentDay += DAY_MS) {
+                missingDates.push(formatUtcDateString(currentDay));
             }
             return {
                 coveragePercent: 0,
@@ -124,8 +151,8 @@ export class DataCollector {
         }
 
         // Check each day
-        for (let d = new Date(start); d <= end; d = new Date(d.getTime() + 86400000)) {
-            const dateStr = d.toISOString().split('T')[0];
+        for (let currentDay = start; currentDay <= end; currentDay += DAY_MS) {
+            const dateStr = formatUtcDateString(currentDay);
             const fileName = `${symbol.toUpperCase()}-${type}-${dateStr}.csv`;
             const filePath = path.join(symbolDir, fileName);
 
@@ -163,11 +190,11 @@ export class DataCollector {
             const dateMatch = file.match(/\d{4}-\d{2}-\d{2}/);
             if (!dateMatch) continue;
 
-            const fileDate = new Date(dateMatch[0]).getTime();
+            const fileDate = parseUtcDateString(dateMatch[0]);
             // Simple bound check: file covers the whole day. 
             // If fileDate is strictly after endTime (day start > requested end), skip.
             // If fileDate + 24h is strictly before startTime (day end < requested start), skip.
-            if (fileDate > endTime || fileDate + 86400000 < startTime) continue;
+            if (!Number.isFinite(fileDate) || fileDate > endTime || fileDate + DAY_MS < startTime) continue;
 
             const filePath = path.join(symbolDir, file);
             const content = fs.readFileSync(filePath, 'utf-8');

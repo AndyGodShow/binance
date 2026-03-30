@@ -105,10 +105,16 @@ export interface StrategyResult {
     risk?: RiskManagement; // 策略携带的风控信息
 }
 
+interface TradeSettlement {
+    capitalReturned: number;
+    profitUSDT: number;
+}
+
 interface BacktestPosition {
     direction: 'long' | 'short';
     entryPrice: number;
     entryTime: number;
+    entryCapital: number;
     signalEntryTime: number;
     entryIndex: number;
     risk?: RiskManagement;
@@ -178,16 +184,17 @@ export class BacktestEngine {
     }
 
     private calculateMarkToMarketEquity(
-        realizedEquity: number,
+        cash: number,
         currentPosition: {
             direction: 'long' | 'short';
             entryPrice: number;
+            entryCapital: number;
             remainingSize: number;
         } | null,
         currentPrice: number
     ): number {
         if (!currentPosition || currentPosition.remainingSize <= 0.0001) {
-            return realizedEquity;
+            return cash;
         }
 
         const floatingProfitPercent = this.calculateProfitPercent(
@@ -196,7 +203,12 @@ export class BacktestEngine {
             currentPosition.direction
         ) - (this.config.commission + this.config.slippage);
 
-        return realizedEquity + (floatingProfitPercent * currentPosition.remainingSize);
+        const positionValue =
+            currentPosition.entryCapital *
+            currentPosition.remainingSize *
+            (1 + floatingProfitPercent / 100);
+
+        return cash + positionValue;
     }
 
     private cloneRiskForEntry(
@@ -237,12 +249,15 @@ export class BacktestEngine {
         exitPrice: number,
         size: number,
         exitReason: Trade['exitReason']
-    ): number {
+    ): TradeSettlement {
+        const normalizedSize = Math.min(size, position.remainingSize);
         const finalProfitPercent = this.calculateProfitPercent(
             position.entryPrice,
             exitPrice,
             position.direction
         ) - (this.config.commission + this.config.slippage);
+        const allocatedCapital = position.entryCapital * normalizedSize;
+        const profitUSDT = (allocatedCapital * finalProfitPercent) / 100;
 
         trades.push({
             symbol,
@@ -251,14 +266,17 @@ export class BacktestEngine {
             entryPrice: position.entryPrice,
             exitPrice,
             direction: position.direction,
-            size,
+            size: normalizedSize,
             profit: finalProfitPercent,
-            profitUSDT: (this.config.initialCapital * finalProfitPercent * size) / 100,
+            profitUSDT,
             holdingTime: exitTime - position.entryTime,
             exitReason,
         });
 
-        return finalProfitPercent * size;
+        return {
+            capitalReturned: allocatedCapital + profitUSDT,
+            profitUSDT,
+        };
     }
 
     private getIntervalMs(interval: string): number | null {
@@ -347,7 +365,7 @@ export class BacktestEngine {
         pendingExitReason: Trade['exitReason'] | null;
         tradeLegs: Trade[];
         symbol: string;
-        equity: number;
+        cash: number;
         signalIntervalMs: number | null;
         isFinalSegment: boolean;
         fallbackExitTime: number;
@@ -356,7 +374,7 @@ export class BacktestEngine {
         currentPosition: BacktestPosition | null;
         pendingEntry: PendingBacktestEntry | null;
         pendingExitReason: Trade['exitReason'] | null;
-        equity: number;
+        cash: number;
         lastProcessedTime: number;
         lastProcessedPrice: number;
     } {
@@ -374,7 +392,7 @@ export class BacktestEngine {
             currentPosition,
             pendingEntry,
             pendingExitReason,
-            equity,
+            cash,
         } = params;
 
         let lastProcessedTime = fallbackExitTime;
@@ -389,7 +407,7 @@ export class BacktestEngine {
             const hasNextBar = index < bars.length - 1;
 
             if (pendingExitReason && currentPosition && Number.isFinite(currentOpen)) {
-                equity += this.recordTrade(
+                const settlement = this.recordTrade(
                     tradeLegs,
                     currentPosition,
                     symbol,
@@ -398,15 +416,17 @@ export class BacktestEngine {
                     currentPosition.remainingSize,
                     pendingExitReason
                 );
+                cash += settlement.capitalReturned;
                 currentPosition = null;
             }
             pendingExitReason = null;
 
-            if (pendingEntry && !currentPosition && Number.isFinite(currentOpen)) {
+            if (pendingEntry && !currentPosition && Number.isFinite(currentOpen) && cash > 0) {
                 currentPosition = {
                     direction: pendingEntry.direction,
                     entryPrice: currentOpen,
                     entryTime: kline.openTime,
+                    entryCapital: cash,
                     signalEntryTime: pendingEntry.signalTime,
                     entryIndex: index,
                     risk: this.cloneRiskForEntry(pendingEntry.risk, currentOpen, pendingEntry.direction),
@@ -416,6 +436,7 @@ export class BacktestEngine {
                     remainingSize: 1.0,
                     hitTargetIndices: [],
                 };
+                cash = 0;
             }
             pendingEntry = null;
 
@@ -510,7 +531,7 @@ export class BacktestEngine {
                             );
 
                             if (!shouldExit && exitSize > 0.0001) {
-                                equity += this.recordTrade(
+                                const settlement = this.recordTrade(
                                     tradeLegs,
                                     currentPosition!,
                                     symbol,
@@ -519,6 +540,7 @@ export class BacktestEngine {
                                     exitSize,
                                     'take_profit'
                                 );
+                                cash += settlement.capitalReturned;
                                 currentPosition!.remainingSize -= exitSize;
                             }
 
@@ -567,7 +589,7 @@ export class BacktestEngine {
                 }
 
                 if (shouldExit && currentPosition.remainingSize > 0.0001) {
-                    equity += this.recordTrade(
+                    const settlement = this.recordTrade(
                         tradeLegs,
                         currentPosition,
                         symbol,
@@ -576,6 +598,7 @@ export class BacktestEngine {
                         currentPosition.remainingSize,
                         exitReason
                     );
+                    cash += settlement.capitalReturned;
                     currentPosition = null;
                 } else if (currentPosition && currentPosition.remainingSize <= 0.0001) {
                     currentPosition = null;
@@ -588,7 +611,7 @@ export class BacktestEngine {
 
         if (isFinalSegment) {
             if (pendingExitReason && currentPosition) {
-                equity += this.recordTrade(
+                const settlement = this.recordTrade(
                     tradeLegs,
                     currentPosition,
                     symbol,
@@ -597,12 +620,13 @@ export class BacktestEngine {
                     currentPosition.remainingSize,
                     pendingExitReason
                 );
+                cash += settlement.capitalReturned;
                 currentPosition = null;
                 pendingExitReason = null;
             }
 
             if (currentPosition) {
-                equity += this.recordTrade(
+                const settlement = this.recordTrade(
                     tradeLegs,
                     currentPosition,
                     symbol,
@@ -611,6 +635,7 @@ export class BacktestEngine {
                     currentPosition.remainingSize,
                     'end_of_data'
                 );
+                cash += settlement.capitalReturned;
                 currentPosition = null;
             }
 
@@ -621,7 +646,7 @@ export class BacktestEngine {
             currentPosition,
             pendingEntry,
             pendingExitReason,
-            equity,
+            cash,
             lastProcessedTime,
             lastProcessedPrice,
         };
@@ -679,8 +704,8 @@ export class BacktestEngine {
             let finalEvaluationTime = signalKlines[signalKlines.length - 1].closeTime;
             let finalEvaluationPrice = parseFloat(signalKlines[signalKlines.length - 1].close);
 
-            let equity = 100; // 初始权益百分比
-            let peakEquity = 100;
+            let cash = this.config.initialCapital;
+            let peakEquity = this.config.initialCapital;
             let maxDrawdown = 0;
 
             // 允许短周期/短样本回测继续执行，同时给指标留出合理预热窗口。
@@ -712,7 +737,7 @@ export class BacktestEngine {
                         pendingExitReason,
                         tradeLegs,
                         symbol,
-                        equity,
+                        cash,
                         signalIntervalMs,
                         isFinalSegment: false,
                         fallbackExitTime: kline.closeTime,
@@ -722,7 +747,7 @@ export class BacktestEngine {
                     currentPosition = executionState.currentPosition;
                     pendingEntry = executionState.pendingEntry;
                     pendingExitReason = executionState.pendingExitReason;
-                    equity = executionState.equity;
+                    cash = executionState.cash;
                     finalEvaluationTime = executionState.lastProcessedTime;
                     finalEvaluationPrice = executionState.lastProcessedPrice;
                 }
@@ -749,7 +774,7 @@ export class BacktestEngine {
                 }
 
                 const markToMarketEquity = this.calculateMarkToMarketEquity(
-                    equity,
+                    cash,
                     currentPosition,
                     currentClose
                 );
@@ -764,7 +789,9 @@ export class BacktestEngine {
 
                 equityCurve.push({
                     time: kline.closeTime,
-                    equity: markToMarketEquity,
+                    equity: this.config.initialCapital > 0
+                        ? (markToMarketEquity / this.config.initialCapital) * 100
+                        : 0,
                     drawdown,
                 });
 
@@ -782,7 +809,7 @@ export class BacktestEngine {
                     pendingExitReason,
                     tradeLegs,
                     symbol,
-                    equity,
+                    cash,
                     signalIntervalMs,
                     isFinalSegment: true,
                     fallbackExitTime: finalEvaluationTime,
@@ -792,25 +819,29 @@ export class BacktestEngine {
                 currentPosition = executionState.currentPosition;
                 pendingEntry = executionState.pendingEntry;
                 pendingExitReason = executionState.pendingExitReason;
-                equity = executionState.equity;
+                cash = executionState.cash;
                 finalEvaluationTime = executionState.lastProcessedTime;
                 finalEvaluationPrice = executionState.lastProcessedPrice;
 
-                if (equity > peakEquity) {
-                    peakEquity = equity;
+                if (cash > peakEquity) {
+                    peakEquity = cash;
                 }
-                const finalDrawdown = peakEquity > 0 ? ((peakEquity - equity) / peakEquity) * 100 : 0;
+                const finalDrawdown = peakEquity > 0 ? ((peakEquity - cash) / peakEquity) * 100 : 0;
                 maxDrawdown = Math.max(maxDrawdown, finalDrawdown);
 
                 const lastEquityPoint = equityCurve[equityCurve.length - 1];
                 if (!lastEquityPoint || lastEquityPoint.time < finalEvaluationTime) {
                     equityCurve.push({
                         time: finalEvaluationTime,
-                        equity,
+                        equity: this.config.initialCapital > 0
+                            ? (cash / this.config.initialCapital) * 100
+                            : 0,
                         drawdown: finalDrawdown,
                     });
                 } else {
-                    lastEquityPoint.equity = equity;
+                    lastEquityPoint.equity = this.config.initialCapital > 0
+                        ? (cash / this.config.initialCapital) * 100
+                        : 0;
                     lastEquityPoint.drawdown = finalDrawdown;
                 }
             }
@@ -860,20 +891,23 @@ export class BacktestEngine {
         const losingTrades = trades.filter(t => t.profit < 0).length;
         const winRate = totalTrades > 0 ? (winningTrades / totalTrades) * 100 : 0;
 
-        const totalProfit = trades.reduce((sum, t) => sum + (t.profit * (t.size || 1)), 0);
-        const totalProfitUSDT = trades.reduce((sum, t) => sum + t.profitUSDT, 0);
-        const averageProfit = totalTrades > 0 ? totalProfit / totalTrades : 0;
+        const endingEquity = equityCurve[equityCurve.length - 1]?.equity ?? 100;
+        const totalProfit = endingEquity - 100;
+        const totalProfitUSDT = this.config.initialCapital * (totalProfit / 100);
+        const averageProfit = totalTrades > 0
+            ? trades.reduce((sum, trade) => sum + trade.profit, 0) / totalTrades
+            : 0;
 
         const wins = trades.filter(t => t.profit > 0);
         const losses = trades.filter(t => t.profit < 0);
-        const averageWin = wins.length > 0 ? wins.reduce((sum, t) => sum + (t.profit * (t.size || 1)), 0) / wins.length : 0;
-        const averageLoss = losses.length > 0 ? losses.reduce((sum, t) => sum + (t.profit * (t.size || 1)), 0) / losses.length : 0;
+        const averageWin = wins.length > 0 ? wins.reduce((sum, t) => sum + t.profit, 0) / wins.length : 0;
+        const averageLoss = losses.length > 0 ? losses.reduce((sum, t) => sum + t.profit, 0) / losses.length : 0;
 
         const largestWin = wins.length > 0 ? Math.max(...wins.map(t => t.profit)) : 0;
         const largestLoss = losses.length > 0 ? Math.min(...losses.map(t => t.profit)) : 0;
 
-        const totalWin = wins.reduce((sum, t) => sum + (t.profit * (t.size || 1)), 0);
-        const totalLoss = Math.abs(losses.reduce((sum, t) => sum + (t.profit * (t.size || 1)), 0));
+        const totalWin = wins.reduce((sum, t) => sum + t.profitUSDT, 0);
+        const totalLoss = Math.abs(losses.reduce((sum, t) => sum + t.profitUSDT, 0));
         const profitFactor = totalLoss > 0
             ? totalWin / totalLoss
             : totalWin > 0
@@ -915,7 +949,6 @@ export class BacktestEngine {
         const sortinoRatio = downsideDeviation > 0 ? (avgReturn / downsideDeviation) * Math.sqrt(barsPerYear) : 0;
 
         const durationMs = Math.max(1, endTime - startTime);
-        const endingEquity = equityCurve[equityCurve.length - 1]?.equity ?? 100;
         const annualizedReturn = endingEquity > 0
             ? Math.pow(endingEquity / 100, yearMs / durationMs) - 1
             : -1;

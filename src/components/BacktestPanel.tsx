@@ -22,6 +22,7 @@ type PresetRange = '1d' | '7d' | '30d' | '90d' | '180d' | '1y';
 type SymbolSource = 'top' | 'range' | 'custom';
 type ExecutionIntervalOption = 'same' | '1m' | '5m' | '15m';
 const TRADE_PAGE_SIZE = 20;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 interface DownloadRequestResult {
     ok: boolean;
@@ -202,6 +203,35 @@ function intervalToMs(interval: string): number {
     }
 }
 
+function toUtcDateString(timestamp: number): string {
+    const date = new Date(timestamp);
+    const year = date.getUTCFullYear();
+    const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(date.getUTCDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
+function getUtcDayStart(timestamp: number): number {
+    const date = new Date(timestamp);
+    return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
+}
+
+function getArchiveDateRange(startTime: number, endTime: number): { startDate: string; endDate: string } | null {
+    const currentUtcDayStart = getUtcDayStart(Date.now());
+    const archiveEndTime = endTime >= currentUtcDayStart
+        ? currentUtcDayStart - 1
+        : endTime;
+
+    if (archiveEndTime < startTime) {
+        return null;
+    }
+
+    return {
+        startDate: toUtcDateString(startTime),
+        endDate: toUtcDateString(archiveEndTime),
+    };
+}
+
 function resolveExecutionInterval(selection: ExecutionIntervalOption, signalInterval: string): string {
     if (selection === 'same') {
         return signalInterval;
@@ -312,16 +342,15 @@ export default function BacktestPanel() {
 
         const { startTime, endTime } = HistoricalDataFetcher.getPresetRange(activePreset);
         const resolvedExecutionInterval = resolveExecutionInterval(activeExecutionSelection, activeInterval);
-        const daysDiff = (endTime - startTime) / (24 * 60 * 60 * 1000);
-        const startDateStr = new Date(startTime).toISOString().split('T')[0];
-        const endDateStr = new Date(endTime).toISOString().split('T')[0];
+        const daysDiff = (endTime - startTime) / DAY_MS;
+        const archiveDateRange = getArchiveDateRange(startTime, endTime);
         const normalizedSymbol = symbol.trim().toUpperCase();
         let nextDownloadStatus = '';
 
-        if (daysDiff > 30) {
+        if (daysDiff > 30 && archiveDateRange) {
             const [metricsCoverage, fundingCoverage] = await Promise.all([
-                fetchCoverage(normalizedSymbol, 'metrics', startDateStr, endDateStr),
-                fetchCoverage(normalizedSymbol, 'fundingRate', startDateStr, endDateStr),
+                fetchCoverage(normalizedSymbol, 'metrics', archiveDateRange.startDate, archiveDateRange.endDate),
+                fetchCoverage(normalizedSymbol, 'fundingRate', archiveDateRange.startDate, archiveDateRange.endDate),
             ]);
 
             const avgCoverage = (metricsCoverage.coveragePercent + fundingCoverage.coveragePercent) / 2;
@@ -333,7 +362,7 @@ export default function BacktestPanel() {
                 const downloadTypes = ['metrics', 'fundingRate'] as const;
                 const downloadResults = await Promise.all(
                     downloadTypes.map((type) =>
-                        requestHistoricalDataDownload(normalizedSymbol, type, startDateStr, endDateStr)
+                        requestHistoricalDataDownload(normalizedSymbol, type, archiveDateRange.startDate, archiveDateRange.endDate)
                     )
                 );
 
