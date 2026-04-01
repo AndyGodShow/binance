@@ -57,15 +57,13 @@ async function fetchBaseMarketData(): Promise<TickerData[]> {
     let perpetualSymbols: Set<string> | null = null;
     if (results[2].status === 'fulfilled' && Array.isArray(results[2].value.symbols)) {
         const exchangeInfo = results[2].value;
-        perpetualSymbols = new Set(
-            exchangeInfo.symbols
-                .filter((s) => {
-                    return s.contractType === 'PERPETUAL' &&
-                        s.status === 'TRADING' &&
-                        s.symbol.endsWith('USDT');
-                })
-                .map((s) => s.symbol)
-        );
+        const validSymbolSet = new Set<string>();
+        exchangeInfo.symbols.forEach((s: any) => {
+            if ((s.contractType === 'PERPETUAL' || s.contractType === 'TRADIFI_PERPETUAL') && s.status === 'TRADING' && s.symbol.endsWith('USDT')) {
+                validSymbolSet.add(s.symbol);
+            }
+        });
+        perpetualSymbols = validSymbolSet;
     } else {
         logger.warn('exchangeInfo fetch failed, skipping perpetual filter');
     }

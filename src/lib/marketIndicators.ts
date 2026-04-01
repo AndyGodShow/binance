@@ -147,7 +147,7 @@ async function getActivePerpetualUsdtSymbols(): Promise<string[]> {
 
     const symbols = exchangeInfo.symbols
         .filter((symbol) =>
-            symbol.contractType === 'PERPETUAL' &&
+            (symbol.contractType === 'PERPETUAL' || symbol.contractType === 'TRADIFI_PERPETUAL') &&
             symbol.status === 'TRADING' &&
             symbol.symbol.endsWith('USDT')
         )

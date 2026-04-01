@@ -43,7 +43,7 @@ async function buildOpenInterestMap(): Promise<Record<string, string>> {
 
     if (exchangeInfo && Array.isArray(exchangeInfo.symbols)) {
         activeSymbols = exchangeInfo.symbols
-            .filter((s) => s.contractType === 'PERPETUAL' && s.status === 'TRADING' && s.symbol.endsWith('USDT'))
+            .filter((s) => (s.contractType === 'PERPETUAL' || s.contractType === 'TRADIFI_PERPETUAL') && s.status === 'TRADING' && s.symbol.endsWith('USDT'))
             .map((s) => s.symbol);
     } else {
         const tickers = await fetchBinanceJson<unknown>('/fapi/v1/ticker/24hr', { revalidate: 30 });

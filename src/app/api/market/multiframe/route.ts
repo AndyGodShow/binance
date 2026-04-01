@@ -50,7 +50,7 @@ async function buildMultiframeData(): Promise<MultiframeData> {
             { init: { cache: 'no-store' } } // Skip redundant inner caching
         );
         targetSymbols = info.symbols
-            .filter(s => s.status === 'TRADING' && s.contractType === 'PERPETUAL' && s.symbol.endsWith('USDT'))
+            .filter(s => s.status === 'TRADING' && (s.contractType === 'PERPETUAL' || s.contractType === 'TRADIFI_PERPETUAL') && s.symbol.endsWith('USDT'))
             .map(s => s.symbol);
     } catch {
         // Fallback to 24hr ticker to get symbols if exchangeInfo fails
