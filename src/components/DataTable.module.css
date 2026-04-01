@@ -123,6 +123,7 @@
 
 .alignRight {
     text-align: right;
+    padding-right: 32px !important;
 }
 
 .row {
@@ -203,6 +204,7 @@
     text-align: right;
     font-family: 'Roboto Mono', monospace;
     white-space: nowrap;
+    padding-right: 32px !important;
 }
 
 .metricCell {
