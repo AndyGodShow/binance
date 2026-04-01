@@ -32,14 +32,12 @@ const SORT_LABELS: Record<string, string> = {
 
 const VOLUME_FILTER_LABELS: Record<string, string> = {
     '0': '全部流动性',
+    '1000000000_gt': '成交额 > 10 亿',
     '500000000_gt': '成交额 > 5 亿',
     '100000000_gt': '成交额 > 1 亿',
-    '5000000_lt': '成交额 < 5M',
-    '10000000_lt': '成交额 < 10M',
-    '30000000_lt': '成交额 < 30M',
-    '50000000_lt': '成交额 < 50M',
     '100000000_lt': '成交额 < 1 亿',
-    '300000000_lt': '成交额 < 3 亿',
+    '50000000_lt': '成交额 < 5000 万',
+    '10000000_lt': '成交额 < 1000 万',
 };
 
 export default function Dashboard({ processedData: externalData, onSymbolClick }: DashboardProps) {

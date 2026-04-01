@@ -16,14 +16,12 @@ interface ControlBarProps {
 
 const volumeOptions = [
     { label: '全部', value: '0' },
-    { label: '> 5亿', value: '500000000_gt' },
-    { label: '> 1亿', value: '100000000_gt' },
-    { label: '< 5M', value: '5000000_lt' },
-    { label: '< 10M', value: '10000000_lt' },
-    { label: '< 30M', value: '30000000_lt' },
-    { label: '< 50M', value: '50000000_lt' },
-    { label: '< 1亿', value: '100000000_lt' },
-    { label: '< 3亿', value: '300000000_lt' },
+    { label: '> 10 亿', value: '1000000000_gt' },
+    { label: '> 5 亿', value: '500000000_gt' },
+    { label: '> 1 亿', value: '100000000_gt' },
+    { label: '< 1 亿', value: '100000000_lt' },
+    { label: '< 5000 万', value: '50000000_lt' },
+    { label: '< 1000 万', value: '10000000_lt' },
 ];
 
 export default function ControlBar({

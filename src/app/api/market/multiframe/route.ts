@@ -36,47 +36,49 @@ interface KlineResult {
 
 type MultiframeData = Record<string, { o15m: number, o1h: number, o4h: number }>;
 
-export const revalidate = 60; // Serverless cache duration
-export const maxDuration = 15; // Setup max duration for vercel execution
+export const dynamic = 'force-dynamic';
+export const maxDuration = 60; // Max duration for Vercel
 
-const BUILD_TIMEOUT_MS = 12000;
+const BUILD_TIMEOUT_MS = 25000;
 
 async function buildMultiframeData(): Promise<MultiframeData> {
     // 1. Prefer exchangeInfo so we only query active perpetual contracts.
     let targetSymbols: string[] = [];
-    const exchangeInfo = await fetchBinanceJson<BinanceExchangeInfoResponse>(
-        '/fapi/v1/exchangeInfo',
-        { revalidate: 86400 }
-    ).catch(() => null);
-
-    if (exchangeInfo && Array.isArray(exchangeInfo.symbols)) {
-        targetSymbols = exchangeInfo.symbols
-            .filter((s) => s.contractType === 'PERPETUAL' && s.status === 'TRADING' && s.symbol.endsWith('USDT'))
-            .map((s) => s.symbol);
-    } else {
-        const tickerResponse = await fetchBinanceJson<unknown>('/fapi/v1/ticker/24hr', { revalidate: 30 });
-        if (!Array.isArray(tickerResponse)) {
-            throw new Error('Unexpected ticker response from Binance');
-        }
-        const tickers = tickerResponse.filter(isTicker);
-        targetSymbols = tickers
-            .filter((t) => t.symbol.endsWith('USDT'))
-            .map((t) => t.symbol);
+    try {
+        const info = await fetchBinanceJson<{ symbols: { symbol: string; status: string; contractType: string }[] }>(
+            '/fapi/v1/exchangeInfo',
+            { init: { cache: 'no-store' } } // Skip redundant inner caching
+        );
+        targetSymbols = info.symbols
+            .filter(s => s.status === 'TRADING' && s.contractType === 'PERPETUAL' && s.symbol.endsWith('USDT'))
+            .map(s => s.symbol);
+    } catch {
+        // Fallback to 24hr ticker to get symbols if exchangeInfo fails
+        const tickers = await fetchBinanceJson<{ symbol: string }[]>('/fapi/v1/ticker/24hr', { init: { cache: 'no-store' } });
+        targetSymbols = tickers.filter(t => t.symbol.endsWith('USDT')).map(t => t.symbol);
     }
+
+    // Limit to top 300 to avoid excessive queries on low-liquidity pairs
+    targetSymbols = targetSymbols.slice(0, 300);
 
     const fetchSymbolData = async (symbol: string): Promise<KlineResult> => {
         try {
             // 获取18根K线 (当前1根 + 历史17根)，确保足够看16根之前的数据 (4小时 = 16 * 15m)
-            const klines = await fetchBinanceJson<unknown>(`/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=18`, { revalidate: 60 });
+            const klines = await fetchBinanceJson<unknown>(`/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=18`, { init: { cache: 'no-store' } });
             if (!Array.isArray(klines) || klines.length === 0) {
                 return { symbol, o15m: 0, o1h: 0, o4h: 0 };
             }
 
-            const lastIdx = klines.length - 1;
-            const idx1h = Math.max(0, lastIdx - 4);
-            const idx4h = Math.max(0, lastIdx - 16); // 现在 lastIdx 最大是 17，17 - 16 = 1，避免被截断到 0
+            const currentIdx = klines.length - 1;
+            const openCurrent = parseFloat(klines[currentIdx][1]);
 
-            const openCurrent = parseFloat(klines[lastIdx][1]);
+            // 15分钟前开盘价 = 历史数组中倒数第2根的开盘价 (idx - 1)
+            const idx15m = Math.max(0, currentIdx - 1);
+            // 1小时前开盘价 = 历史数组中倒数第5根的开盘价 (idx - 4)  (4个15m = 1h)
+            const idx1h = Math.max(0, currentIdx - 4);
+            // 4小时前开盘价 = 历史数组中倒数第17根的开盘价 (idx - 16) (16个15m = 4h)
+            const idx4h = Math.max(0, currentIdx - 16);
+
             const open1h = parseFloat(klines[idx1h][1]);
             const open4h = parseFloat(klines[idx4h][1]);
 
@@ -94,14 +96,15 @@ async function buildMultiframeData(): Promise<MultiframeData> {
     const chunkArray = (arr: string[], size: number) =>
         Array.from({ length: Math.ceil(arr.length / size) }, (_, i) => arr.slice(i * size, i * size + size));
 
-    const chunks = chunkArray(targetSymbols, 50);
+    // Increase chunk size to 100 for significantly faster loading
+    const chunks = chunkArray(targetSymbols, 100);
     const resultData: MultiframeData = {};
 
     for (const chunk of chunks) {
         const promises = chunk.map(s => fetchSymbolData(s));
         const results = await Promise.all(promises);
         results.forEach(r => {
-            if (r.o15m !== undefined) {
+            if (r.o15m !== 0) {
                 resultData[r.symbol] = {
                     o15m: r.o15m,
                     o1h: r.o1h,
@@ -111,7 +114,7 @@ async function buildMultiframeData(): Promise<MultiframeData> {
         });
 
         if (chunk !== chunks[chunks.length - 1]) {
-            await new Promise(resolve => setTimeout(resolve, 30));
+            await new Promise(resolve => setTimeout(resolve, 20)); // brief pause
         }
     }
 
@@ -122,7 +125,7 @@ const getCachedMultiframeData = unstable_cache(
     async () => {
         return await buildMultiframeData();
     },
-    ['api-multiframe-data-v1'],
+    ['api-multiframe-data-v1-optimized'],
     { revalidate: 60 }
 );
 
@@ -141,10 +144,11 @@ export async function GET() {
         });
     } catch (error) {
         logger.error('Failed to fetch multiframe market data', error as Error);
+        // Do not cache the empty response if it times out
         return NextResponse.json({}, {
             headers: {
-                'Cache-Control': 'public, s-maxage=5, stale-while-revalidate=15',
-                'X-Data-Source': 'empty-fallback',
+                'Cache-Control': 'no-store, max-age=0',
+                'X-Data-Source': 'empty-fallback-timeout',
             }
         });
     }
