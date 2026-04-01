@@ -58,8 +58,8 @@ async function buildMultiframeData(): Promise<MultiframeData> {
         targetSymbols = tickers.filter(t => t.symbol.endsWith('USDT')).map(t => t.symbol);
     }
 
-    // Limit to top 300 to avoid excessive queries on low-liquidity pairs
-    targetSymbols = targetSymbols.slice(0, 300);
+    // Removed slice restriction to fetch data for all USDT perpetual contracts.
+    // targetSymbols will dynamically contain all ~541 latest active trading pairs.
 
     const fetchSymbolData = async (symbol: string): Promise<KlineResult> => {
         try {
