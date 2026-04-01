@@ -41,7 +41,7 @@ async function fetchBaseMarketData(): Promise<TickerData[]> {
     const results = await Promise.allSettled([
         fetchBinanceJson<TickerData[]>('/fapi/v1/ticker/24hr', { revalidate: 5 }),
         fetchBinanceJson<PremiumIndex[]>('/fapi/v1/premiumIndex', { revalidate: 5 }),
-        fetchBinanceJson<BinanceExchangeInfoResponse>('/fapi/v1/exchangeInfo', { revalidate: 86400 }), // Cache for 24 hours (exchange info rarely changes)
+        fetchBinanceJson<BinanceExchangeInfoResponse>('/fapi/v1/exchangeInfo?v=2', { revalidate: 3600 }), // Burst stale 24h cache to immediately fetch XAG/XAU
     ]);
 
     // Check if critical endpoints succeeded (ticker + premium are required)

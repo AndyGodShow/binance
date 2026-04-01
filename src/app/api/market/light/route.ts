@@ -24,7 +24,7 @@ async function buildLightMarketData(): Promise<TickerData[]> {
     const results = await Promise.allSettled([
         fetchBinanceJson<TickerData[]>('/fapi/v1/ticker/24hr', { revalidate: 5 }),
         fetchBinanceJson<PremiumIndex[]>('/fapi/v1/premiumIndex', { revalidate: 5 }),
-        fetchBinanceJson<BinanceExchangeInfoResponse>('/fapi/v1/exchangeInfo', { revalidate: 86400 }),
+        fetchBinanceJson<BinanceExchangeInfoResponse>('/fapi/v1/exchangeInfo?v=2', { revalidate: 3600 }),
     ]);
 
     if (results[0].status === 'rejected' || results[1].status === 'rejected') {

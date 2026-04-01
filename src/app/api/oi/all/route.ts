@@ -37,8 +37,8 @@ async function buildOpenInterestMap(): Promise<Record<string, string>> {
     // 1. Prefer exchangeInfo so we only query active perpetual contracts.
     let activeSymbols: string[] = [];
     const exchangeInfo = await fetchBinanceJson<BinanceExchangeInfoResponse>(
-        '/fapi/v1/exchangeInfo',
-        { revalidate: 86400 }
+        '/fapi/v1/exchangeInfo?v=2',
+        { revalidate: 3600 }
     ).catch(() => null);
 
     if (exchangeInfo && Array.isArray(exchangeInfo.symbols)) {

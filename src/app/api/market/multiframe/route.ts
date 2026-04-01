@@ -125,7 +125,7 @@ const getCachedMultiframeData = unstable_cache(
     async () => {
         return await buildMultiframeData();
     },
-    ['api-multiframe-data-v1-optimized'],
+    ['api-multiframe-data-v2'],
     { revalidate: 60 }
 );
 

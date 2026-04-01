@@ -140,8 +140,8 @@ async function getActivePerpetualUsdtSymbols(): Promise<string[]> {
         return symbolListCache.symbols;
     }
 
-    const exchangeInfo = await fetchBinanceJson<BinanceExchangeInfoResponse>('/fapi/v1/exchangeInfo', {
-        revalidate: 86400,
+    const exchangeInfo = await fetchBinanceJson<BinanceExchangeInfoResponse>('/fapi/v1/exchangeInfo?v=2', {
+        revalidate: 3600,
         timeoutMs: 12000,
     });
 
