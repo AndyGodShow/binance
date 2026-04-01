@@ -44,22 +44,43 @@ const BUILD_TIMEOUT_MS = 25000;
 async function buildMultiframeData(): Promise<MultiframeData> {
     // 1. Prefer exchangeInfo so we only query active perpetual contracts.
     let targetSymbols: string[] = [];
+    // Fetch tickers immediately to get volume and symbols. We prioritize high-volume contracts.
+    let tickers: { symbol: string, quoteVolume: string }[] = [];
     try {
-        const info = await fetchBinanceJson<{ symbols: { symbol: string; status: string; contractType: string }[] }>(
-            '/fapi/v1/exchangeInfo',
-            { init: { cache: 'no-store' } } // Skip redundant inner caching
-        );
-        targetSymbols = info.symbols
-            .filter(s => s.status === 'TRADING' && (s.contractType === 'PERPETUAL' || s.contractType === 'TRADIFI_PERPETUAL') && s.symbol.endsWith('USDT'))
-            .map(s => s.symbol);
+        tickers = await fetchBinanceJson<{ symbol: string, quoteVolume: string }[]>('/fapi/v1/ticker/24hr', { init: { cache: 'no-store' } });
     } catch {
-        // Fallback to 24hr ticker to get symbols if exchangeInfo fails
-        const tickers = await fetchBinanceJson<{ symbol: string }[]>('/fapi/v1/ticker/24hr', { init: { cache: 'no-store' } });
-        targetSymbols = tickers.filter(t => t.symbol.endsWith('USDT')).map(t => t.symbol);
+        tickers = [];
     }
 
-    // Removed slice restriction to fetch data for all USDT perpetual contracts.
-    // targetSymbols will dynamically contain all ~541 latest active trading pairs.
+    try {
+        const info = await fetchBinanceJson<{ symbols: { symbol: string; status: string; contractType: string }[] }>(
+            '/fapi/v1/exchangeInfo?v=2',
+            { init: { cache: 'no-store' } } // Skip redundant inner caching
+        );
+        
+        // Allowed contracts filter
+        const allowedMap = new Set(
+            info.symbols
+                .filter(s => s.status === 'TRADING' && (s.contractType === 'PERPETUAL' || s.contractType === 'TRADIFI_PERPETUAL') && s.symbol.endsWith('USDT'))
+                .map(s => s.symbol)
+        );
+
+        targetSymbols = tickers
+            .filter(t => allowedMap.has(t.symbol))
+            .sort((a, b) => parseFloat(b.quoteVolume || '0') - parseFloat(a.quoteVolume || '0'))
+            .map(t => t.symbol);
+
+    } catch {
+        // Fallback if exchangeInfo fails
+        targetSymbols = tickers
+            .filter(t => t.symbol.endsWith('USDT'))
+            .sort((a, b) => parseFloat(b.quoteVolume || '0') - parseFloat(a.quoteVolume || '0'))
+            .map(t => t.symbol);
+    }
+
+    // Limit to top 320 instead of all 541 symbols to cut fetching time in half,
+    // while perfectly ensuring assets like XAU/XAG (volume rich) are included!
+    targetSymbols = targetSymbols.slice(0, 320);
 
     const fetchSymbolData = async (symbol: string): Promise<KlineResult> => {
         try {
@@ -125,7 +146,7 @@ const getCachedMultiframeData = unstable_cache(
     async () => {
         return await buildMultiframeData();
     },
-    ['api-multiframe-data-v2'],
+    ['api-multiframe-data-v3'],
     { revalidate: 60 }
 );
 
