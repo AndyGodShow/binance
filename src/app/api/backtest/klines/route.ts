@@ -21,6 +21,8 @@ export interface KlineData {
     openInterest?: string;     // 持仓量 (Real)
     openInterestValue?: string; // 持仓金额 (Real)
     fundingRate?: string;      // 资金费率 (Real)
+    openInterestSource?: 'exact' | 'forward-fill';
+    fundingRateSource?: 'exact' | 'forward-fill';
 }
 
 type BinanceKlineRow = [
@@ -73,6 +75,26 @@ interface OpenInterestDiagnostics {
     requestedEndTime: number;
     earliestPointTime?: number;
     latestPointTime?: number;
+}
+
+interface AuxiliaryMergeStats {
+    exactMatches: number;
+    forwardFilledMatches: number;
+    missingMatches: number;
+}
+
+interface FundingDiagnostics extends AuxiliaryMergeStats {
+    points: number;
+}
+
+interface OpenInterestMergeResult {
+    entries: NormalizedOpenInterestPoint[];
+    diagnostics: OpenInterestDiagnostics;
+}
+
+interface FundingMergeResult {
+    entries: FundingRatePoint[];
+    diagnostics: FundingDiagnostics;
 }
 
 const OI_MAX_LIMIT = 500;
@@ -160,6 +182,89 @@ function mergeNormalizedOpenInterestData(
     });
 
     return Array.from(merged.values()).sort((a, b) => a.timestamp - b.timestamp);
+}
+
+function isTimestampExactMatch(pointTimestamp: number, targetTimestamp: number, periodMs: number | null): boolean {
+    if (!Number.isFinite(pointTimestamp) || !Number.isFinite(targetTimestamp)) {
+        return false;
+    }
+
+    if (!periodMs || periodMs <= 0) {
+        return pointTimestamp === targetTimestamp;
+    }
+
+    return Math.abs(targetTimestamp - pointTimestamp) <= Math.min(60_000, Math.floor(periodMs / 3));
+}
+
+function mergeFundingData(localFunding: unknown[], apiFunding: unknown[]): FundingMergeResult {
+    const normalizedFundingData = [
+        ...apiFunding.filter(isFundingRatePoint),
+        ...localFunding.filter(isFundingRatePoint),
+    ]
+        .map((point) => ({
+            fundingTime: point.fundingTime,
+            fundingRate: point.fundingRate,
+        }))
+        .sort((a, b) => a.fundingTime - b.fundingTime);
+
+    const dedupedFundingMap = new Map<number, FundingRatePoint>();
+    normalizedFundingData.forEach((point) => {
+        dedupedFundingMap.set(point.fundingTime, point);
+    });
+
+    return {
+        entries: Array.from(dedupedFundingMap.values()).sort((a, b) => a.fundingTime - b.fundingTime),
+        diagnostics: {
+            points: dedupedFundingMap.size,
+            exactMatches: 0,
+            forwardFilledMatches: 0,
+            missingMatches: 0,
+        },
+    };
+}
+
+function mergeOpenInterestData(params: {
+    startTs: number;
+    endTs: number;
+    localOi: unknown[];
+    apiOi: unknown[];
+    coinalyzeOi: NormalizedOpenInterestPoint[];
+}): OpenInterestMergeResult {
+    const normalizedLocalOiData = params.localOi
+        .filter(isLocalOpenInterestPoint)
+        .map(normalizeOpenInterestPoint)
+        .sort((a, b) => a.timestamp - b.timestamp);
+
+    const normalizedApiOiData = params.apiOi
+        .filter(isApiOpenInterestPoint)
+        .map(normalizeOpenInterestPoint)
+        .sort((a, b) => a.timestamp - b.timestamp);
+
+    const normalizedOiData = mergeNormalizedOpenInterestData(
+        params.coinalyzeOi,
+        normalizedApiOiData,
+        normalizedLocalOiData
+    );
+
+    return {
+        entries: normalizedOiData,
+        diagnostics: {
+            source:
+                normalizedLocalOiData.length > 0 && normalizedApiOiData.length > 0 ? 'local+api'
+                    : normalizedLocalOiData.length > 0 ? 'local'
+                        : normalizedApiOiData.length > 0 ? 'api'
+                            : params.coinalyzeOi.length > 0 ? 'coinalyze'
+                                : 'none',
+            localPoints: normalizedLocalOiData.length,
+            apiPoints: normalizedApiOiData.length,
+            coinalyzePoints: params.coinalyzeOi.length,
+            mergedPoints: normalizedOiData.length,
+            requestedStartTime: params.startTs,
+            requestedEndTime: params.endTs,
+            earliestPointTime: normalizedOiData[0]?.timestamp,
+            latestPointTime: normalizedOiData[normalizedOiData.length - 1]?.timestamp,
+        },
+    };
 }
 
 /**
@@ -301,23 +406,15 @@ export async function GET(req: NextRequest) {
         // 数据合并策略: 优先使用 Local，如果是空的或者覆盖不全，尝试用 API 补全
         // 简单处理：如果 Local 有数据，使用 Local；否则使用 API。
         // 更高级处理可以去重合并，这里暂且优先 Local。
-        const fundingData = (localFunding.length > 0 ? localFunding : apiFunding).filter(isFundingRatePoint);
-
-        const normalizedLocalOiData = localOi
-            .filter(isLocalOpenInterestPoint)
-            .map(normalizeOpenInterestPoint)
-            .sort((a, b) => a.timestamp - b.timestamp);
-
-        const normalizedApiOiData = apiOi
-            .filter(isApiOpenInterestPoint)
-            .map(normalizeOpenInterestPoint)
-            .sort((a, b) => a.timestamp - b.timestamp);
+        const fundingMerge = mergeFundingData(localFunding, apiFunding);
 
         let normalizedCoinalyzeOiData: NormalizedOpenInterestPoint[] = [];
         const oiPeriodMs = oiPeriod ? getOpenInterestPeriodMs(oiPeriod) : null;
         const earliestKnownOiTimestamp = Math.min(
-            normalizedLocalOiData[0]?.timestamp ?? Number.POSITIVE_INFINITY,
-            normalizedApiOiData[0]?.timestamp ?? Number.POSITIVE_INFINITY
+            ...[
+                localOi.filter(isLocalOpenInterestPoint)[0]?.timestamp,
+                apiOi.filter(isApiOpenInterestPoint)[0]?.timestamp,
+            ].filter((value): value is number => Number.isFinite(value))
         );
 
         if (
@@ -334,70 +431,58 @@ export async function GET(req: NextRequest) {
             );
         }
 
-        const normalizedOiData = mergeNormalizedOpenInterestData(
-            normalizedCoinalyzeOiData,
-            normalizedApiOiData,
-            normalizedLocalOiData
-        );
-
-        const oiDiagnostics: OpenInterestDiagnostics = {
-            source:
-                normalizedLocalOiData.length > 0 && normalizedApiOiData.length > 0 ? 'local+api'
-                    : normalizedLocalOiData.length > 0 ? 'local'
-                        : normalizedApiOiData.length > 0 ? 'api'
-                            : normalizedCoinalyzeOiData.length > 0 ? 'coinalyze'
-                                : 'none',
-            localPoints: normalizedLocalOiData.length,
-            apiPoints: normalizedApiOiData.length,
-            coinalyzePoints: normalizedCoinalyzeOiData.length,
-            mergedPoints: normalizedOiData.length,
-            requestedStartTime: startTs,
-            requestedEndTime: endTs,
-            earliestPointTime: normalizedOiData[0]?.timestamp,
-            latestPointTime: normalizedOiData[normalizedOiData.length - 1]?.timestamp,
-        };
-
-        const normalizedFundingData = fundingData
-            .map((point) => ({
-                fundingTime: point.fundingTime,
-                fundingRate: point.fundingRate
-            }))
-            .sort((a, b) => a.fundingTime - b.fundingTime);
+        const openInterestMerge = mergeOpenInterestData({
+            startTs,
+            endTs,
+            localOi,
+            apiOi,
+            coinalyzeOi: normalizedCoinalyzeOiData,
+        });
+        const normalizedOiData = openInterestMerge.entries;
+        const oiDiagnostics = openInterestMerge.diagnostics;
+        const normalizedFundingData = fundingMerge.entries;
 
         // 合并 OI 和 Funding Rate
-        // 策略: 找到最近的一个 <= kline.closeTime 的数据点，并限制 OI 的最大滞后时间
+        // 用顺序对齐代替逐根过滤，既避免 O(n²) 扫描，也能显式区分精确命中和前向填充。
         const fallbackOiPeriodMs = getOpenInterestPeriodMs(interval);
         const maxOiLagMs = (oiPeriodMs || fallbackOiPeriodMs || (60 * 60 * 1000)) * 2;
+        const fundingIntervalMs = 8 * 60 * 60 * 1000;
+        let fundingIndex = 0;
+        let oiIndex = 0;
 
-        klines.forEach(kline => {
-            // 合并 Funding Rate: 找最近一个 <= closeTime 的资金费率
-            // 注意: fundingTime 是这一期费率生效的时间。通常我们用最近的一个。
-            let fr = normalizedFundingData.find((fundingPoint) =>
-                fundingPoint.fundingTime >= kline.openTime && fundingPoint.fundingTime <= kline.closeTime
-            );
-            if (!fr) {
-                // 如果当前K线范围内没有费率结算（例如1小时K线，费率是8小时一次），
-                // 我们可以取最近的一个已知的费率作为当前费率估计，或者留空。
-                // 为了策略计算方便，通常取最近的一个“过去”费率。
-                const pastRates = normalizedFundingData.filter((fundingPoint) => fundingPoint.fundingTime < kline.openTime);
-                if (pastRates.length > 0) {
-                    fr = pastRates[pastRates.length - 1];
+        klines.forEach((kline) => {
+            while (
+                fundingIndex + 1 < normalizedFundingData.length &&
+                normalizedFundingData[fundingIndex + 1].fundingTime <= kline.closeTime
+            ) {
+                fundingIndex += 1;
+            }
+            const fundingPoint = normalizedFundingData[fundingIndex];
+            if (fundingPoint && fundingPoint.fundingTime <= kline.closeTime) {
+                kline.fundingRate = fundingPoint.fundingRate;
+                const isExact = fundingPoint.fundingTime >= kline.openTime && fundingPoint.fundingTime <= kline.closeTime;
+                kline.fundingRateSource = isExact ? 'exact' : 'forward-fill';
+                if (isExact) {
+                    fundingMerge.diagnostics.exactMatches += 1;
+                } else {
+                    fundingMerge.diagnostics.forwardFilledMatches += 1;
                 }
-            }
-            if (fr) {
-                kline.fundingRate = fr.fundingRate;
+            } else {
+                fundingMerge.diagnostics.missingMatches += 1;
             }
 
-            // 合并 Open Interest: 找时间戳匹配的 OI
-            // OI 数据的 timestamp 通常是 period 的结束时间? 需要确认。Binance OI hist返回的是时刻数据。
-            // 我们找一个最接近 kline.closeTime 的 OI 数据
-            //  const matchingOI = oiData.find((oiPoint) => Math.abs(oiPoint.timestamp - kline.closeTime) < 60000); // 允许1分钟误差
-            // 更稳健的做法: 找 <= closeTime 的最后一个
-            const matchingOI = normalizedOiData.filter((oiPoint) => oiPoint.timestamp <= kline.closeTime).pop();
-
+            while (
+                oiIndex + 1 < normalizedOiData.length &&
+                normalizedOiData[oiIndex + 1].timestamp <= kline.closeTime
+            ) {
+                oiIndex += 1;
+            }
+            const matchingOI = normalizedOiData[oiIndex];
             if (matchingOI && kline.closeTime - matchingOI.timestamp <= maxOiLagMs) {
                 kline.openInterest = matchingOI.openInterest;
                 kline.openInterestValue = matchingOI.openInterestValue;
+                const isExact = isTimestampExactMatch(matchingOI.timestamp, kline.openTime, oiPeriodMs || fallbackOiPeriodMs);
+                kline.openInterestSource = isExact ? 'exact' : 'forward-fill';
             }
         });
 
@@ -408,6 +493,7 @@ export async function GET(req: NextRequest) {
             data: klines,
             diagnostics: {
                 openInterest: oiDiagnostics,
+                fundingRate: fundingMerge.diagnostics,
             },
         });
 

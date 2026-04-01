@@ -131,6 +131,16 @@ interface PendingBacktestEntry {
     risk?: RiskManagement;
 }
 
+function isMoreProtectiveStop(
+    direction: 'long' | 'short',
+    candidateStop: number,
+    currentStop: number
+): boolean {
+    return direction === 'long'
+        ? candidateStop > currentStop
+        : candidateStop < currentStop;
+}
+
 export interface BacktestRunInput {
     signalKlines: KlineData[];
     strategyDetector: StrategyDetector;
@@ -457,23 +467,29 @@ export class BacktestEngine {
                 let exitPrice = currentClose;
 
                 if (this.config.useStrategyRiskManagement && strategyRisk) {
+                    const activeStopLossPrice = strategyRisk.stopLoss.price;
+                    let deferredStopLossPrice: number | null = null;
+                    let deferredStopLossReason: string | null = null;
+
                     if (strategyRisk.stopLoss.type === 'trailing') {
                         if (direction === 'long') {
                             const trailingDistance = strategyRisk.stopLoss.percentage / 100;
                             const newStopLoss = currentPosition.highestPrice * (1 - trailingDistance);
-                            if (newStopLoss > strategyRisk.stopLoss.price) {
-                                strategyRisk.stopLoss.price = newStopLoss;
+                            if (isMoreProtectiveStop(direction, newStopLoss, activeStopLossPrice)) {
+                                deferredStopLossPrice = newStopLoss;
+                                deferredStopLossReason = strategyRisk.stopLoss.reason;
                             }
                         } else {
                             const trailingDistance = strategyRisk.stopLoss.percentage / 100;
                             const newStopLoss = currentPosition.lowestPrice * (1 + trailingDistance);
-                            if (newStopLoss < strategyRisk.stopLoss.price) {
-                                strategyRisk.stopLoss.price = newStopLoss;
+                            if (isMoreProtectiveStop(direction, newStopLoss, activeStopLossPrice)) {
+                                deferredStopLossPrice = newStopLoss;
+                                deferredStopLossReason = strategyRisk.stopLoss.reason;
                             }
                         }
                     }
 
-                    const stopLossPrice = strategyRisk.stopLoss.price;
+                    const stopLossPrice = activeStopLossPrice;
                     if (direction === 'long') {
                         if (currentLow <= stopLossPrice) {
                             shouldExit = true;
@@ -504,24 +520,11 @@ export class BacktestEngine {
 
                             if (target.moveStopToEntry) {
                                 const breakEvenPrice = entryPrice;
-                                if (direction === 'long') {
-                                    if (breakEvenPrice > strategyRisk.stopLoss.price) {
-                                        strategyRisk.stopLoss.price = breakEvenPrice;
-                                        strategyRisk.stopLoss.reason = `保本止损(T${targetIndex + 1}触发)`;
-                                    }
-                                } else if (breakEvenPrice < strategyRisk.stopLoss.price) {
-                                    strategyRisk.stopLoss.price = breakEvenPrice;
-                                    strategyRisk.stopLoss.reason = `保本止损(T${targetIndex + 1}触发)`;
-                                }
-
-                                const currentNewStop = strategyRisk.stopLoss.price;
-                                if (
-                                    (direction === 'long' && currentLow <= currentNewStop) ||
-                                    (direction === 'short' && currentHigh >= currentNewStop)
-                                ) {
-                                    shouldExit = true;
-                                    exitReason = 'stop_loss';
-                                    exitPrice = currentNewStop;
+                                const candidateReason = `保本止损(T${targetIndex + 1}触发)`;
+                                const baselineStop = deferredStopLossPrice ?? activeStopLossPrice;
+                                if (isMoreProtectiveStop(direction, breakEvenPrice, baselineStop)) {
+                                    deferredStopLossPrice = breakEvenPrice;
+                                    deferredStopLossReason = candidateReason;
                                 }
                             }
 
@@ -550,6 +553,19 @@ export class BacktestEngine {
                                 exitPrice = target.price;
                             }
                         });
+                    }
+
+                    if (
+                        !shouldExit &&
+                        currentPosition &&
+                        currentPosition.remainingSize > 0.0001 &&
+                        deferredStopLossPrice !== null &&
+                        isMoreProtectiveStop(direction, deferredStopLossPrice, strategyRisk.stopLoss.price)
+                    ) {
+                        strategyRisk.stopLoss.price = deferredStopLossPrice;
+                        if (deferredStopLossReason) {
+                            strategyRisk.stopLoss.reason = deferredStopLossReason;
+                        }
                     }
                 } else {
                     const profitPercent = this.calculateProfitPercent(entryPrice, currentClose, direction);

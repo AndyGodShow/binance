@@ -55,6 +55,14 @@ interface BatchBacktestItem {
     totalTrades: number;
 }
 
+interface BacktestTaskResult {
+    symbol: string;
+    run?: BacktestRunDetail;
+    error?: Error;
+}
+
+const MAX_BACKTEST_CONCURRENCY = 3;
+
 async function requestHistoricalDataDownload(
     symbol: string,
     type: 'metrics' | 'fundingRate',
@@ -270,6 +278,31 @@ async function fetchSymbolsByVolume(): Promise<string[]> {
         .map((ticker) => ticker.symbol);
 }
 
+async function runWithConcurrency<T, R>(
+    items: T[],
+    concurrency: number,
+    worker: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+    if (items.length === 0) {
+        return [];
+    }
+
+    const results: R[] = new Array(items.length);
+    let nextIndex = 0;
+
+    const runWorker = async () => {
+        while (nextIndex < items.length) {
+            const currentIndex = nextIndex;
+            nextIndex += 1;
+            results[currentIndex] = await worker(items[currentIndex], currentIndex);
+        }
+    };
+
+    const workerCount = Math.min(concurrency, items.length);
+    await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
+    return results;
+}
+
 export default function BacktestPanel() {
     const [interval, setInterval] = useState('1h');
     const [executionInterval, setExecutionInterval] = useState<ExecutionIntervalOption>('1m');
@@ -401,7 +434,9 @@ export default function BacktestPanel() {
             baseInterval: activeInterval,
             baseKlines: klines,
             fetchRangeData: (nextSymbol, nextInterval, nextStartTime, nextEndTime) =>
-                historicalDataFetcher.fetchRangeData(nextSymbol, nextInterval, nextStartTime, nextEndTime),
+                historicalDataFetcher.fetchRangeData(nextSymbol, nextInterval, nextStartTime, nextEndTime, {
+                    includeAuxiliary: false,
+                }),
         });
 
         const config: Partial<BacktestConfig> = {
@@ -497,23 +532,40 @@ export default function BacktestPanel() {
         try {
             const symbols = await resolveSymbols();
             setResolvedSymbols(symbols);
-            setDownloadStatus(`🔎 已选中 ${symbols.length} 个币种，开始逐个回测...`);
+            setDownloadStatus(`🔎 已选中 ${symbols.length} 个币种，开始并发回测...`);
 
-            const completedRuns: BacktestRunDetail[] = [];
-            const failed: string[] = [];
+            let finishedCount = 0;
+            let successCount = 0;
+            const taskResults = await runWithConcurrency<string, BacktestTaskResult>(
+                symbols,
+                MAX_BACKTEST_CONCURRENCY,
+                async (symbol, index) => {
+                    setDownloadStatus(`⏳ 正在回测 ${symbol} (${index + 1}/${symbols.length})，已完成 ${finishedCount}/${symbols.length}...`);
 
-            for (let index = 0; index < symbols.length; index++) {
-                const symbol = symbols[index];
-                setDownloadStatus(`⏳ 正在回测 ${symbol} (${index + 1}/${symbols.length})...`);
-
-                try {
-                    const run = await runSingleBacktest(symbol, selectedStrategy, preset, interval, executionInterval);
-                    completedRuns.push(run);
-                } catch (runError) {
-                    logger.error(`Backtest failed for ${symbol}`, runError as Error);
-                    failed.push(symbol);
+                    try {
+                        const run = await runSingleBacktest(symbol, selectedStrategy, preset, interval, executionInterval);
+                        finishedCount += 1;
+                        successCount += 1;
+                        setDownloadStatus(`⏳ 已完成 ${finishedCount}/${symbols.length}，成功 ${successCount} 个...`);
+                        return { symbol, run };
+                    } catch (runError) {
+                        finishedCount += 1;
+                        setDownloadStatus(`⏳ 已完成 ${finishedCount}/${symbols.length}，成功 ${successCount} 个...`);
+                        logger.error(`Backtest failed for ${symbol}`, runError as Error);
+                        return {
+                            symbol,
+                            error: runError instanceof Error ? runError : new Error('回测失败'),
+                        };
+                    }
                 }
-            }
+            );
+
+            const completedRuns = taskResults
+                .filter((item): item is BacktestTaskResult & { run: BacktestRunDetail } => Boolean(item.run))
+                .map((item) => item.run);
+            const failed = taskResults
+                .filter((item) => item.error)
+                .map((item) => item.symbol);
 
             if (completedRuns.length === 0) {
                 throw new Error('批量回测失败，所有币种都未跑出结果');

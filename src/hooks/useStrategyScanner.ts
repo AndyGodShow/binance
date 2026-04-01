@@ -186,12 +186,16 @@ export function useStrategyScanner(data: TickerData[]) {
         signalsRef.current = signals;
     }, [signals]);
 
+    const lastScanTime = useRef<{ time: number, timeout: NodeJS.Timeout | null }>({ time: 0, timeout: null });
+
     // 扫描并生成信号
     useEffect(() => {
         if (!isHydrated || !data || data.length === 0) return;
 
-        const now = Date.now();
-        const enabledStrategies = strategyRegistry.getEnabled();
+        const performScan = () => {
+            const now = Date.now();
+            lastScanTime.current.time = now;
+            const enabledStrategies = strategyRegistry.getEnabled();
         const forceRescan = prevStrategyVersion.current !== strategyVersion;
         const isInitialScan = !hasCompletedInitialScan.current;
 
@@ -400,6 +404,20 @@ export function useStrategyScanner(data: TickerData[]) {
         // eslint-disable-next-line react-hooks/set-state-in-effect
         setSignals(nextSignals);
         hasCompletedInitialScan.current = true;
+        };
+
+        const now = Date.now();
+        const timeSinceLastScan = now - lastScanTime.current.time;
+
+        if (timeSinceLastScan >= 1000) {
+            if (lastScanTime.current.timeout) clearTimeout(lastScanTime.current.timeout);
+            performScan();
+        } else {
+            if (lastScanTime.current.timeout) clearTimeout(lastScanTime.current.timeout);
+            lastScanTime.current.timeout = setTimeout(() => {
+                performScan();
+            }, 1000 - timeSinceLastScan);
+        }
 
     }, [data, isHydrated, strategyVersion]);
 

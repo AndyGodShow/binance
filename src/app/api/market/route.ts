@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { withTimeout } from '@/lib/async';
 import { TickerData, PremiumIndex } from '@/lib/types';
 import { historicalTracker } from '@/lib/historicalTracker';
 import { fetchKlinesBatch, enhanceTickerData, getBTCReturns } from '@/lib/indicatorEnhancer';
@@ -13,6 +14,8 @@ let liveMarketCache: { time: number; data: TickerData[] } | null = null;
 let inflightMarketBuild: Promise<TickerData[]> | null = null;
 
 const LIVE_CACHE_DURATION = 5000;
+const MARKET_BUILD_TIMEOUT_MS = 15000;
+const MARKET_FALLBACK_TIMEOUT_MS = 6000;
 
 function ensureMarketBuild(): Promise<TickerData[]> {
     if (!inflightMarketBuild) {
@@ -34,8 +37,7 @@ interface BinanceExchangeInfoResponse {
     symbols: BinanceExchangeInfoSymbol[];
 }
 
-async function buildMarketData(): Promise<TickerData[]> {
-    // Use allSettled + multi-base fallback for better resilience.
+async function fetchBaseMarketData(): Promise<TickerData[]> {
     const results = await Promise.allSettled([
         fetchBinanceJson<TickerData[]>('/fapi/v1/ticker/24hr', { revalidate: 5 }),
         fetchBinanceJson<PremiumIndex[]>('/fapi/v1/premiumIndex', { revalidate: 5 }),
@@ -77,13 +79,17 @@ async function buildMarketData(): Promise<TickerData[]> {
     });
 
     // Filter only PERPETUAL contracts (if exchangeInfo available) and merge data
-    let merged = tickers
+    return tickers
         .filter((t: TickerData) => perpetualSymbols ? perpetualSymbols.has(t.symbol) : t.symbol.endsWith('USDT'))
         .map((t: TickerData) => ({
             ...t,
             markPrice: markPriceMap.get(t.symbol) || t.lastPrice,
             fundingRate: fundingMap.get(t.symbol) || '0',
         }));
+}
+
+async function buildMarketData(): Promise<TickerData[]> {
+    let merged = await fetchBaseMarketData();
 
     // ========== 🔥 技术指标增强（分级计算） ==========
 
@@ -224,7 +230,11 @@ export async function GET() {
 
     const ownsInflight = !inflightMarketBuild;
     try {
-        const data = await ensureMarketBuild();
+        const data = await withTimeout(
+            ensureMarketBuild(),
+            MARKET_BUILD_TIMEOUT_MS,
+            'market build'
+        );
         return NextResponse.json(data, {
             headers: {
                 'Cache-Control': 'public, s-maxage=3, stale-while-revalidate=10',
@@ -242,6 +252,27 @@ export async function GET() {
                 }
             });
         }
+
+        try {
+            const fallbackData = await withTimeout(
+                fetchBaseMarketData(),
+                MARKET_FALLBACK_TIMEOUT_MS,
+                'market light fallback'
+            );
+            liveMarketCache = { time: Date.now(), data: fallbackData };
+            lastSuccessfulMarketData = fallbackData;
+            lastSuccessfulAt = Date.now();
+
+            return NextResponse.json(fallbackData, {
+                headers: {
+                    'Cache-Control': 'public, s-maxage=3, stale-while-revalidate=10',
+                    'X-Data-Source': 'light-fallback',
+                }
+            });
+        } catch (fallbackError) {
+            logger.error('Market light fallback failed', fallbackError as Error);
+        }
+
         return NextResponse.json({ error: 'Failed to fetch market data' }, { status: 500 });
     }
 }

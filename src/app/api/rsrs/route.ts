@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { withTimeout } from '@/lib/async';
 import { fetchBinanceJson } from '@/lib/binanceApi';
 
 // RSRS now uses adaptive window, no fixed N_DAYS/M_DAYS needed
@@ -64,8 +65,10 @@ type RsrsMap = Record<string, RsrsMetrics>;
 let rsrsStaleCache: RsrsMap | null = null;
 let rsrsLiveCache: { data: RsrsMap; updatedAt: number; expiresAt: number } | null = null;
 let inflightRsrsBuild: Promise<RsrsMap> | null = null;
+let rsrsWarmupCache: { data: RsrsMap; updatedAt: number; expiresAt: number } | null = null;
 
 const RSRS_CACHE_TTL = 60 * 60 * 1000;
+const RSRS_BUILD_TIMEOUT_MS = 15000;
 
 async function buildRsrsData(): Promise<RsrsMap> {
     // 1. Fetch all tickers to find top volume assets
@@ -115,6 +118,15 @@ async function buildRsrsData(): Promise<RsrsMap> {
             }
         });
         await Promise.all(promises);
+
+        if (!rsrsLiveCache && Object.keys(rsrsMap).length > 0) {
+            const partialSnapshot = { ...rsrsMap };
+            rsrsWarmupCache = {
+                data: partialSnapshot,
+                updatedAt: Date.now(),
+                expiresAt: Date.now() + RSRS_CACHE_TTL,
+            };
+        }
     }
 
     rsrsStaleCache = rsrsMap;
@@ -123,6 +135,7 @@ async function buildRsrsData(): Promise<RsrsMap> {
         updatedAt: Date.now(),
         expiresAt: Date.now() + RSRS_CACHE_TTL,
     };
+    rsrsWarmupCache = null;
 
     return rsrsMap;
 }
@@ -163,8 +176,26 @@ export async function GET() {
         });
     }
 
+    if (rsrsWarmupCache && Object.keys(rsrsWarmupCache.data).length > 0) {
+        void ensureRsrsBuild().catch((error) => {
+            console.error('RSRS warmup background refresh failed:', error);
+        });
+
+        return NextResponse.json(rsrsWarmupCache.data, {
+            headers: {
+                'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=600',
+                'X-Data-Source': 'warmup-partial-cache',
+                'X-Cache-Age-Seconds': Math.floor((now - rsrsWarmupCache.updatedAt) / 1000).toString(),
+            }
+        });
+    }
+
     try {
-        const data = await ensureRsrsBuild();
+        const data = await withTimeout(
+            ensureRsrsBuild(),
+            RSRS_BUILD_TIMEOUT_MS,
+            'rsrs build'
+        );
         return NextResponse.json(data, {
             headers: {
                 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=7200',
@@ -181,6 +212,16 @@ export async function GET() {
                 headers: {
                     'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=600',
                     'X-Data-Source': 'stale-memory-cache'
+                }
+            });
+        }
+
+        if (rsrsWarmupCache && Object.keys(rsrsWarmupCache.data).length > 0) {
+            return NextResponse.json(rsrsWarmupCache.data, {
+                headers: {
+                    'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=600',
+                    'X-Data-Source': 'warmup-partial-cache-timeout',
+                    'X-Cache-Age-Seconds': Math.floor((now - rsrsWarmupCache.updatedAt) / 1000).toString(),
                 }
             });
         }

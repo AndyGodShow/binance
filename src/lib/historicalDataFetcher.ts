@@ -18,6 +18,35 @@ function parseUtcDateString(date: string): number {
  */
 export class HistoricalDataFetcher {
     private baseUrl = '/api/backtest/klines';
+    private maxLimit = 1500;
+    private readonly rangeCache = new Map<string, Promise<KlineData[]>>();
+
+    private buildCacheKey(
+        symbol: string,
+        interval: string,
+        startTime: number,
+        endTime: number,
+        includeAuxiliary: boolean
+    ): string {
+        return [
+            symbol.toUpperCase(),
+            interval,
+            startTime,
+            endTime,
+            includeAuxiliary ? 'aux' : 'core',
+        ].join(':');
+    }
+
+    private normalizeKlines(klines: KlineData[]): KlineData[] {
+        const deduped = new Map<number, KlineData>();
+        klines.forEach((kline) => {
+            if (Number.isFinite(kline.closeTime)) {
+                deduped.set(kline.closeTime, kline);
+            }
+        });
+
+        return Array.from(deduped.values()).sort((a, b) => a.closeTime - b.closeTime);
+    }
 
     /**
      * 获取指定时间范围的所有K线数据
@@ -36,54 +65,79 @@ export class HistoricalDataFetcher {
             includeAuxiliary?: boolean;
         } = {}
     ): Promise<KlineData[]> {
-        const allKlines: KlineData[] = [];
-        let currentStart = startTime;
-        const limit = 1500; // 单次最大请求数
-
-        while (currentStart < endTime) {
-            try {
-                const params = new URLSearchParams({
-                    symbol,
-                    interval,
-                    startTime: currentStart.toString(),
-                    endTime: endTime.toString(),
-                    limit: limit.toString(),
-                });
-
-                if (options.includeAuxiliary === false) {
-                    params.append('includeAuxiliary', 'false');
-                }
-
-                const response = await fetch(`${this.baseUrl}?${params}`);
-
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-                }
-
-                const result = await response.json();
-                const klines = result.data as KlineData[];
-
-                if (klines.length === 0) break;
-
-                allKlines.push(...klines);
-
-                // 更新下一次请求的起始时间
-                const lastKline = klines[klines.length - 1];
-                currentStart = lastKline.closeTime + 1;
-
-                // 如果返回的数据少于limit，说明已经到达结束时间
-                if (klines.length < limit) break;
-
-                // 避免请求过快，添加短暂延迟
-                await this.sleep(options.includeAuxiliary === false ? 20 : 100);
-
-            } catch (error) {
-                console.error('获取批量数据失败:', error);
-                throw error;
-            }
+        const includeAuxiliary = options.includeAuxiliary !== false;
+        const cacheKey = this.buildCacheKey(symbol, interval, startTime, endTime, includeAuxiliary);
+        const cachedRequest = this.rangeCache.get(cacheKey);
+        if (cachedRequest) {
+            return cachedRequest;
         }
 
-        return allKlines;
+        const request = (async () => {
+            const allKlines: KlineData[] = [];
+            let currentStart = startTime;
+            const limit = this.maxLimit;
+            const intervalMs = this.getIntervalMilliseconds(interval);
+
+            while (currentStart < endTime) {
+                try {
+                    const currentEnd = Math.min(endTime, currentStart + (intervalMs * limit) - 1);
+                    const params = new URLSearchParams({
+                        symbol,
+                        interval,
+                        startTime: currentStart.toString(),
+                        endTime: currentEnd.toString(),
+                        limit: limit.toString(),
+                    });
+
+                    if (!includeAuxiliary) {
+                        params.append('includeAuxiliary', 'false');
+                    }
+
+                    const response = await fetch(`${this.baseUrl}?${params}`);
+
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+
+                    const result = await response.json();
+                    const klines = Array.isArray(result.data) ? result.data as KlineData[] : [];
+
+                    if (klines.length === 0) {
+                        break;
+                    }
+
+                    const normalizedChunk = this.normalizeKlines(klines);
+                    if (normalizedChunk.length === 0) {
+                        break;
+                    }
+
+                    allKlines.push(...normalizedChunk);
+
+                    const lastKline = normalizedChunk[normalizedChunk.length - 1];
+                    currentStart = Math.max(currentStart + 1, lastKline.closeTime + 1);
+
+                    if (normalizedChunk.length < limit || currentEnd >= endTime) {
+                        break;
+                    }
+
+                    await this.sleep(includeAuxiliary ? 100 : 20);
+                } catch (error) {
+                    console.error('获取批量数据失败:', error);
+                    throw error;
+                }
+            }
+
+            return this.normalizeKlines(allKlines);
+        })();
+
+        this.rangeCache.set(cacheKey, request);
+
+        try {
+            return await request;
+        } catch (error) {
+            this.rangeCache.delete(cacheKey);
+            throw error;
+        }
     }
 
     /**

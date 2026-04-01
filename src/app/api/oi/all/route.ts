@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { fetchBinanceJson } from '@/lib/binanceApi';
+import { withTimeout } from '@/lib/async';
 import { logger } from '@/lib/logger';
 
 // Keep a short live cache plus a stale snapshot so repeat visits can render immediately.
@@ -7,7 +8,10 @@ let liveCache: { time: number; data: Record<string, string> } | null = null;
 let lastSuccessfulData: Record<string, string> | null = null;
 let lastSuccessfulAt = 0;
 let inflightBuild: Promise<Record<string, string>> | null = null;
+let warmupFallbackData: Record<string, string> | null = null;
+let warmupFallbackAt = 0;
 const LIVE_CACHE_DURATION = 15000;
+const BUILD_TIMEOUT_MS = 12000;
 
 interface BinanceTicker24h {
     symbol: string;
@@ -73,12 +77,21 @@ async function buildOpenInterestMap(): Promise<Record<string, string>> {
         batchResults.forEach(r => {
             if (r.oi) oiData[r.symbol] = r.oi;
         });
+
+        if (!lastSuccessfulData && Object.keys(oiData).length > 0) {
+            const snapshot = { ...oiData };
+            warmupFallbackData = snapshot;
+            warmupFallbackAt = Date.now();
+        }
+
         await new Promise(r => setTimeout(r, 25));
     }
 
     liveCache = { time: Date.now(), data: oiData };
     lastSuccessfulData = oiData;
     lastSuccessfulAt = Date.now();
+    warmupFallbackData = null;
+    warmupFallbackAt = 0;
     return oiData;
 }
 
@@ -117,9 +130,27 @@ export async function GET() {
         });
     }
 
+    if (warmupFallbackData && Object.keys(warmupFallbackData).length > 0) {
+        void ensureOpenInterestBuild().catch((error) => {
+            logger.error('Background open interest warmup refresh failed', error as Error);
+        });
+
+        return NextResponse.json(warmupFallbackData, {
+            headers: {
+                'Cache-Control': 'public, s-maxage=5, stale-while-revalidate=15',
+                'X-Data-Source': 'warmup-partial-cache',
+                'X-Cache-Age-Seconds': Math.floor((Date.now() - warmupFallbackAt) / 1000).toString(),
+            }
+        });
+    }
+
     const ownsInflight = !inflightBuild;
     try {
-        const data = await ensureOpenInterestBuild();
+        const data = await withTimeout(
+            ensureOpenInterestBuild(),
+            BUILD_TIMEOUT_MS,
+            'open interest build'
+        );
         return NextResponse.json(data, {
             headers: {
                 'Cache-Control': 'public, s-maxage=15, stale-while-revalidate=30',
@@ -132,8 +163,17 @@ export async function GET() {
             return NextResponse.json(lastSuccessfulData, {
                 headers: {
                     'Cache-Control': 'public, s-maxage=15, stale-while-revalidate=30',
-                    'X-Data-Source': 'stale-memory-cache',
+                    'X-Data-Source': 'stale-memory-cache-timeout',
                     'X-Cache-Age-Seconds': Math.floor((Date.now() - lastSuccessfulAt) / 1000).toString(),
+                }
+            });
+        }
+        if (warmupFallbackData && Object.keys(warmupFallbackData).length > 0) {
+            return NextResponse.json(warmupFallbackData, {
+                headers: {
+                    'Cache-Control': 'public, s-maxage=5, stale-while-revalidate=15',
+                    'X-Data-Source': 'warmup-partial-cache-timeout',
+                    'X-Cache-Age-Seconds': Math.floor((Date.now() - warmupFallbackAt) / 1000).toString(),
                 }
             });
         }

@@ -148,5 +148,7 @@ class HistoricalDataTracker {
     }
 }
 
-// 单例导出
-export const historicalTracker = new HistoricalDataTracker();
+// 单例导出：使用 globalThis 防止 Next.js 热重载导致多个实例堆积死锁
+export const historicalTracker = 
+    (globalThis as any).__historicalTracker || 
+    ((globalThis as any).__historicalTracker = new HistoricalDataTracker());

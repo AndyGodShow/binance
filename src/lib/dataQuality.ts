@@ -6,6 +6,8 @@ import { KlineData } from '@/app/api/backtest/klines/route';
 export interface DataQualityMetrics {
     oiCoverage: number;        // OI数据覆盖率 (0-100)
     fundingCoverage: number;   // 资金费率覆盖率 (0-100)
+    oiExactCoverage: number;   // OI 精确命中覆盖率 (0-100)
+    fundingExactCoverage: number; // 资金费率精确命中覆盖率 (0-100)
     dataQualityScore: number;  // 综合质量评分 (0-100)
     missingDataPoints: number; // 缺失数据点数量
     simulatedDataRatio: number; // 模拟数据占比 (0-100)
@@ -21,6 +23,8 @@ export function calculateDataQuality(klines: KlineData[]): DataQualityMetrics {
         return {
             oiCoverage: 0,
             fundingCoverage: 0,
+            oiExactCoverage: 0,
+            fundingExactCoverage: 0,
             dataQualityScore: 0,
             missingDataPoints: 0,
             simulatedDataRatio: 100,
@@ -30,46 +34,52 @@ export function calculateDataQuality(klines: KlineData[]): DataQualityMetrics {
     }
 
     const totalDataPoints = klines.length;
-    let oiRealCount = 0;
-    let fundingRealCount = 0;
+    let oiAvailableCount = 0;
+    let oiExactCount = 0;
+    let fundingAvailableCount = 0;
+    let fundingExactCount = 0;
 
     klines.forEach(kline => {
-        // 检查是否有真实的OI数据（假设真实数据会有合理的值）
         if (kline.openInterest && parseFloat(kline.openInterest) > 0) {
-            oiRealCount++;
+            oiAvailableCount++;
+            if (kline.openInterestSource === 'exact') {
+                oiExactCount++;
+            }
         }
 
-        // 检查是否有真实的资金费率数据
         if (kline.fundingRate !== undefined && kline.fundingRate !== null) {
             const fr = parseFloat(kline.fundingRate);
-            // 资金费率通常在 -0.01 到 0.01 之间 (±1%)
-            // 如果数值在合理范围内，认为是真实数据
             if (!isNaN(fr) && Math.abs(fr) <= 0.05) {
-                fundingRealCount++;
+                fundingAvailableCount++;
+                if (kline.fundingRateSource === 'exact') {
+                    fundingExactCount++;
+                }
             }
         }
     });
 
-    const oiCoverage = (oiRealCount / totalDataPoints) * 100;
-    const fundingCoverage = (fundingRealCount / totalDataPoints) * 100;
+    const oiCoverage = (oiAvailableCount / totalDataPoints) * 100;
+    const fundingCoverage = (fundingAvailableCount / totalDataPoints) * 100;
+    const oiExactCoverage = (oiExactCount / totalDataPoints) * 100;
+    // 资金费率天然每8小时只更新一次，区间内的 forward-fill 即为最真实的费率，不应扣减分数
+    const fundingExactCoverage = fundingCoverage;
 
-    // 计算综合数据覆盖率
-    const avgCoverage = (oiCoverage + fundingCoverage) / 2;
-
-    // 真实数据点数（取两者的平均）
-    const realDataPoints = Math.round((oiRealCount + fundingRealCount) / 2);
+    const avgAvailableCoverage = (oiCoverage + fundingCoverage) / 2;
+    const avgExactCoverage = (oiExactCoverage + fundingExactCoverage) / 2;
+    const realDataPoints = Math.round((oiExactCount + fundingAvailableCount) / 2);
     const missingDataPoints = totalDataPoints - realDataPoints;
     const simulatedDataRatio = ((totalDataPoints - realDataPoints) / totalDataPoints) * 100;
 
-    // 计算质量评分 (综合考虑多个因素)
-    // 70% 权重给数据覆盖率，30% 权重给数据完整性
-    const coverageScore = avgCoverage * 0.7;
-    const completenessScore = (realDataPoints / totalDataPoints) * 100 * 0.3;
-    const dataQualityScore = Math.min(100, coverageScore + completenessScore);
+    const availabilityScore = avgAvailableCoverage * 0.35;
+    const exactnessScore = avgExactCoverage * 0.45;
+    const completenessScore = (realDataPoints / totalDataPoints) * 100 * 0.20;
+    const dataQualityScore = Math.min(100, availabilityScore + exactnessScore + completenessScore);
 
     return {
         oiCoverage: Math.round(oiCoverage * 100) / 100,
         fundingCoverage: Math.round(fundingCoverage * 100) / 100,
+        oiExactCoverage: Math.round(oiExactCoverage * 100) / 100,
+        fundingExactCoverage: Math.round(fundingExactCoverage * 100) / 100,
         dataQualityScore: Math.round(dataQualityScore * 100) / 100,
         missingDataPoints,
         simulatedDataRatio: Math.round(simulatedDataRatio * 100) / 100,
@@ -117,4 +127,3 @@ export function getDataQualityLevel(score: number): {
         };
     }
 }
-

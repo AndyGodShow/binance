@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { withTimeout } from '@/lib/async';
 import { fetchBinanceJson } from '@/lib/binanceApi';
 
 interface BinanceLSEntry {
@@ -24,6 +25,7 @@ interface LongShortResponseBody {
 }
 
 const routeCache = new Map<string, { data: LongShortResponseBody; timestamp: number }>();
+const BUILD_TIMEOUT_MS = 10000;
 
 export async function GET(request: NextRequest) {
     try {
@@ -52,12 +54,16 @@ export async function GET(request: NextRequest) {
             });
         }
 
-        const [global, topAccount, topPosition, taker] = await Promise.allSettled([
-            fetchBinanceJson<BinanceLSEntry[]>(`/futures/data/globalLongShortAccountRatio?symbol=${symbol}&period=${period}&limit=${limit}`, { revalidate: 60 }),
-            fetchBinanceJson<BinanceLSEntry[]>(`/futures/data/topLongShortAccountRatio?symbol=${symbol}&period=${period}&limit=${limit}`, { revalidate: 60 }),
-            fetchBinanceJson<BinanceLSEntry[]>(`/futures/data/topLongShortPositionRatio?symbol=${symbol}&period=${period}&limit=${limit}`, { revalidate: 60 }),
-            fetchBinanceJson<BinanceTakerEntry[]>(`/futures/data/takerlongshortRatio?symbol=${symbol}&period=${period}&limit=${limit}`, { revalidate: 60 }),
-        ]);
+        const [global, topAccount, topPosition, taker] = await withTimeout(
+            Promise.allSettled([
+                fetchBinanceJson<BinanceLSEntry[]>(`/futures/data/globalLongShortAccountRatio?symbol=${symbol}&period=${period}&limit=${limit}`, { revalidate: 60 }),
+                fetchBinanceJson<BinanceLSEntry[]>(`/futures/data/topLongShortAccountRatio?symbol=${symbol}&period=${period}&limit=${limit}`, { revalidate: 60 }),
+                fetchBinanceJson<BinanceLSEntry[]>(`/futures/data/topLongShortPositionRatio?symbol=${symbol}&period=${period}&limit=${limit}`, { revalidate: 60 }),
+                fetchBinanceJson<BinanceTakerEntry[]>(`/futures/data/takerlongshortRatio?symbol=${symbol}&period=${period}&limit=${limit}`, { revalidate: 60 }),
+            ]),
+            BUILD_TIMEOUT_MS,
+            'longshort build'
+        );
 
         // Transform to a lighter format for the frontend
         const transform = (entries: BinanceLSEntry[]) =>
@@ -111,6 +117,19 @@ export async function GET(request: NextRequest) {
         });
     } catch (error) {
         console.error('[LongShort API]', error);
+        const { searchParams } = new URL(request.url);
+        const symbol = searchParams.get('symbol') || 'BTCUSDT';
+        const period = searchParams.get('period') || '1h';
+        const limit = Math.min(Number(searchParams.get('limit') || '30'), 500);
+        const cached = routeCache.get(`${symbol}:${period}:${limit}`);
+        if (cached) {
+            return NextResponse.json(cached.data, {
+                headers: {
+                    'Cache-Control': 'public, s-maxage=30, stale-while-revalidate=120',
+                    'X-Data-Source': 'stale-memory-cache-timeout',
+                },
+            });
+        }
         return NextResponse.json(
             { error: 'Failed to fetch long/short ratio data' },
             { status: 500 }

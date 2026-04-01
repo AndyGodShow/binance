@@ -34,16 +34,23 @@ interface BinanceFetchOptions {
     init?: NextFetchInit;
 }
 
-function buildAttemptInit(options: BinanceFetchOptions): NextFetchInit {
+const MIRROR_STAGGER_MS = 250;
+
+function buildAttemptInit(options: BinanceFetchOptions, signal?: AbortSignal): NextFetchInit {
     const { revalidate, timeoutMs = 8000, init } = options;
     const merged: NextFetchInit = {
         ...(init || {}),
         redirect: 'follow',
     };
 
-    // Create a fresh timeout signal for every retry attempt.
-    // Reusing the same AbortSignal.timeout() would abort all later mirrors immediately.
-    merged.signal = init?.signal ?? AbortSignal.timeout(timeoutMs);
+    const signals = [
+        init?.signal,
+        signal,
+        AbortSignal.timeout(timeoutMs),
+    ].filter(Boolean) as AbortSignal[];
+
+    // Create a fresh timeout signal for every attempt.
+    merged.signal = signals.length === 1 ? signals[0] : AbortSignal.any(signals);
 
     if (typeof revalidate === 'number') {
         merged.next = { ...(init?.next || {}), revalidate };
@@ -66,60 +73,95 @@ function getCandidateBases(path: string): string[] {
 export async function fetchBinance(path: string, options: BinanceFetchOptions = {}): Promise<Response> {
     const errors: string[] = [];
     const candidateBases = getCandidateBases(path);
+    const sharedAbort = new AbortController();
+    const scheduledBases = candidateBases.map((_, offset) =>
+        candidateBases[(preferredBaseIndex + offset) % candidateBases.length]
+    );
 
-    for (let i = 0; i < candidateBases.length; i++) {
-        const idx = (preferredBaseIndex + i) % candidateBases.length;
-        const base = candidateBases[idx];
-        const url = `${base}${path}`;
-        const init = buildAttemptInit(options);
-
-        try {
-            const res = await fetch(url, init);
-            if (res.ok) {
-                preferredBaseIndex = idx;
-                return res;
-            }
-            errors.push(`${url} -> HTTP ${res.status}`);
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            errors.push(`${url} -> ${message}`);
+    const attempts = scheduledBases.map((base, offset) => (async () => {
+        if (offset > 0) {
+            await new Promise((resolve) => setTimeout(resolve, offset * MIRROR_STAGGER_MS));
         }
-    }
 
-    logger.error('All Binance endpoints failed', new Error(errors.join(' | ')), { path });
-    throw new Error(`All Binance endpoints failed for ${path}`);
+        if (sharedAbort.signal.aborted) {
+            throw new Error('Cancelled after another mirror succeeded');
+        }
+
+        const url = `${base}${path}`;
+        const init = buildAttemptInit(options, sharedAbort.signal);
+        const res = await fetch(url, init);
+        if (!res.ok) {
+            throw new Error(`${url} -> HTTP ${res.status}`);
+        }
+
+        const winningIndex = candidateBases.indexOf(base);
+        if (winningIndex >= 0) {
+            preferredBaseIndex = winningIndex;
+        }
+        sharedAbort.abort();
+        return res;
+    })().catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        errors.push(message);
+        throw error;
+    }));
+
+    try {
+        return await Promise.any(attempts);
+    } catch {
+        logger.error('All Binance endpoints failed', new Error(errors.join(' | ')), { path });
+        throw new Error(`All Binance endpoints failed for ${path}`);
+    }
 }
 
 export async function fetchBinanceJson<T>(path: string, options: BinanceFetchOptions = {}): Promise<T> {
     const errors: string[] = [];
     const candidateBases = getCandidateBases(path);
+    const sharedAbort = new AbortController();
+    const scheduledBases = candidateBases.map((_, offset) =>
+        candidateBases[(preferredBaseIndex + offset) % candidateBases.length]
+    );
 
-    for (let i = 0; i < candidateBases.length; i++) {
-        const idx = (preferredBaseIndex + i) % candidateBases.length;
-        const base = candidateBases[idx];
-        const url = `${base}${path}`;
-        const init = buildAttemptInit(options);
-
-        try {
-            const res = await fetch(url, init);
-            if (!res.ok) {
-                errors.push(`${url} -> HTTP ${res.status}`);
-                continue;
-            }
-            try {
-                const json = await res.json() as T;
-                preferredBaseIndex = idx;
-                return json;
-            } catch (parseError) {
-                const message = parseError instanceof Error ? parseError.message : String(parseError);
-                errors.push(`${url} -> invalid JSON (${message})`);
-            }
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            errors.push(`${url} -> ${message}`);
+    const attempts = scheduledBases.map((base, offset) => (async () => {
+        if (offset > 0) {
+            await new Promise((resolve) => setTimeout(resolve, offset * MIRROR_STAGGER_MS));
         }
-    }
 
-    logger.error('All Binance JSON endpoints failed', new Error(errors.join(' | ')), { path });
-    throw new Error(`All Binance JSON endpoints failed for ${path}`);
+        if (sharedAbort.signal.aborted) {
+            throw new Error('Cancelled after another mirror succeeded');
+        }
+
+        const url = `${base}${path}`;
+        const init = buildAttemptInit(options, sharedAbort.signal);
+        const res = await fetch(url, init);
+        if (!res.ok) {
+            throw new Error(`${url} -> HTTP ${res.status}`);
+        }
+
+        let json: T;
+        try {
+            json = await res.json() as T;
+        } catch (parseError) {
+            const message = parseError instanceof Error ? parseError.message : String(parseError);
+            throw new Error(`${url} -> invalid JSON (${message})`);
+        }
+
+        const winningIndex = candidateBases.indexOf(base);
+        if (winningIndex >= 0) {
+            preferredBaseIndex = winningIndex;
+        }
+        sharedAbort.abort();
+        return json;
+    })().catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        errors.push(message);
+        throw error;
+    }));
+
+    try {
+        return await Promise.any(attempts);
+    } catch {
+        logger.error('All Binance JSON endpoints failed', new Error(errors.join(' | ')), { path });
+        throw new Error(`All Binance JSON endpoints failed for ${path}`);
+    }
 }

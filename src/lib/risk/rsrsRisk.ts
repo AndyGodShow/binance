@@ -30,31 +30,38 @@ export function calculateRSRSRisk(params: RiskCalculationParams): RiskManagement
     let stopLossReason: string;
 
     if (direction === 'long') {
-        const bollingerStop = bollingerLower || entryPrice * 0.97;
+        const validBollingerLower = (bollingerLower !== undefined && bollingerLower < entryPrice) ? bollingerLower : undefined;
+        const bollingerStop = validBollingerLower || entryPrice * 0.97;
         const maxStopDistance = entryPrice * 0.04; // 🔥 最大止损4%
 
-        // 如果布林带止损超过4%，使用固定3%
-        if (bollingerLower && (entryPrice - bollingerLower) > maxStopDistance) {
+        // 如果布林带止损超过4%，或者布林下轨倒挂(大于现价)，使用固定3%
+        if (validBollingerLower && (entryPrice - validBollingerLower) > maxStopDistance) {
             stopLossPrice = entryPrice * 0.97;
             stopLossReason = "布林带过宽，使用固定3%止损";
         } else {
             stopLossPrice = bollingerStop;
-            stopLossReason = bollingerLower
+            stopLossReason = validBollingerLower
                 ? "跌破布林下轨（信号失效）"
-                : "固定3%止损";
+                : (bollingerLower !== undefined && bollingerLower >= entryPrice) 
+                    ? "布林线下轨倒挂，使用固定3%止损" 
+                    : "固定3%止损";
         }
     } else {
-        const bollingerStop = bollingerUpper || entryPrice * 1.03;
+        const validBollingerUpper = (bollingerUpper !== undefined && bollingerUpper > entryPrice) ? bollingerUpper : undefined;
+        const bollingerStop = validBollingerUpper || entryPrice * 1.03;
         const maxStopDistance = entryPrice * 0.04;
 
-        if (bollingerUpper && (bollingerUpper - entryPrice) > maxStopDistance) {
+        // 如果布林带止损超过4%，或者布林上轨倒挂(小于现价)，使用固定3%
+        if (validBollingerUpper && (validBollingerUpper - entryPrice) > maxStopDistance) {
             stopLossPrice = entryPrice * 1.03;
             stopLossReason = "布林带过宽，使用固定3%止损";
         } else {
             stopLossPrice = bollingerStop;
-            stopLossReason = bollingerUpper
+            stopLossReason = validBollingerUpper
                 ? "涨破布林上轨（信号失效）"
-                : "固定3%止损";
+                : (bollingerUpper !== undefined && bollingerUpper <= entryPrice)
+                    ? "布林线上轨倒挂，使用固定3%止损"
+                    : "固定3%止损";
         }
     }
 

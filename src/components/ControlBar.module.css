@@ -1,38 +1,54 @@
 .container {
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-    margin-bottom: 24px;
-    background: var(--surface);
-    padding: 16px;
-    border-radius: 8px;
-    border: 1px solid var(--border);
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 18px;
+    padding: 16px 18px;
+    background: rgba(15, 19, 25, 0.84);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    border-radius: 16px;
+    border: 1px solid var(--border-light);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03), 0 12px 28px rgba(0, 0, 0, 0.22);
 }
 
-@media (min-width: 1024px) {
+@media (max-width: 1023px) {
     .container {
-        flex-direction: row;
-        align-items: center;
-        justify-content: space-between;
+        grid-template-columns: 1fr;
     }
 }
 
 .left {
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: minmax(220px, 320px) minmax(0, 1fr);
     gap: 16px;
+    min-width: 0;
 }
 
-@media (min-width: 768px) {
+@media (max-width: 900px) {
     .left {
-        flex-direction: row;
-        align-items: center;
+        grid-template-columns: 1fr;
     }
+}
+
+.searchSection,
+.filterSection,
+.right {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.fieldLabel {
+    color: var(--text-tertiary);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
 }
 
 .searchWrapper {
     position: relative;
-    width: 240px;
+    width: 100%;
 }
 
 .searchIcon {
@@ -45,84 +61,112 @@
 
 .searchInput {
     width: 100%;
-    background: var(--background);
-    border: 1px solid var(--border);
+    min-height: 44px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.07);
     color: var(--text-primary);
-    padding: 8px 12px 8px 36px;
-    border-radius: 4px;
+    padding: 10px 14px 10px 38px;
+    border-radius: 10px;
     outline: none;
     font-size: 13px;
-    transition: all 0.2s;
+    transition: all 0.2s ease;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
 }
 
 .searchInput:focus {
-    border-color: var(--primary);
+    border-color: rgba(252, 213, 53, 0.35);
+    background: rgba(252, 213, 53, 0.05);
+    box-shadow: 0 0 0 3px rgba(252, 213, 53, 0.08);
 }
 
-/* Segmented Control */
 .segmentedControl {
     display: flex;
-    background: var(--background);
+    gap: 8px;
     padding: 4px;
-    border-radius: 6px;
-    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.05);
     overflow-x: auto;
+    scrollbar-width: none;
+}
+
+.segmentedControl::-webkit-scrollbar {
+    display: none;
 }
 
 .segmentBtn {
+    flex: 0 0 auto;
+    min-height: 34px;
     background: transparent;
-    border: none;
+    border: 1px solid transparent;
     color: var(--text-secondary);
-    padding: 6px 12px;
+    padding: 7px 13px;
     font-size: 12px;
-    font-weight: 500;
-    border-radius: 4px;
+    font-weight: 600;
+    font-family: 'Outfit', sans-serif;
+    letter-spacing: 0.04em;
+    border-radius: 8px;
     cursor: pointer;
     white-space: nowrap;
-    transition: all 0.2s;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .segmentBtn:hover {
     color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.06);
 }
 
 .activeSegment {
-    background: var(--surface-hover);
-    color: var(--text-primary);
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+    background: rgba(252, 213, 53, 0.12);
+    color: var(--primary);
+    box-shadow: 0 6px 14px rgba(252, 213, 53, 0.12);
+    border: 1px solid rgba(252, 213, 53, 0.24);
 }
 
 .right {
+    align-items: flex-end;
+    justify-content: center;
+    min-width: 0;
+}
+
+.actionRow {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
 }
 
 .alertBtn {
-    background: transparent;
-    border: 1px solid var(--border);
+    min-height: 44px;
+    min-width: 50px;
+    background: rgba(251, 191, 36, 0.08);
+    border: 1px solid rgba(251, 191, 36, 0.22);
     color: #fbbf24;
-    padding: 8px 12px;
-    border-radius: 6px;
+    padding: 8px 14px;
+    border-radius: 10px;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: all 0.2s;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    font-family: 'Outfit', sans-serif;
+    font-weight: 600;
+    box-shadow: 0 8px 18px rgba(251, 191, 36, 0.08);
 }
 
 .alertBtn:hover {
-    background: rgba(251, 191, 36, 0.1);
-    border-color: #fbbf24;
+    background: rgba(251, 191, 36, 0.15);
+    border-color: rgba(251, 191, 36, 0.42);
 }
 
 .viewToggle {
     display: flex;
-    background: var(--background);
+    min-height: 44px;
+    background: rgba(255, 255, 255, 0.03);
     padding: 4px;
-    border-radius: 6px;
-    border: 1px solid var(--border);
-    gap: 2px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    gap: 4px;
 }
 
 .iconBtn {
@@ -130,19 +174,45 @@
     border: none;
     color: var(--text-secondary);
     padding: 6px;
-    border-radius: 4px;
+    border-radius: 6px;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .iconBtn:hover {
     color: var(--text-primary);
-    background: var(--surface-hover);
+    background: rgba(255, 255, 255, 0.05);
 }
 
 .activeIcon {
-    background: var(--surface-hover);
+    background: rgba(252, 213, 53, 0.1);
     color: var(--primary);
+    border: 1px solid rgba(252, 213, 53, 0.2);
+    box-shadow: 0 6px 14px rgba(252, 213, 53, 0.08);
+}
+
+@media (max-width: 1023px) {
+    .right {
+        align-items: flex-start;
+    }
+}
+
+@media (max-width: 640px) {
+    .container {
+        gap: 14px;
+        padding: 14px;
+        border-radius: 14px;
+    }
+
+    .actionRow {
+        width: 100%;
+        justify-content: space-between;
+    }
+
+    .viewToggle {
+        margin-left: auto;
+    }
 }

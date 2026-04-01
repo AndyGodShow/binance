@@ -1,4 +1,6 @@
 import { NextResponse } from 'next/server';
+import { unstable_cache } from 'next/cache';
+import { withTimeout } from '@/lib/async';
 import { fetchBinanceJson } from '@/lib/binanceApi';
 import { logger } from '@/lib/logger';
 
@@ -34,23 +36,10 @@ interface KlineResult {
 
 type MultiframeData = Record<string, { o15m: number, o1h: number, o4h: number }>;
 
-let cache: { expiresAt: number; data: MultiframeData } | null = null;
-let inflightBuild: Promise<MultiframeData> | null = null;
+export const revalidate = 60; // Serverless cache duration
+export const maxDuration = 15; // Setup max duration for vercel execution
 
-function ensureMultiframeBuild(): Promise<MultiframeData> {
-    if (!inflightBuild) {
-        inflightBuild = buildMultiframeData().finally(() => {
-            inflightBuild = null;
-        });
-    }
-
-    return inflightBuild;
-}
-
-function getNextQuarterHourBoundary(now: number): number {
-    const intervalMs = 15 * 60 * 1000;
-    return (Math.floor(now / intervalMs) + 1) * intervalMs;
-}
+const BUILD_TIMEOUT_MS = 12000;
 
 async function buildMultiframeData(): Promise<MultiframeData> {
     // 1. Prefer exchangeInfo so we only query active perpetual contracts.
@@ -122,62 +111,36 @@ async function buildMultiframeData(): Promise<MultiframeData> {
         });
 
         if (chunk !== chunks[chunks.length - 1]) {
-            await new Promise(resolve => setTimeout(resolve, 20));
+            await new Promise(resolve => setTimeout(resolve, 30));
         }
     }
-
-    cache = {
-        data: resultData,
-        expiresAt: getNextQuarterHourBoundary(Date.now()),
-    };
 
     return resultData;
 }
 
+const getCachedMultiframeData = unstable_cache(
+    async () => {
+        return await buildMultiframeData();
+    },
+    ['api-multiframe-data-v1'],
+    { revalidate: 60 }
+);
+
 export async function GET() {
-    const now = Date.now();
-    if (cache && now < cache.expiresAt) {
-        return NextResponse.json(cache.data, {
-            headers: {
-                'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=120',
-                'X-Data-Source': 'memory-cache',
-            }
-        });
-    }
-
-    if (cache && Object.keys(cache.data).length > 0) {
-        void ensureMultiframeBuild().catch((error) => {
-            logger.error('Background multiframe refresh failed', error as Error);
-        });
-
-        return NextResponse.json(cache.data, {
-            headers: {
-                'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=120',
-                'X-Data-Source': 'stale-memory-cache-refreshing',
-                'X-Cache-Age-Seconds': Math.floor((now - (cache.expiresAt - 15 * 60 * 1000)) / 1000).toString(),
-            }
-        });
-    }
-
-    const ownsInflight = !inflightBuild;
     try {
-        const data = await ensureMultiframeBuild();
+        const data = await withTimeout(
+            getCachedMultiframeData(),
+            BUILD_TIMEOUT_MS,
+            'multiframe build'
+        );
         return NextResponse.json(data, {
             headers: {
                 'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=120',
-                'X-Data-Source': ownsInflight ? 'live' : 'live-coalesced',
+                'X-Data-Source': 'next-unstable-cache',
             }
         });
     } catch (error) {
         logger.error('Failed to fetch multiframe market data', error as Error);
-        if (cache && Object.keys(cache.data).length > 0) {
-            return NextResponse.json(cache.data, {
-                headers: {
-                    'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=120',
-                    'X-Data-Source': 'stale-memory-cache',
-                }
-            });
-        }
         return NextResponse.json({}, {
             headers: {
                 'Cache-Control': 'public, s-maxage=5, stale-while-revalidate=15',

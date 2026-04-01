@@ -92,9 +92,9 @@ export function buildBacktestDiagnostics(input: BacktestDiagnosticsInput): Backt
 
     if (profile.openInterest) {
         let status: 'pass' | 'warn' | 'fail' = 'pass';
-        if (input.dataQuality.oiCoverage < 50) {
+        if (input.dataQuality.oiExactCoverage < 30) {
             status = 'fail';
-        } else if (input.dataQuality.oiCoverage < 80) {
+        } else if (input.dataQuality.oiExactCoverage < 60) {
             status = 'warn';
         }
 
@@ -104,12 +104,31 @@ export function buildBacktestDiagnostics(input: BacktestDiagnosticsInput): Backt
             status,
             detail:
                 status === 'pass'
-                    ? `本次回测的 OI 覆盖率为 ${input.dataQuality.oiCoverage.toFixed(1)}%，足够支撑该策略。`
+                    ? `本次回测的 OI 可用覆盖率为 ${input.dataQuality.oiCoverage.toFixed(1)}%，其中精确命中覆盖率为 ${input.dataQuality.oiExactCoverage.toFixed(1)}%，足够支撑该策略。`
                     : status === 'warn'
-                        ? `本次回测的 OI 覆盖率为 ${input.dataQuality.oiCoverage.toFixed(1)}%，策略可跑，但 OI 过滤的可信度一般。`
-                        : `本次回测的 OI 覆盖率仅 ${input.dataQuality.oiCoverage.toFixed(1)}%，依赖 OI 的策略结果不宜直接采信。`,
+                        ? `本次回测的 OI 可用覆盖率为 ${input.dataQuality.oiCoverage.toFixed(1)}%，但精确命中覆盖率仅 ${input.dataQuality.oiExactCoverage.toFixed(1)}%，策略可跑，OI 过滤可信度一般。`
+                        : `本次回测的 OI 精确命中覆盖率仅 ${input.dataQuality.oiExactCoverage.toFixed(1)}%，依赖 OI 的策略结果不宜直接采信。`,
         });
     }
+
+    let fundingStatus: 'pass' | 'warn' | 'fail' = 'pass';
+    if (input.dataQuality.fundingExactCoverage < 15) {
+        fundingStatus = 'fail';
+    } else if (input.dataQuality.fundingExactCoverage < 40) {
+        fundingStatus = 'warn';
+    }
+
+    checks.push({
+        key: 'funding-rate',
+        label: '资金费率覆盖',
+        status: fundingStatus,
+        detail:
+            fundingStatus === 'pass'
+                ? `资金费率可用覆盖率为 ${input.dataQuality.fundingCoverage.toFixed(1)}%，精确命中覆盖率为 ${input.dataQuality.fundingExactCoverage.toFixed(1)}%。`
+                : fundingStatus === 'warn'
+                    ? `资金费率精确命中覆盖率为 ${input.dataQuality.fundingExactCoverage.toFixed(1)}%，较多 K 线使用了前向填充值。`
+                    : `资金费率精确命中覆盖率仅 ${input.dataQuality.fundingExactCoverage.toFixed(1)}%，相关过滤条件基本只能做粗参考。`,
+    });
 
     checks.push({
         key: 'lookahead-guard',
@@ -127,8 +146,8 @@ export function buildBacktestDiagnostics(input: BacktestDiagnosticsInput): Backt
         label: '成交仿真精度',
         status: usesLowerExecution ? 'pass' : 'warn',
         detail: usesLowerExecution
-            ? `当前使用 ${input.interval} 出信号、${input.executionInterval} 执行开平仓与风控，已显著降低单根 K 线内路径歧义，但仍未模拟盘口深度、排队、部分成交与延迟。`
-            : '当前仍按信号周期 K 线直接执行，单根 K 线内先止盈还是先止损仍依赖保守规则，结果会比细粒度执行更粗。',
+            ? `当前使用 ${input.interval} 出信号、${input.executionInterval} 执行开平仓与风控，已显著降低单根 K 线内路径歧义；同根 K 线内的止损收紧会延后到下一根生效，按更保守的顺序处理。`
+            : '当前仍按信号周期 K 线直接执行，同根 K 线内冲突按保守规则处理，但结果仍会比细粒度执行更粗。',
     });
 
     if (input.requestedDays > 30 && input.dataQuality.dataQualityScore < 60) {
