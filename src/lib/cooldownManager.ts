@@ -77,6 +77,27 @@ class CooldownManager {
         }, this.cleanupIntervalMs);
     }
 
+    /**
+     * 获取当前状态快照（用于回测）
+     */
+    snapshot(): Map<string, number> {
+        return new Map(this.cooldowns);
+    }
+
+    /**
+     * 清空所有冷却记录（用于回测环境隔离）
+     */
+    clear(): void {
+        this.cooldowns.clear();
+    }
+
+    /**
+     * 恢复状态快照（用于回测结束恢复现场）
+     * @param snapshot 记录快照
+     */
+    restore(snapshot: Map<string, number>): void {
+        this.cooldowns = new Map(snapshot);
+    }
 }
 
 // 单例导出
