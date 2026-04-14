@@ -4,29 +4,6 @@ import { withTimeout } from '@/lib/async';
 import { fetchBinanceJson } from '@/lib/binanceApi';
 import { logger } from '@/lib/logger';
 
-// Define types
-interface Ticker {
-    symbol: string;
-    quoteVolume: string;
-}
-
-interface BinanceExchangeInfoSymbol {
-    symbol: string;
-    contractType: string;
-    status: string;
-}
-
-interface BinanceExchangeInfoResponse {
-    symbols: BinanceExchangeInfoSymbol[];
-}
-
-function isTicker(value: unknown): value is Ticker {
-    return typeof value === 'object' &&
-        value !== null &&
-        typeof (value as Ticker).symbol === 'string' &&
-        typeof (value as Ticker).quoteVolume === 'string';
-}
-
 interface KlineResult {
     symbol: string;
     o15m: number;
@@ -40,8 +17,23 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // Max duration for Vercel
 
 const BUILD_TIMEOUT_MS = 25000;
+const CUSTOM_SYMBOL_TIMEOUT_MS = 15000;
 
-async function buildMultiframeData(): Promise<MultiframeData> {
+function parseRequestedSymbols(searchParams: URLSearchParams): string[] | null {
+    const raw = searchParams.get('symbols');
+    if (!raw) {
+        return null;
+    }
+
+    const symbols = raw
+        .split(',')
+        .map((symbol) => symbol.trim().toUpperCase())
+        .filter(Boolean);
+
+    return symbols.length > 0 ? Array.from(new Set(symbols)) : null;
+}
+
+async function buildMultiframeData(requestedSymbols?: string[]): Promise<MultiframeData> {
     // 1. Prefer exchangeInfo so we only query active perpetual contracts.
     let targetSymbols: string[] = [];
     // Fetch tickers immediately to get volume and symbols. We prioritize high-volume contracts.
@@ -65,22 +57,31 @@ async function buildMultiframeData(): Promise<MultiframeData> {
                 .map(s => s.symbol)
         );
 
-        targetSymbols = tickers
-            .filter(t => allowedMap.has(t.symbol))
-            .sort((a, b) => parseFloat(b.quoteVolume || '0') - parseFloat(a.quoteVolume || '0'))
-            .map(t => t.symbol);
+        if (requestedSymbols && requestedSymbols.length > 0) {
+            targetSymbols = requestedSymbols.filter((symbol) => allowedMap.has(symbol));
+        } else {
+            targetSymbols = tickers
+                .filter(t => allowedMap.has(t.symbol))
+                .sort((a, b) => parseFloat(b.quoteVolume || '0') - parseFloat(a.quoteVolume || '0'))
+                .map(t => t.symbol);
+        }
 
     } catch {
         // Fallback if exchangeInfo fails
-        targetSymbols = tickers
-            .filter(t => t.symbol.endsWith('USDT'))
-            .sort((a, b) => parseFloat(b.quoteVolume || '0') - parseFloat(a.quoteVolume || '0'))
-            .map(t => t.symbol);
+        if (requestedSymbols && requestedSymbols.length > 0) {
+            targetSymbols = requestedSymbols.filter((symbol) => symbol.endsWith('USDT'));
+        } else {
+            targetSymbols = tickers
+                .filter(t => t.symbol.endsWith('USDT'))
+                .sort((a, b) => parseFloat(b.quoteVolume || '0') - parseFloat(a.quoteVolume || '0'))
+                .map(t => t.symbol);
+        }
     }
 
-    // Limit to top 320 instead of all 541 symbols to cut fetching time in half,
-    // while perfectly ensuring assets like XAU/XAG (volume rich) are included!
-    targetSymbols = targetSymbols.slice(0, 320);
+    if (!requestedSymbols || requestedSymbols.length === 0) {
+        // Default full-dataset requests still keep a cap to avoid edge runtimes timing out.
+        targetSymbols = targetSymbols.slice(0, 320);
+    }
 
     const fetchSymbolData = async (symbol: string): Promise<KlineResult> => {
         try {
@@ -93,8 +94,6 @@ async function buildMultiframeData(): Promise<MultiframeData> {
             const currentIdx = klines.length - 1;
             const openCurrent = parseFloat(klines[currentIdx][1]);
 
-            // 15分钟前开盘价 = 历史数组中倒数第2根的开盘价 (idx - 1)
-            const idx15m = Math.max(0, currentIdx - 1);
             // 1小时前开盘价 = 历史数组中倒数第5根的开盘价 (idx - 4)  (4个15m = 1h)
             const idx1h = Math.max(0, currentIdx - 4);
             // 4小时前开盘价 = 历史数组中倒数第17根的开盘价 (idx - 16) (16个15m = 4h)
@@ -117,8 +116,8 @@ async function buildMultiframeData(): Promise<MultiframeData> {
     const chunkArray = (arr: string[], size: number) =>
         Array.from({ length: Math.ceil(arr.length / size) }, (_, i) => arr.slice(i * size, i * size + size));
 
-    // Increase chunk size to 100 for significantly faster loading
-    const chunks = chunkArray(targetSymbols, 100);
+    const chunkSize = requestedSymbols && requestedSymbols.length > 0 ? 40 : 100;
+    const chunks = chunkArray(targetSymbols, chunkSize);
     const resultData: MultiframeData = {};
 
     for (const chunk of chunks) {
@@ -135,7 +134,7 @@ async function buildMultiframeData(): Promise<MultiframeData> {
         });
 
         if (chunk !== chunks[chunks.length - 1]) {
-            await new Promise(resolve => setTimeout(resolve, 20)); // brief pause
+            await new Promise(resolve => setTimeout(resolve, requestedSymbols ? 40 : 20)); // brief pause
         }
     }
 
@@ -150,7 +149,33 @@ const getCachedMultiframeData = unstable_cache(
     { revalidate: 60 }
 );
 
-export async function GET() {
+export async function GET(request: Request) {
+    const requestedSymbols = parseRequestedSymbols(new URL(request.url).searchParams);
+    if (requestedSymbols && requestedSymbols.length > 0) {
+        try {
+            const data = await withTimeout(
+                buildMultiframeData(requestedSymbols),
+                CUSTOM_SYMBOL_TIMEOUT_MS,
+                'multiframe batch build'
+            );
+
+            return NextResponse.json(data, {
+                headers: {
+                    'Cache-Control': 'public, s-maxage=15, stale-while-revalidate=30',
+                    'X-Data-Source': 'symbols-batch',
+                }
+            });
+        } catch (error) {
+            logger.error('Failed to fetch batched multiframe market data', error as Error);
+            return NextResponse.json({}, {
+                headers: {
+                    'Cache-Control': 'no-store, max-age=0',
+                    'X-Data-Source': 'symbols-batch-error',
+                }
+            });
+        }
+    }
+
     try {
         const data = await withTimeout(
             getCachedMultiframeData(),

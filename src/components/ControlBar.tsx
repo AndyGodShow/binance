@@ -9,6 +9,9 @@ interface ControlBarProps {
     setSearch: (s: string) => void;
     volumeFilter: string;
     setVolumeFilter: (v: string) => void;
+    watchlistFilter: string;
+    setWatchlistFilter: (watchlistId: string) => void;
+    watchlistOptions: Array<{ value: string; label: string }>;
     compactMode: boolean;
     setCompactMode: (b: boolean) => void;
     onOpenAlertSettings?: () => void;
@@ -29,6 +32,9 @@ export default function ControlBar({
     setSearch,
     volumeFilter,
     setVolumeFilter,
+    watchlistFilter,
+    setWatchlistFilter,
+    watchlistOptions,
     compactMode,
     setCompactMode,
     onOpenAlertSettings,
@@ -62,6 +68,23 @@ export default function ControlBar({
                                 {opt.label}
                             </button>
                         ))}
+                    </div>
+                </div>
+
+                <div className={styles.filterSection}>
+                    <span className={styles.fieldLabel}>观察池</span>
+                    <div className={styles.selectWrapper}>
+                        <select
+                            value={watchlistFilter}
+                            onChange={(e) => setWatchlistFilter(e.target.value)}
+                            className={styles.select}
+                        >
+                            {watchlistOptions.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                    {option.label}
+                                </option>
+                            ))}
+                        </select>
                     </div>
                 </div>
             </div>

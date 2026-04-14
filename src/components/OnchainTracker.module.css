@@ -1,0 +1,596 @@
+.page {
+    display: grid;
+    gap: 14px;
+    padding-bottom: 28px;
+}
+
+.hero {
+    display: grid;
+    grid-template-columns: minmax(0, 1.3fr) minmax(300px, 0.7fr);
+    gap: 16px;
+    padding: 22px;
+    border-radius: 24px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background:
+        radial-gradient(circle at top right, rgba(252, 213, 53, 0.14), transparent 30%),
+        radial-gradient(circle at left center, rgba(59, 130, 246, 0.12), transparent 28%),
+        linear-gradient(160deg, rgba(13, 16, 24, 0.98), rgba(8, 10, 16, 1));
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.24);
+}
+
+.heroMain {
+    display: grid;
+    gap: 14px;
+}
+
+.heroCopy {
+    display: grid;
+    gap: 10px;
+    max-width: 760px;
+}
+
+.kicker,
+.sectionKicker {
+    display: inline-flex;
+    width: fit-content;
+    padding: 6px 10px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--primary);
+    background: rgba(252, 213, 53, 0.12);
+    border: 1px solid rgba(252, 213, 53, 0.16);
+}
+
+.title {
+    font-family: 'Outfit', sans-serif;
+    font-size: clamp(28px, 3.6vw, 40px);
+    line-height: 0.96;
+    letter-spacing: -0.05em;
+}
+
+.subtitle {
+    max-width: 700px;
+    color: rgba(255, 255, 255, 0.72);
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+.searchBar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px;
+    max-width: 760px;
+}
+
+.heroControls {
+    display: grid;
+    gap: 10px;
+}
+
+.scopeSwitch {
+    display: inline-flex;
+    width: fit-content;
+    padding: 4px;
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    gap: 4px;
+}
+
+.scopeButton {
+    min-height: 34px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 12px;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.scopeButtonActive {
+    background: linear-gradient(135deg, rgba(252, 213, 53, 0.22), rgba(252, 213, 53, 0.08));
+    color: var(--text-primary);
+}
+
+.searchInput {
+    min-height: 44px;
+    padding: 0 16px;
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-primary);
+    font-size: 14px;
+    outline: none;
+    transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.searchInput:focus {
+    border-color: rgba(252, 213, 53, 0.42);
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.searchButton {
+    min-width: 110px;
+    min-height: 44px;
+    padding: 0 16px;
+    border: 0;
+    border-radius: 14px;
+    background: linear-gradient(135deg, var(--primary), var(--primary-hover));
+    color: #0b0e14;
+    font-weight: 800;
+    cursor: pointer;
+    transition: opacity 0.2s ease;
+}
+
+.searchButton:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.contextLine {
+    display: grid;
+    gap: 6px;
+    max-width: 760px;
+    padding-top: 4px;
+}
+
+.contextLabel {
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+}
+
+.contextText {
+    color: rgba(255, 255, 255, 0.76);
+    font-size: 12px;
+    line-height: 1.55;
+}
+
+.heroRail {
+    display: grid;
+    gap: 8px;
+    align-content: start;
+}
+
+.dataChip {
+    display: grid;
+    gap: 4px;
+    padding: 12px 14px;
+    border-radius: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.035);
+}
+
+.dataChipLabel,
+.statLabel,
+.marketLabel {
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+}
+
+.dataChipValue,
+.statValue {
+    font-family: 'Roboto Mono', monospace;
+}
+
+.dataChipValue {
+    font-size: 14px;
+    line-height: 1.35;
+    word-break: break-word;
+}
+
+.executiveSummary {
+    display: grid;
+    gap: 4px;
+    padding: 12px 14px;
+    border-left: 3px solid rgba(252, 213, 53, 0.78);
+    background: rgba(255, 255, 255, 0.035);
+    border-radius: 16px;
+}
+
+.executiveLabel,
+.sectionKicker {
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+}
+
+.executiveText {
+    color: rgba(255, 255, 255, 0.9);
+    line-height: 1.55;
+    font-size: 13px;
+}
+
+.singleWorkspace {
+    display: grid;
+}
+
+.sectionTitle {
+    margin-top: 6px;
+    font-family: 'Outfit', sans-serif;
+    font-size: 21px;
+    letter-spacing: -0.03em;
+}
+
+.statHint,
+.walletAddress,
+.tokenName,
+.priceHint {
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+.breakdownList,
+.holderTable,
+.insightList {
+    display: grid;
+    gap: 8px;
+}
+
+.holderTable {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 18px;
+}
+
+.tokenRow,
+.tokenHeader,
+.holderRow,
+.breakdownHead,
+.breakdownMeta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.scopeBadge,
+.chainBadge,
+.scoreBadge {
+    display: inline-flex;
+    align-items: center;
+    padding: 7px 12px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.scopeBadge {
+    background: rgba(252, 213, 53, 0.12);
+    color: #fcd34d;
+}
+
+.marketStrip,
+.metricsGrid,
+.contentGrid,
+.wideGrid,
+.activityList {
+    display: grid;
+    gap: 10px;
+}
+
+.main {
+    display: grid;
+    gap: 14px;
+}
+
+.tokenHero,
+.section,
+.conclusionSection,
+.statCard {
+    border-radius: 24px;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    background: linear-gradient(180deg, rgba(18, 21, 29, 0.9), rgba(11, 13, 18, 0.92));
+}
+
+.tokenHero,
+.section,
+.conclusionSection {
+    padding: 18px;
+}
+
+.tokenHero {
+    display: grid;
+    gap: 14px;
+}
+
+.tokenMain {
+    display: grid;
+    gap: 12px;
+}
+
+.tokenTitle {
+    font-family: 'Outfit', sans-serif;
+    font-size: 34px;
+    line-height: 0.95;
+    letter-spacing: -0.05em;
+}
+
+.chainBadge {
+    background: rgba(59, 130, 246, 0.14);
+    color: #93c5fd;
+}
+
+.scoreBadge {
+    background: rgba(14, 203, 129, 0.12);
+    color: #86efac;
+}
+
+.tokenName {
+    margin-top: 4px;
+}
+
+.priceCluster {
+    display: grid;
+    gap: 4px;
+    justify-items: end;
+}
+
+.priceValue {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 24px;
+}
+
+.marketStrip {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    padding-top: 16px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.marketMetric {
+    display: grid;
+    gap: 2px;
+}
+
+.marketValue {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 16px;
+}
+
+.statCard {
+    display: grid;
+    gap: 8px;
+    padding: 14px;
+}
+
+.contentGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.wideGrid {
+    grid-template-columns: 1fr;
+}
+
+.sectionHead {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 14px;
+    margin-bottom: 14px;
+}
+
+.metricsGrid {
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    margin-bottom: 10px;
+}
+
+.statValue {
+    font-size: 16px;
+}
+
+.breakdownItem,
+.holderRow,
+.activityRow {
+    display: grid;
+    gap: 6px;
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.breakdownItem:last-child,
+.holderRow:last-child,
+.activityRow:last-child {
+    border-bottom: 0;
+}
+
+.breakdownMeta {
+    color: var(--text-secondary);
+    font-size: 11px;
+}
+
+.breakdownTrack {
+    width: 100%;
+    height: 8px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.06);
+    overflow: hidden;
+}
+
+.breakdownBar {
+    height: 100%;
+    border-radius: inherit;
+}
+
+.breakdownPositive {
+    background: linear-gradient(90deg, rgba(252, 213, 53, 0.82), rgba(14, 203, 129, 0.92));
+}
+
+.breakdownNegative {
+    background: linear-gradient(90deg, rgba(246, 70, 93, 0.92), rgba(245, 158, 11, 0.92));
+}
+
+.holderMeta {
+    display: grid;
+    gap: 2px;
+    justify-items: end;
+}
+
+.activityList {
+    gap: 6px;
+}
+
+.activityRow {
+    grid-template-columns: 80px minmax(0, 1fr);
+    align-items: center;
+}
+
+.activityLabel {
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.activityDetail {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 10px 14px;
+    color: rgba(255, 255, 255, 0.84);
+    font-size: 13px;
+}
+
+.insightList {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.insightItem {
+    padding: 14px;
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.04);
+    color: rgba(255, 255, 255, 0.86);
+    line-height: 1.55;
+    font-size: 13px;
+}
+
+.researchFootnote {
+    display: grid;
+    gap: 4px;
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.7;
+}
+
+.walletAddress {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 11px;
+    word-break: normal;
+    white-space: nowrap;
+}
+
+.positive {
+    color: var(--green);
+}
+
+.negative {
+    color: var(--red);
+}
+
+.errorBanner,
+.emptyState {
+    padding: 14px;
+    border-radius: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.035);
+}
+
+.errorBanner {
+    background: rgba(246, 70, 93, 0.12);
+    color: #fca5a5;
+}
+
+.fallbackBanner {
+    padding: 14px 16px;
+    border-radius: 16px;
+    border: 1px solid rgba(245, 158, 11, 0.24);
+    background: rgba(245, 158, 11, 0.1);
+    color: #fbbf24;
+    font-size: 13px;
+    line-height: 1.55;
+    font-weight: 600;
+}
+
+@media (max-width: 1320px) {
+    .hero,
+    .singleWorkspace,
+    .contentGrid,
+    .wideGrid {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 920px) {
+    .metricsGrid,
+    .marketStrip,
+    .holderTable,
+    .insightList {
+        grid-template-columns: 1fr 1fr;
+    }
+}
+
+@media (max-width: 720px) {
+    .searchBar,
+    .tokenRow,
+    .tokenHeader,
+    .holderRow,
+    .activityRow,
+    .breakdownHead,
+    .breakdownMeta {
+        grid-template-columns: 1fr;
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .metricsGrid,
+    .marketStrip,
+    .holderTable,
+    .insightList,
+    .activityList {
+        grid-template-columns: 1fr;
+    }
+
+    .holderMeta,
+    .priceCluster {
+        justify-items: start;
+        align-items: start;
+    }
+
+    .hero,
+    .tokenHero,
+    .section,
+    .conclusionSection {
+        padding: 16px;
+    }
+
+    .scopeSwitch {
+        width: 100%;
+    }
+
+    .scopeButton {
+        flex: 1;
+    }
+
+    .tokenTitle {
+        font-size: clamp(24px, 8vw, 34px);
+    }
+
+    .priceValue {
+        font-size: clamp(20px, 6vw, 24px);
+    }
+}

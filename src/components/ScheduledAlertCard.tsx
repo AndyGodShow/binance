@@ -11,11 +11,11 @@ interface ScheduledAlertCardProps {
 }
 
 export default function ScheduledAlertCard({ alert, onDismiss }: ScheduledAlertCardProps) {
-    // Auto dismiss after 15 seconds
+    // Auto dismiss after 20 seconds to make the scheduled summary easier to read
     React.useEffect(() => {
         const timer = setTimeout(() => {
             onDismiss(alert.id);
-        }, 15000);
+        }, 20000);
         return () => clearTimeout(timer);
     }, [alert.id, onDismiss]);
 
@@ -89,7 +89,7 @@ export default function ScheduledAlertCard({ alert, onDismiss }: ScheduledAlertC
                 </div>
             </div>
 
-            <div className={styles.progress} style={{ animationDuration: '15000ms' }} />
+            <div className={styles.progress} style={{ animationDuration: '20000ms' }} />
         </div>
     );
 }

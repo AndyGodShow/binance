@@ -37,7 +37,6 @@ export function calculateDataQuality(klines: KlineData[]): DataQualityMetrics {
     let oiAvailableCount = 0;
     let oiExactCount = 0;
     let fundingAvailableCount = 0;
-    let fundingExactCount = 0;
 
     klines.forEach(kline => {
         if (kline.openInterest && parseFloat(kline.openInterest) > 0) {
@@ -51,9 +50,6 @@ export function calculateDataQuality(klines: KlineData[]): DataQualityMetrics {
             const fr = parseFloat(kline.fundingRate);
             if (!isNaN(fr) && Math.abs(fr) <= 0.05) {
                 fundingAvailableCount++;
-                if (kline.fundingRateSource === 'exact') {
-                    fundingExactCount++;
-                }
             }
         }
     });

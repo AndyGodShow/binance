@@ -9,6 +9,7 @@
     animation: slideIn 0.3s ease-out;
     border: 1px solid rgba(147, 51, 234, 0.4);
     box-shadow: 0 4px 24px rgba(147, 51, 234, 0.2);
+    pointer-events: all;
 }
 
 .header {

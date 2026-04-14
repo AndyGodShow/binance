@@ -1,5 +1,6 @@
 import { KlineData } from '@/app/api/backtest/klines/route';
 import { calculateEMA } from '@/lib/indicators';
+import { logger } from '@/lib/logger';
 import { TickerData } from '@/lib/types';
 
 type SupportedInterval = '5m' | '15m' | '1h' | '4h' | '1d';
@@ -189,13 +190,23 @@ export async function buildHistoricalTickerOverrides(
                 return;
             }
 
-            const klines = await options.fetchRangeData(
-                options.symbol,
-                interval,
-                fetchStartTime,
-                options.endTime
-            );
-            intervalData.set(interval, klines);
+            try {
+                const klines = await options.fetchRangeData(
+                    options.symbol,
+                    interval,
+                    fetchStartTime,
+                    options.endTime
+                );
+                intervalData.set(interval, klines);
+            } catch (error) {
+                logger.warn('Historical multi-timeframe fetch failed, falling back to partial overrides', {
+                    symbol: options.symbol,
+                    strategyId: options.strategyId,
+                    interval,
+                    error: error instanceof Error ? error.message : String(error),
+                });
+                intervalData.set(interval, []);
+            }
         })
     );
 

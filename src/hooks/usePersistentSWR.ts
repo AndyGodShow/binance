@@ -76,6 +76,7 @@ export function usePersistentSWR<T>(
         keepPreviousData,
         ...swrConfig,
     });
+    const { data: responseData, mutate } = response;
 
     const restoredRef = useRef<string | null>(null);
     const lastPersistAtRef = useRef(0);
@@ -85,7 +86,7 @@ export function usePersistentSWR<T>(
     }, [storageKey]);
 
     useEffect(() => {
-        if (!key || !storageKey || response.data !== undefined || restoredRef.current === storageKey) {
+        if (!key || !storageKey || responseData !== undefined || restoredRef.current === storageKey) {
             return;
         }
 
@@ -93,15 +94,15 @@ export function usePersistentSWR<T>(
         restoredRef.current = storageKey;
 
         if (cached !== undefined) {
-            void response.mutate(cached, {
+            void mutate(cached, {
                 revalidate: false,
                 populateCache: true,
             });
         }
-    }, [key, response.data, response.mutate, storageKey, storageTtlMs]);
+    }, [key, mutate, responseData, storageKey, storageTtlMs]);
 
     useEffect(() => {
-        if (!storageKey || response.data === undefined) {
+        if (!storageKey || responseData === undefined) {
             return;
         }
 
@@ -110,9 +111,9 @@ export function usePersistentSWR<T>(
             return;
         }
 
-        writePersistedValue(storageKey, response.data);
+        writePersistedValue(storageKey, responseData);
         lastPersistAtRef.current = now;
-    }, [persistIntervalMs, response.data, storageKey]);
+    }, [persistIntervalMs, responseData, storageKey]);
 
     return response;
 }

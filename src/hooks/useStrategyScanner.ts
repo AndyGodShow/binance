@@ -12,16 +12,7 @@ const STORED_SIGNALS_STORAGE_KEY = 'strategySignals';
 const STRONG_BREAKOUT_ID = 'strong-breakout';
 
 type DismissedSignalMap = Record<string, number>;
-type SignalStats = {
-    total: number;
-    activeCount: number;
-    snapshotCount: number;
-    coolingCount: number;
-    longCount: number;
-    shortCount: number;
-    superSignals: number;
-    strongSignals: number;
-};
+
 
 const STATUS_PRIORITY: Record<StrategySignalStatus, number> = {
     active: 2,
@@ -265,7 +256,6 @@ export function useStrategyScanner(data: TickerData[]) {
                 momentumValue: ticker.momentumValue,
                 momentumColor: ticker.momentumColor,
                 adx: ticker.adx,
-                adxSlope: ticker.adxSlope,
                 bandwidthPercentile: ticker.bandwidthPercentile,
             });
 
@@ -400,8 +390,6 @@ export function useStrategyScanner(data: TickerData[]) {
             .slice(0, MAX_SIGNAL_COUNT);
 
         signalsRef.current = nextSignals;
-        // 扫描结果需要落到状态里驱动 UI，这是本 hook 的主职责。
-        // eslint-disable-next-line react-hooks/set-state-in-effect
         setSignals(nextSignals);
         hasCompletedInitialScan.current = true;
         };
@@ -434,19 +422,7 @@ export function useStrategyScanner(data: TickerData[]) {
         return [...signals].sort(compareSignals);
     }, [signals]);
 
-    // 统计数据
-    const stats = useMemo<SignalStats>(() => {
-        const total = signals.length;
-        const activeCount = signals.filter(s => (s.status ?? 'active') === 'active').length;
-        const snapshotCount = signals.filter(s => s.status === 'snapshot').length;
-        const coolingCount = signals.filter(s => s.status === 'cooling').length;
-        const longCount = signals.filter(s => s.direction === 'long').length;
-        const shortCount = signals.filter(s => s.direction === 'short').length;
-        const superSignals = signals.filter(s => (s.stackCount || 0) >= 3).length;
-        const strongSignals = signals.filter(s => (s.stackCount || 0) === 2).length;
 
-        return { total, activeCount, snapshotCount, coolingCount, longCount, shortCount, superSignals, strongSignals };
-    }, [signals]);
 
     const dismissSignal = (signal: StrategySignal) => {
         const nextDismissedSignals = {
@@ -474,7 +450,6 @@ export function useStrategyScanner(data: TickerData[]) {
 
     return {
         signals: sortedSignals,
-        stats,
         dismissSignal,
         clearAll,
     };

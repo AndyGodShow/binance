@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { TickerData, ScheduledAlertRecord, FundingRateItem } from '@/lib/types';
+import { TickerData, ScheduledAlertRecord } from '@/lib/types';
+import { buildFundingRateAlert } from '@/lib/scheduledAlerts';
 
 export function useScheduledAlerts(data: TickerData[], enabled: boolean, config?: { enableSound: boolean; enableNotification: boolean }) {
     const [scheduledAlerts, setScheduledAlerts] = useState<ScheduledAlertRecord[]>([]);
@@ -13,34 +14,14 @@ export function useScheduledAlerts(data: TickerData[], enabled: boolean, config?
         dataRef.current = data;
     }, [data]);
 
-    const triggerFundingRateAlert = useCallback(() => {
+    const triggerFundingRateAlert = useCallback((): boolean => {
         const currentData = dataRef.current;
-        if (currentData.length === 0) return;
+        const timestamp = Date.now();
+        const alert = buildFundingRateAlert(currentData, timestamp);
 
-        // 过滤并排序获取TOP3正负费率
-        const validData = currentData.filter(t => t.fundingRate && parseFloat(t.fundingRate) !== 0);
-
-        const sorted = [...validData].sort((a, b) =>
-            parseFloat(b.fundingRate || '0') - parseFloat(a.fundingRate || '0')
-        );
-
-        const topPositive: FundingRateItem[] = sorted.slice(0, 3).map(t => ({
-            symbol: t.symbol,
-            fundingRate: parseFloat(t.fundingRate || '0')
-        }));
-
-        const topNegative: FundingRateItem[] = sorted.slice(-3).reverse().map(t => ({
-            symbol: t.symbol,
-            fundingRate: parseFloat(t.fundingRate || '0')
-        }));
-
-        const alert: ScheduledAlertRecord = {
-            id: `scheduled-${Date.now()}`,
-            type: 'funding-rate',
-            timestamp: Date.now(),
-            topPositive,
-            topNegative,
-        };
+        if (!alert) {
+            return false;
+        }
 
         setScheduledAlerts(prev => [alert, ...prev.slice(0, 9)]);
         if (config?.enableNotification !== false) {
@@ -49,40 +30,43 @@ export function useScheduledAlerts(data: TickerData[], enabled: boolean, config?
         if (config?.enableSound !== false) {
             playAlertSound();
         }
+        return true;
     }, [config?.enableNotification, config?.enableSound]);
+
+    const checkSchedule = useCallback(() => {
+        const now = new Date();
+        const minutes = now.getMinutes();
+        const halfHourOffsetMinutes = minutes % 30;
+        const withinTriggerWindow = halfHourOffsetMinutes < 2;
+
+        if (!withinTriggerWindow) {
+            return;
+        }
+
+        const slotMinute = minutes - halfHourOffsetMinutes;
+        const dateKey = now.getFullYear() * 10000 + (now.getMonth() + 1) * 100 + now.getDate();
+        const slotIdentifier = dateKey * 10000 + now.getHours() * 100 + slotMinute;
+
+        if (lastTriggeredRef.current !== slotIdentifier && triggerFundingRateAlert()) {
+            lastTriggeredRef.current = slotIdentifier;
+        }
+    }, [triggerFundingRateAlert]);
 
     useEffect(() => {
         if (!enabled) return;
 
-        const checkSchedule = () => {
-            const now = new Date();
-            const minutes = now.getMinutes();
-            const seconds = now.getSeconds();
-
-            // 在整点或半点的前10秒内触发（加大窗口，防止错过）
-            if ((minutes === 0 || minutes === 30) && seconds < 10) {
-                const dateKey = now.getFullYear() * 10000 + (now.getMonth() + 1) * 100 + now.getDate();
-                const currentIdentifier = dateKey * 10000 + now.getHours() * 100 + minutes;
-                if (lastTriggeredRef.current !== currentIdentifier) {
-                    lastTriggeredRef.current = currentIdentifier;
-                    triggerFundingRateAlert();
-                }
-            }
-        };
+        checkSchedule();
 
         const interval = setInterval(checkSchedule, 1000);
         return () => clearInterval(interval);
-    }, [enabled, triggerFundingRateAlert]); // 不再依赖 data 和 lastTriggeredMinute
-
-
-
-    const dismissAlert = (id: string) => {
+    }, [checkSchedule, enabled]);
+    const dismissAlert = useCallback((id: string) => {
         setScheduledAlerts(prev => prev.filter(a => a.id !== id));
-    };
+    }, []);
 
-    const clearAll = () => {
+    const clearAll = useCallback(() => {
         setScheduledAlerts([]);
-    };
+    }, []);
 
     return {
         scheduledAlerts,

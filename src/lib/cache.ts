@@ -137,20 +137,6 @@ export class LRUCache<T> {
         return cleaned;
     }
 
-    /**
-     * 获取缓存统计信息
-     */
-    getStats(): {
-        size: number;
-        maxSize: number;
-        utilizationPercent: number;
-    } {
-        return {
-            size: this.cache.size,
-            maxSize: this.maxSize,
-            utilizationPercent: (this.cache.size / this.maxSize) * 100
-        };
-    }
 }
 
 // 导出全局K线缓存实例

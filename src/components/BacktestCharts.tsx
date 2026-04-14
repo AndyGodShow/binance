@@ -18,6 +18,19 @@ import {
 import { EquityPoint, Trade } from '@/lib/backtestEngine';
 import styles from './BacktestCharts.module.css';
 
+function formatHoldingTimeTooltip(
+    value: unknown,
+    _name: unknown,
+    item: { payload?: { percentage?: string } }
+): [string, string] {
+    const count = Number(value ?? 0);
+    if (!Number.isFinite(count) || count <= 0) {
+        return ['', ''];
+    }
+
+    return [`${count} 笔 (${item.payload?.percentage || 0}%)`, '交易'];
+}
+
 interface EquityCurveChartProps {
     data: EquityPoint[];
     trades: Trade[];
@@ -283,10 +296,7 @@ export function HoldingTimeChart({ trades }: HoldingTimeChartProps) {
                             borderRadius: '8px',
                             color: '#fff'
                         }}
-                        formatter={((value: any, _name: any, props: any) => {
-                            if (!value) return ['', ''];
-                            return [`${value} 笔 (${props.payload?.percentage || 0}%)`, '交易'];
-                        }) as any}
+                        formatter={formatHoldingTimeTooltip}
                     />
                     <Bar dataKey="count" fill="#3b82f6" name="交易次数" animationDuration={1000} />
                 </BarChart>

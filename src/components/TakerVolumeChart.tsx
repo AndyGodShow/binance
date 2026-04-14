@@ -38,6 +38,16 @@ function formatVolume(vol: number): string {
     return vol.toFixed(0);
 }
 
+function formatTakerVolumeTooltip(value: unknown, name: unknown): [string, string] {
+    if (name === 'net') {
+        return [formatVolume(Number(value ?? 0)), '净买入量'];
+    }
+    if (name === 'cvd') {
+        return [formatVolume(Number(value ?? 0)), 'CVD 累计'];
+    }
+    return [String(value ?? '-'), String(name ?? '-')];
+}
+
 export default function TakerVolumeChart({ title, subtitle, data, period }: TakerVolumeChartProps) {
     const currentRatio = data.length > 0 ? data[data.length - 1].ratio : 0;
     const currentBuy = data.length > 0 ? data[data.length - 1].buyVol : 0;
@@ -51,10 +61,12 @@ export default function TakerVolumeChart({ title, subtitle, data, period }: Take
 
     // Build chart data with net volume + CVD
     const chartData = useMemo(() => {
-        let cvd = 0;
-        return data.map(d => {
+        return data.map((d, index) => {
             const net = d.buyVol - d.sellVol;
-            cvd += net;
+            const previousCvd = index > 0 ? data
+                .slice(0, index)
+                .reduce((sum, item) => sum + (item.buyVol - item.sellVol), 0) : 0;
+            const cvd = previousCvd + net;
             return {
                 time: formatTime(d.ts, period),
                 net,
@@ -155,12 +167,7 @@ export default function TakerVolumeChart({ title, subtitle, data, period }: Take
                                 fontSize: 12,
                                 color: '#EAECEF',
                             }}
-                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                            formatter={((value: any, name: any) => {
-                                if (name === 'net') return [`${formatVolume(Number(value))}`, '净买入量'];
-                                if (name === 'cvd') return [`${formatVolume(Number(value))}`, 'CVD 累计'];
-                                return [value, name];
-                            }) as any}
+                            formatter={formatTakerVolumeTooltip}
                             labelStyle={{ color: '#848E9C' }}
                         />
                         <ReferenceLine yAxisId="net" y={0} stroke="#474D57" />

@@ -10,6 +10,18 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const isServerless = !!(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.SERVERLESS);
 
 export type DataType = 'metrics' | 'fundingRate';
+export type FormattedMetricData = {
+    timestamp: number;
+    openInterest: string;
+    openInterestValue: string;
+};
+
+export type FormattedFundingRateData = {
+    fundingTime: number;
+    fundingRate: string;
+};
+
+type FormattedData = FormattedMetricData | FormattedFundingRateData;
 
 function parseUtcDateString(date: string): number {
     const match = date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -176,13 +188,15 @@ export class DataCollector {
     /**
      * Read parsed data from local storage
      */
-    async getFormattedData(symbol: string, type: DataType, startTime: number, endTime: number): Promise<any[]> {
+    async getFormattedData(symbol: string, type: 'metrics', startTime: number, endTime: number): Promise<FormattedMetricData[]>;
+    async getFormattedData(symbol: string, type: 'fundingRate', startTime: number, endTime: number): Promise<FormattedFundingRateData[]>;
+    async getFormattedData(symbol: string, type: DataType, startTime: number, endTime: number): Promise<FormattedData[]> {
         if (isServerless) return [];
         const symbolDir = path.join(this.dataDir, symbol.toUpperCase(), type);
         if (!fs.existsSync(symbolDir)) return [];
 
         const files = fs.readdirSync(symbolDir).filter(f => f.endsWith('.csv'));
-        let allData: any[] = [];
+        const allData: FormattedData[] = [];
 
         for (const file of files) {
             // Check if file date is within range (optimization)
@@ -244,7 +258,11 @@ export class DataCollector {
             }
         }
 
-        return allData.sort((a, b) => (a.timestamp || a.fundingTime) - (b.timestamp || b.fundingTime));
+        return allData.sort((a, b) => {
+            const leftTime = 'timestamp' in a ? a.timestamp : a.fundingTime;
+            const rightTime = 'timestamp' in b ? b.timestamp : b.fundingTime;
+            return leftTime - rightTime;
+        });
     }
 }
 

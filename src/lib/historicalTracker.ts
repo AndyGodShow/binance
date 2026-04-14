@@ -130,25 +130,16 @@ class HistoricalDataTracker {
         }, this.cleanupIntervalMs);
     }
 
-    /**
-     * 停止自动清理（用于测试或清理资源）
-     */
-    stopAutoCleanup(): void {
-        if (this.cleanupInterval) {
-            clearInterval(this.cleanupInterval);
-            this.cleanupInterval = null;
-        }
-    }
-
-    /**
-     * 获取当前历史记录数量（调试用）
-     */
-    getSize(): number {
-        return this.history.size;
-    }
 }
 
+type HistoricalTrackerGlobal = typeof globalThis & {
+    __historicalTracker?: HistoricalDataTracker;
+    __historicalTrackerCleanupStarted?: boolean;
+};
+
+const historicalTrackerGlobal = globalThis as HistoricalTrackerGlobal;
+
 // 单例导出：使用 globalThis 防止 Next.js 热重载导致多个实例堆积死锁
-export const historicalTracker = 
-    (globalThis as any).__historicalTracker || 
-    ((globalThis as any).__historicalTracker = new HistoricalDataTracker());
+export const historicalTracker =
+    historicalTrackerGlobal.__historicalTracker ||
+    (historicalTrackerGlobal.__historicalTracker = new HistoricalDataTracker());

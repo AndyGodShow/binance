@@ -77,43 +77,6 @@ class CooldownManager {
         }, this.cleanupIntervalMs);
     }
 
-    /**
-     * 停止自动清理（用于测试或清理资源）
-     */
-    stopAutoCleanup(): void {
-        if (this.cleanupInterval) {
-            clearInterval(this.cleanupInterval);
-            this.cleanupInterval = null;
-        }
-    }
-
-    /**
-     * 获取当前cooldown记录数量（调试用）
-     */
-    getSize(): number {
-        return this.cooldowns.size;
-    }
-
-    /**
-     * 清空所有记录
-     */
-    clear(): void {
-        this.cooldowns.clear();
-    }
-
-    /**
-     * 快照当前冷却状态（用于回测隔离）
-     */
-    snapshot(): Map<string, number> {
-        return new Map(this.cooldowns);
-    }
-
-    /**
-     * 恢复之前的冷却状态（用于回测结束后还原实时扫描环境）
-     */
-    restore(snapshot: Map<string, number>): void {
-        this.cooldowns = new Map(snapshot);
-    }
 }
 
 // 单例导出

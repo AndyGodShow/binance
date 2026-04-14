@@ -34,7 +34,130 @@ interface BinanceFetchOptions {
     init?: NextFetchInit;
 }
 
-const MIRROR_STAGGER_MS = 250;
+const BINANCE_RETRY_ROUNDS = 2;
+const BINANCE_RETRY_BACKOFF_MS = 500;
+const BINANCE_FAILOVER_DELAY_MS = 150;
+const RETRYABLE_HTTP_STATUSES = new Set([408, 409, 418, 425, 429, 500, 502, 503, 504]);
+
+interface NormalizedBinanceError {
+    message: string;
+    retryable: boolean;
+}
+
+function sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetryableBinanceErrorMessage(message: string): boolean {
+    const normalized = message.toLowerCase();
+    const httpStatusMatch = normalized.match(/http (\d{3})/);
+    if (httpStatusMatch) {
+        const status = Number.parseInt(httpStatusMatch[1], 10);
+        if (RETRYABLE_HTTP_STATUSES.has(status)) {
+            return true;
+        }
+        if (status >= 400 && status < 500) {
+            return false;
+        }
+    }
+
+    return [
+        'fetch failed',
+        'econnreset',
+        'timed out',
+        'timeout',
+        'socket',
+        'tls connection',
+        'eai_again',
+        'enotfound',
+        'terminated',
+        'invalid json',
+    ].some((pattern) => normalized.includes(pattern));
+}
+
+function normalizeBinanceError(error: unknown): NormalizedBinanceError {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+        message,
+        retryable: isRetryableBinanceErrorMessage(message),
+    };
+}
+
+function getScheduledBases(candidateBases: string[]): string[] {
+    return candidateBases.map((_, offset) =>
+        candidateBases[(preferredBaseIndex + offset) % candidateBases.length]
+    );
+}
+
+function getRetryBackoffMs(round: number, errors: NormalizedBinanceError[]): number {
+    const hitRateLimit = errors.some((error) => /http (418|429)\b/i.test(error.message));
+    const baseDelay = hitRateLimit ? 2000 : BINANCE_RETRY_BACKOFF_MS;
+    return baseDelay * (round + 1);
+}
+
+async function runMirroredRequest<T>(
+    path: string,
+    options: BinanceFetchOptions,
+    requestKind: 'response' | 'json',
+    executor: (url: string, init: NextFetchInit) => Promise<T>
+): Promise<T> {
+    const candidateBases = getCandidateBases(path);
+    const collectedErrors: string[] = [];
+
+    for (let round = 0; round < BINANCE_RETRY_ROUNDS; round += 1) {
+        const roundErrors: NormalizedBinanceError[] = [];
+        const scheduledBases = getScheduledBases(candidateBases);
+
+        for (let baseIndex = 0; baseIndex < scheduledBases.length; baseIndex += 1) {
+            const base = scheduledBases[baseIndex];
+            const url = `${base}${path}`;
+
+            try {
+                const init = buildAttemptInit(options);
+                const result = await executor(url, init);
+
+                const winningIndex = candidateBases.indexOf(base);
+                if (winningIndex >= 0) {
+                    preferredBaseIndex = winningIndex;
+                }
+
+                return result;
+            } catch (error) {
+                const normalized = normalizeBinanceError(error);
+                roundErrors.push(normalized);
+
+                if (baseIndex < scheduledBases.length - 1) {
+                    await sleep(BINANCE_FAILOVER_DELAY_MS);
+                }
+            }
+        }
+
+        collectedErrors.push(...roundErrors.map((error) => `round${round + 1}:${error.message}`));
+        const shouldRetry = round < BINANCE_RETRY_ROUNDS - 1 && roundErrors.some((error) => error.retryable);
+
+        if (shouldRetry) {
+            logger.warn('Binance base round failed, retrying', {
+                path,
+                requestKind,
+                round: round + 1,
+                errors: roundErrors.map((error) => error.message),
+            });
+            await sleep(getRetryBackoffMs(round, roundErrors));
+            continue;
+        }
+
+        break;
+    }
+
+    const errorMessage = collectedErrors.join(' | ') || `Unknown Binance ${requestKind} error`;
+    if (requestKind === 'json') {
+        logger.error('All Binance JSON endpoints failed', new Error(errorMessage), { path });
+        throw new Error(`All Binance JSON endpoints failed for ${path}`);
+    }
+
+    logger.error('All Binance endpoints failed', new Error(errorMessage), { path });
+    throw new Error(`All Binance endpoints failed for ${path}`);
+}
 
 function buildAttemptInit(options: BinanceFetchOptions, signal?: AbortSignal): NextFetchInit {
     const { revalidate, timeoutMs = 8000, init } = options;
@@ -71,97 +194,27 @@ function getCandidateBases(path: string): string[] {
 }
 
 export async function fetchBinance(path: string, options: BinanceFetchOptions = {}): Promise<Response> {
-    const errors: string[] = [];
-    const candidateBases = getCandidateBases(path);
-    const sharedAbort = new AbortController();
-    const scheduledBases = candidateBases.map((_, offset) =>
-        candidateBases[(preferredBaseIndex + offset) % candidateBases.length]
-    );
-
-    const attempts = scheduledBases.map((base, offset) => (async () => {
-        if (offset > 0) {
-            await new Promise((resolve) => setTimeout(resolve, offset * MIRROR_STAGGER_MS));
+    return runMirroredRequest(path, options, 'response', async (url, init) => {
+        const response = await fetch(url, init);
+        if (!response.ok) {
+            throw new Error(`${url} -> HTTP ${response.status}`);
         }
-
-        if (sharedAbort.signal.aborted) {
-            throw new Error('Cancelled after another mirror succeeded');
-        }
-
-        const url = `${base}${path}`;
-        const init = buildAttemptInit(options, sharedAbort.signal);
-        const res = await fetch(url, init);
-        if (!res.ok) {
-            throw new Error(`${url} -> HTTP ${res.status}`);
-        }
-
-        const winningIndex = candidateBases.indexOf(base);
-        if (winningIndex >= 0) {
-            preferredBaseIndex = winningIndex;
-        }
-        sharedAbort.abort();
-        return res;
-    })().catch((error) => {
-        const message = error instanceof Error ? error.message : String(error);
-        errors.push(message);
-        throw error;
-    }));
-
-    try {
-        return await Promise.any(attempts);
-    } catch {
-        logger.error('All Binance endpoints failed', new Error(errors.join(' | ')), { path });
-        throw new Error(`All Binance endpoints failed for ${path}`);
-    }
+        return response;
+    });
 }
 
 export async function fetchBinanceJson<T>(path: string, options: BinanceFetchOptions = {}): Promise<T> {
-    const errors: string[] = [];
-    const candidateBases = getCandidateBases(path);
-    const sharedAbort = new AbortController();
-    const scheduledBases = candidateBases.map((_, offset) =>
-        candidateBases[(preferredBaseIndex + offset) % candidateBases.length]
-    );
-
-    const attempts = scheduledBases.map((base, offset) => (async () => {
-        if (offset > 0) {
-            await new Promise((resolve) => setTimeout(resolve, offset * MIRROR_STAGGER_MS));
+    return runMirroredRequest(path, options, 'json', async (url, init) => {
+        const response = await fetch(url, init);
+        if (!response.ok) {
+            throw new Error(`${url} -> HTTP ${response.status}`);
         }
 
-        if (sharedAbort.signal.aborted) {
-            throw new Error('Cancelled after another mirror succeeded');
-        }
-
-        const url = `${base}${path}`;
-        const init = buildAttemptInit(options, sharedAbort.signal);
-        const res = await fetch(url, init);
-        if (!res.ok) {
-            throw new Error(`${url} -> HTTP ${res.status}`);
-        }
-
-        let json: T;
         try {
-            json = await res.json() as T;
+            return await response.json() as T;
         } catch (parseError) {
             const message = parseError instanceof Error ? parseError.message : String(parseError);
             throw new Error(`${url} -> invalid JSON (${message})`);
         }
-
-        const winningIndex = candidateBases.indexOf(base);
-        if (winningIndex >= 0) {
-            preferredBaseIndex = winningIndex;
-        }
-        sharedAbort.abort();
-        return json;
-    })().catch((error) => {
-        const message = error instanceof Error ? error.message : String(error);
-        errors.push(message);
-        throw error;
-    }));
-
-    try {
-        return await Promise.any(attempts);
-    } catch {
-        logger.error('All Binance JSON endpoints failed', new Error(errors.join(' | ')), { path });
-        throw new Error(`All Binance JSON endpoints failed for ${path}`);
-    }
+    });
 }

@@ -2,7 +2,7 @@
 
 import styles from './TabNavigation.module.css';
 
-type TabType = 'dashboard' | 'longshort' | 'strategies' | 'trading';
+type TabType = 'dashboard' | 'watchlists' | 'longshort' | 'onchain' | 'strategies' | 'trading';
 
 interface TabNavigationProps {
     activeTab: TabType;
@@ -19,10 +19,22 @@ export default function TabNavigation({ activeTab, onChange }: TabNavigationProp
                 📊 数据面板
             </button>
             <button
+                className={`${styles.tabBtn} ${activeTab === 'watchlists' ? styles.active : ''}`}
+                onClick={() => onChange('watchlists')}
+            >
+                🗂️ 自选名单
+            </button>
+            <button
                 className={`${styles.tabBtn} ${activeTab === 'longshort' ? styles.active : ''}`}
                 onClick={() => onChange('longshort')}
             >
                 📈 多空比
+            </button>
+            <button
+                className={`${styles.tabBtn} ${activeTab === 'onchain' ? styles.active : ''}`}
+                onClick={() => onChange('onchain')}
+            >
+                ⛓️ 链上追踪
             </button>
             <button
                 className={`${styles.tabBtn} ${activeTab === 'strategies' ? styles.active : ''}`}

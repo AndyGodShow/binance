@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { dataCollector } from '@/lib/services/dataCollector';
 import { fetchBinanceJson } from '@/lib/binanceApi';
 import { fetchCoinalyzeOpenInterestHistory } from '@/lib/coinalyze';
+import { logger } from '@/lib/logger';
 
 export const dynamic = 'force-dynamic';
 
@@ -97,8 +98,33 @@ interface FundingMergeResult {
     diagnostics: FundingDiagnostics;
 }
 
+interface EmptyAuxiliaryDiagnostics {
+    openInterest: OpenInterestDiagnostics;
+    fundingRate: FundingDiagnostics;
+}
+
 const OI_MAX_LIMIT = 500;
 const OI_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+
+function buildEmptyAuxiliaryDiagnostics(startTs: number, endTs: number): EmptyAuxiliaryDiagnostics {
+    return {
+        openInterest: {
+            source: 'none',
+            localPoints: 0,
+            apiPoints: 0,
+            coinalyzePoints: 0,
+            mergedPoints: 0,
+            requestedStartTime: startTs,
+            requestedEndTime: endTs,
+        },
+        fundingRate: {
+            points: 0,
+            exactMatches: 0,
+            forwardFilledMatches: 0,
+            missingMatches: 0,
+        },
+    };
+}
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null;
@@ -340,162 +366,172 @@ export async function GET(req: NextRequest) {
             }));
 
         if (!includeAuxiliary) {
+            const diagnostics = buildEmptyAuxiliaryDiagnostics(
+                startTime ? parseInt(startTime, 10) : 0,
+                endTime ? parseInt(endTime, 10) : Date.now()
+            );
+
             return NextResponse.json({
                 symbol,
                 interval,
                 count: klines.length,
                 data: klines,
-                diagnostics: {
-                    openInterest: {
-                        source: 'none',
-                        localPoints: 0,
-                        apiPoints: 0,
-                        coinalyzePoints: 0,
-                        mergedPoints: 0,
-                        requestedStartTime: startTime ? parseInt(startTime, 10) : 0,
-                        requestedEndTime: endTime ? parseInt(endTime, 10) : Date.now(),
-                    },
-                },
+                diagnostics,
             });
         }
 
         // 2. 获取持仓量数据 (优先本地，失败则降级到 API)
         const startTs = startTime ? parseInt(startTime) : Date.now() - 30 * 24 * 60 * 60 * 1000;
         const endTs = endTime ? parseInt(endTime) : Date.now();
+        try {
+            // 尝试从本地仓库读取 Metrics
+            const localOiPromise = dataCollector.getFormattedData(symbol!, 'metrics', startTs, endTs)
+                .catch(err => { console.warn('Local OI fetch failed:', err); return []; });
 
-        // 尝试从本地仓库读取 Metrics
-        const localOiPromise = dataCollector.getFormattedData(symbol!, 'metrics', startTs, endTs)
-            .catch(err => { console.warn('Local OI fetch failed:', err); return []; });
-
-        // API 降级方案 (仅最近30天)
-        const supportedOIIntervals = ['5m', '15m', '30m', '1h', '2h', '4h', '6h', '12h', '1d'];
-        let oiPeriod = interval;
-        if (!supportedOIIntervals.includes(interval)) {
-            if (['1m', '3m'].includes(interval)) oiPeriod = '5m';
-            else oiPeriod = '';
-        }
-        const lookbackStartTime = (() => {
-            const periodMs = oiPeriod ? getOpenInterestPeriodMs(oiPeriod) : null;
-            if (!periodMs) {
-                return startTs;
+            // API 降级方案 (仅最近30天)
+            const supportedOIIntervals = ['5m', '15m', '30m', '1h', '2h', '4h', '6h', '12h', '1d'];
+            let oiPeriod = interval;
+            if (!supportedOIIntervals.includes(interval)) {
+                if (['1m', '3m'].includes(interval)) oiPeriod = '5m';
+                else oiPeriod = '';
             }
+            const lookbackStartTime = (() => {
+                const periodMs = oiPeriod ? getOpenInterestPeriodMs(oiPeriod) : null;
+                if (!periodMs) {
+                    return startTs;
+                }
 
-            // 多向前拉两个周期，避免区间起点附近没有 <= closeTime 的 OI 点而误判为缺失。
-            return Math.max(0, startTs - (periodMs * 2));
-        })();
+                // 多向前拉两个周期，避免区间起点附近没有 <= closeTime 的 OI 点而误判为缺失。
+                return Math.max(0, startTs - (periodMs * 2));
+            })();
 
-        const apiOiPromise = oiPeriod
-            ? fetchOpenInterestHistory(symbol!, oiPeriod, String(lookbackStartTime), endTime || undefined).catch(() => [])
-            : Promise.resolve([]);
+            const apiOiPromise = oiPeriod
+                ? fetchOpenInterestHistory(symbol!, oiPeriod, String(lookbackStartTime), endTime || undefined).catch(() => [])
+                : Promise.resolve([]);
 
-        // 3. 获取资金费率数据 (优先本地，失败则降级到 API)
-        const localFundingPromise = dataCollector.getFormattedData(symbol!, 'fundingRate', startTs, endTs)
-            .catch(err => { console.warn('Local Funding fetch failed:', err); return []; });
+            // 3. 获取资金费率数据 (优先本地，失败则降级到 API)
+            const localFundingPromise = dataCollector.getFormattedData(symbol!, 'fundingRate', startTs, endTs)
+                .catch(err => { console.warn('Local Funding fetch failed:', err); return []; });
 
-        const apiFundingPromise = startTime
-            ? fetchFundingRate(symbol!, startTime, endTime || undefined).catch(() => [])
-            : Promise.resolve([]);
+            const apiFundingPromise = startTime
+                ? fetchFundingRate(symbol!, startTime, endTime || undefined).catch(() => [])
+                : Promise.resolve([]);
 
-        const [localOi, apiOi, localFunding, apiFunding] = await Promise.all([
-            localOiPromise,
-            apiOiPromise,
-            localFundingPromise,
-            apiFundingPromise
-        ]);
+            const [localOi, apiOi, localFunding, apiFunding] = await Promise.all([
+                localOiPromise,
+                apiOiPromise,
+                localFundingPromise,
+                apiFundingPromise
+            ]);
 
-        // 数据合并策略: 优先使用 Local，如果是空的或者覆盖不全，尝试用 API 补全
-        // 简单处理：如果 Local 有数据，使用 Local；否则使用 API。
-        // 更高级处理可以去重合并，这里暂且优先 Local。
-        const fundingMerge = mergeFundingData(localFunding, apiFunding);
+            // 数据合并策略: 优先使用 Local，如果是空的或者覆盖不全，尝试用 API 补全
+            // 简单处理：如果 Local 有数据，使用 Local；否则使用 API。
+            // 更高级处理可以去重合并，这里暂且优先 Local。
+            const fundingMerge = mergeFundingData(localFunding, apiFunding);
 
-        let normalizedCoinalyzeOiData: NormalizedOpenInterestPoint[] = [];
-        const oiPeriodMs = oiPeriod ? getOpenInterestPeriodMs(oiPeriod) : null;
-        const earliestKnownOiTimestamp = Math.min(
-            ...[
+            let normalizedCoinalyzeOiData: NormalizedOpenInterestPoint[] = [];
+            const oiPeriodMs = oiPeriod ? getOpenInterestPeriodMs(oiPeriod) : null;
+            const earliestKnownOiCandidates = [
                 localOi.filter(isLocalOpenInterestPoint)[0]?.timestamp,
                 apiOi.filter(isApiOpenInterestPoint)[0]?.timestamp,
-            ].filter((value): value is number => Number.isFinite(value))
-        );
+            ].filter((value): value is number => Number.isFinite(value));
+            const earliestKnownOiTimestamp = earliestKnownOiCandidates.length > 0
+                ? Math.min(...earliestKnownOiCandidates)
+                : Number.POSITIVE_INFINITY;
 
-        if (
-            startTime &&
-            oiPeriod &&
-            oiPeriodMs &&
-            startTs + oiPeriodMs < earliestKnownOiTimestamp
-        ) {
-            normalizedCoinalyzeOiData = await fetchCoinalyzeOpenInterestHistory(
-                symbol!,
-                oiPeriod,
+            if (
+                startTime &&
+                oiPeriod &&
+                oiPeriodMs &&
+                startTs + oiPeriodMs < earliestKnownOiTimestamp
+            ) {
+                normalizedCoinalyzeOiData = await fetchCoinalyzeOpenInterestHistory(
+                    symbol!,
+                    oiPeriod,
+                    startTs,
+                    endTs
+                );
+            }
+
+            const openInterestMerge = mergeOpenInterestData({
                 startTs,
-                endTs
-            );
-        }
+                endTs,
+                localOi,
+                apiOi,
+                coinalyzeOi: normalizedCoinalyzeOiData,
+            });
+            const normalizedOiData = openInterestMerge.entries;
+            const oiDiagnostics = openInterestMerge.diagnostics;
+            const normalizedFundingData = fundingMerge.entries;
 
-        const openInterestMerge = mergeOpenInterestData({
-            startTs,
-            endTs,
-            localOi,
-            apiOi,
-            coinalyzeOi: normalizedCoinalyzeOiData,
-        });
-        const normalizedOiData = openInterestMerge.entries;
-        const oiDiagnostics = openInterestMerge.diagnostics;
-        const normalizedFundingData = fundingMerge.entries;
+            // 合并 OI 和 Funding Rate
+            // 用顺序对齐代替逐根过滤，既避免 O(n²) 扫描，也能显式区分精确命中和前向填充。
+            const fallbackOiPeriodMs = getOpenInterestPeriodMs(interval);
+            const maxOiLagMs = (oiPeriodMs || fallbackOiPeriodMs || (60 * 60 * 1000)) * 2;
+            let fundingIndex = 0;
+            let oiIndex = 0;
 
-        // 合并 OI 和 Funding Rate
-        // 用顺序对齐代替逐根过滤，既避免 O(n²) 扫描，也能显式区分精确命中和前向填充。
-        const fallbackOiPeriodMs = getOpenInterestPeriodMs(interval);
-        const maxOiLagMs = (oiPeriodMs || fallbackOiPeriodMs || (60 * 60 * 1000)) * 2;
-        const fundingIntervalMs = 8 * 60 * 60 * 1000;
-        let fundingIndex = 0;
-        let oiIndex = 0;
-
-        klines.forEach((kline) => {
-            while (
-                fundingIndex + 1 < normalizedFundingData.length &&
-                normalizedFundingData[fundingIndex + 1].fundingTime <= kline.closeTime
-            ) {
-                fundingIndex += 1;
-            }
-            const fundingPoint = normalizedFundingData[fundingIndex];
-            if (fundingPoint && fundingPoint.fundingTime <= kline.closeTime) {
-                kline.fundingRate = fundingPoint.fundingRate;
-                const isExact = fundingPoint.fundingTime >= kline.openTime && fundingPoint.fundingTime <= kline.closeTime;
-                kline.fundingRateSource = isExact ? 'exact' : 'forward-fill';
-                if (isExact) {
-                    fundingMerge.diagnostics.exactMatches += 1;
-                } else {
-                    fundingMerge.diagnostics.forwardFilledMatches += 1;
+            klines.forEach((kline) => {
+                while (
+                    fundingIndex + 1 < normalizedFundingData.length &&
+                    normalizedFundingData[fundingIndex + 1].fundingTime <= kline.closeTime
+                ) {
+                    fundingIndex += 1;
                 }
-            } else {
-                fundingMerge.diagnostics.missingMatches += 1;
-            }
+                const fundingPoint = normalizedFundingData[fundingIndex];
+                if (fundingPoint && fundingPoint.fundingTime <= kline.closeTime) {
+                    kline.fundingRate = fundingPoint.fundingRate;
+                    const isExact = fundingPoint.fundingTime >= kline.openTime && fundingPoint.fundingTime <= kline.closeTime;
+                    kline.fundingRateSource = isExact ? 'exact' : 'forward-fill';
+                    if (isExact) {
+                        fundingMerge.diagnostics.exactMatches += 1;
+                    } else {
+                        fundingMerge.diagnostics.forwardFilledMatches += 1;
+                    }
+                } else {
+                    fundingMerge.diagnostics.missingMatches += 1;
+                }
 
-            while (
-                oiIndex + 1 < normalizedOiData.length &&
-                normalizedOiData[oiIndex + 1].timestamp <= kline.closeTime
-            ) {
-                oiIndex += 1;
-            }
-            const matchingOI = normalizedOiData[oiIndex];
-            if (matchingOI && kline.closeTime - matchingOI.timestamp <= maxOiLagMs) {
-                kline.openInterest = matchingOI.openInterest;
-                kline.openInterestValue = matchingOI.openInterestValue;
-                const isExact = isTimestampExactMatch(matchingOI.timestamp, kline.openTime, oiPeriodMs || fallbackOiPeriodMs);
-                kline.openInterestSource = isExact ? 'exact' : 'forward-fill';
-            }
-        });
+                while (
+                    oiIndex + 1 < normalizedOiData.length &&
+                    normalizedOiData[oiIndex + 1].timestamp <= kline.closeTime
+                ) {
+                    oiIndex += 1;
+                }
+                const matchingOI = normalizedOiData[oiIndex];
+                if (matchingOI && kline.closeTime - matchingOI.timestamp <= maxOiLagMs) {
+                    kline.openInterest = matchingOI.openInterest;
+                    kline.openInterestValue = matchingOI.openInterestValue;
+                    const isExact = isTimestampExactMatch(matchingOI.timestamp, kline.openTime, oiPeriodMs || fallbackOiPeriodMs);
+                    kline.openInterestSource = isExact ? 'exact' : 'forward-fill';
+                }
+            });
 
-        return NextResponse.json({
-            symbol,
-            interval,
-            count: klines.length,
-            data: klines,
-            diagnostics: {
-                openInterest: oiDiagnostics,
-                fundingRate: fundingMerge.diagnostics,
-            },
-        });
+            return NextResponse.json({
+                symbol,
+                interval,
+                count: klines.length,
+                data: klines,
+                diagnostics: {
+                    openInterest: oiDiagnostics,
+                    fundingRate: fundingMerge.diagnostics,
+                },
+            });
+        } catch (auxiliaryError) {
+            logger.warn('Backtest auxiliary data merge failed, returning core klines only', {
+                symbol,
+                interval,
+                error: auxiliaryError instanceof Error ? auxiliaryError.message : String(auxiliaryError),
+            });
+
+            return NextResponse.json({
+                symbol,
+                interval,
+                count: klines.length,
+                data: klines,
+                diagnostics: buildEmptyAuxiliaryDiagnostics(startTs, endTs),
+            });
+        }
 
     } catch (error) {
         console.error('获取K线数据失败:', error);

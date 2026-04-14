@@ -4,14 +4,19 @@
  */
 
 import { TickerData, OHLC } from '@/lib/types';
-import { getLatestATR, calculateBeta, calculateCorrelation, calculateReturns, extractClosePrices, getLatestEMAState } from '@/lib/indicators';
 import {
+    getLatestATR,
+    calculateBeta,
+    calculateCorrelation,
+    calculateReturns,
+    extractClosePrices,
+    getLatestEMAState,
     calculateBollingerBands,
     calculateKeltnerChannels,
     detectSqueeze,
     calculateMomentumHistogram,
     calculateADX,
-    calculateBandwidthPercentile
+    calculateBandwidthPercentile,
 } from '@/lib/indicators';
 import { calculateVolumeProfile } from '@/lib/volumeProfile';
 import { logger } from '@/lib/logger';

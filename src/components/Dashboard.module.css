@@ -5,6 +5,17 @@
     padding-bottom: 40px;
 }
 
+.scheduledAlertsContainer {
+    position: fixed;
+    top: 80px;
+    left: 20px;
+    z-index: 999;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    pointer-events: none;
+}
+
 .header {
     position: relative;
     display: grid;
@@ -186,6 +197,12 @@
     .dashboard {
         gap: 14px;
         padding-bottom: 32px;
+    }
+
+    .scheduledAlertsContainer {
+        top: 72px;
+        left: 12px;
+        right: 12px;
     }
 
     .header {

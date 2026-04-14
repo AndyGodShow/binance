@@ -3,11 +3,7 @@ import { fetchBinanceJson } from '@/lib/binanceApi';
 import { fetchCoinalyzeOpenInterestHistory } from '@/lib/coinalyze';
 import { logger } from '@/lib/logger';
 
-interface BinanceOpenInterestCurrentResponse {
-    openInterest?: string;
-    symbol?: string;
-    time?: number;
-}
+
 
 interface BinanceOpenInterestHistEntry {
     symbol: string;
@@ -22,13 +18,6 @@ interface HistoricalOpenInterestEntry {
     openInterestValue?: string;
 }
 
-export interface OpenInterestHistorySnapshot {
-    current: number;
-    oneHourAgo: number;
-    fourHoursAgo: number;
-    oneDayAgo: number;
-}
-
 export interface OpenInterestMarketSnapshot {
     symbol: string;
     currentOpenInterest?: string;
@@ -37,17 +26,16 @@ export interface OpenInterestMarketSnapshot {
     asOf: number;
 }
 
-const OI_HISTORY_PERIOD = '5m';
-const OI_HISTORY_1D_LIMIT = 289;
+
 const OI_MARKET_PERIOD = '4h';
 const OI_MARKET_LIMIT = 2;
 const OI_CACHE_TTL = 5 * 60 * 1000;
 
 const marketSnapshotCache = new LRUCache<OpenInterestMarketSnapshot>(1000, OI_CACHE_TTL);
-const historySnapshotCache = new LRUCache<OpenInterestHistorySnapshot>(500, OI_CACHE_TTL);
+
 
 const inflightMarketRequests = new Map<string, Promise<OpenInterestMarketSnapshot | null>>();
-const inflightHistoryRequests = new Map<string, Promise<OpenInterestHistorySnapshot>>();
+
 
 function isBinanceOpenInterestHistEntry(value: unknown): value is BinanceOpenInterestHistEntry {
     return typeof value === 'object' &&
@@ -78,13 +66,7 @@ function parseHistEntries(data: unknown): BinanceOpenInterestHistEntry[] {
         .sort((a, b) => a.timestamp - b.timestamp);
 }
 
-function normalizeOfficialHistEntries(entries: BinanceOpenInterestHistEntry[]): HistoricalOpenInterestEntry[] {
-    return entries.map((entry) => ({
-        timestamp: entry.timestamp,
-        openInterest: entry.sumOpenInterest,
-        openInterestValue: entry.sumOpenInterestValue,
-    }));
-}
+
 
 function findClosestAtOrBefore(
     entries: HistoricalOpenInterestEntry[],
@@ -99,23 +81,7 @@ function findClosestAtOrBefore(
     return entries[0] || null;
 }
 
-function buildHistorySnapshot(
-    entries: HistoricalOpenInterestEntry[],
-    currentValue?: string
-): OpenInterestHistorySnapshot {
-    const latestEntry = entries[entries.length - 1];
-    const referenceTimestamp = latestEntry.timestamp;
-    const oneHourEntry = findClosestAtOrBefore(entries, referenceTimestamp - 60 * 60 * 1000);
-    const fourHourEntry = findClosestAtOrBefore(entries, referenceTimestamp - 4 * 60 * 60 * 1000);
-    const oneDayEntry = findClosestAtOrBefore(entries, referenceTimestamp - 24 * 60 * 60 * 1000);
 
-    return {
-        current: Number(currentValue || latestEntry.openInterest),
-        oneHourAgo: Number(oneHourEntry?.openInterest || latestEntry.openInterest),
-        fourHoursAgo: Number(fourHourEntry?.openInterest || latestEntry.openInterest),
-        oneDayAgo: Number(oneDayEntry?.openInterest || latestEntry.openInterest),
-    };
-}
 
 function formatOpenInterestValue(openInterest: string | undefined, price: string | undefined, fallbackValue?: string): string | undefined {
     if (openInterest && price) {
@@ -140,81 +106,9 @@ function calculateChangePercent(currentValue: string, previousValue: string): nu
     return ((current - previous) / previous) * 100;
 }
 
-async function fetchOpenInterestCurrent(symbol: string): Promise<BinanceOpenInterestCurrentResponse | null> {
-    try {
-        return await fetchBinanceJson<BinanceOpenInterestCurrentResponse>(
-            `/fapi/v1/openInterest?symbol=${symbol.toUpperCase()}`,
-            { revalidate: 60 }
-        );
-    } catch (error) {
-        logger.warn('Failed to fetch current open interest, falling back to history point', {
-            symbol,
-            error: error instanceof Error ? error.message : String(error),
-        });
-        return null;
-    }
-}
 
-export async function fetchOpenInterestHistorySnapshot(symbol: string): Promise<OpenInterestHistorySnapshot> {
-    const normalizedSymbol = symbol.toUpperCase();
-    const cacheKey = `history:${normalizedSymbol}`;
-    const cached = historySnapshotCache.get(cacheKey);
-    if (cached) {
-        return cached;
-    }
 
-    const inflight = inflightHistoryRequests.get(cacheKey);
-    if (inflight) {
-        return inflight;
-    }
 
-    const request = (async () => {
-        let snapshot: OpenInterestHistorySnapshot | null = null;
-
-        try {
-            const [currentResponse, historyResponse] = await Promise.all([
-                fetchOpenInterestCurrent(normalizedSymbol),
-                fetchBinanceJson<unknown>(buildHistoryPath(normalizedSymbol, OI_HISTORY_PERIOD, OI_HISTORY_1D_LIMIT), { revalidate: 300 }),
-            ]);
-
-            const entries = normalizeOfficialHistEntries(parseHistEntries(historyResponse));
-            if (entries.length > 0) {
-                snapshot = buildHistorySnapshot(entries, currentResponse?.openInterest);
-            }
-        } catch (error) {
-            logger.warn('Failed to fetch official open interest snapshot, trying Coinalyze fallback', {
-                symbol: normalizedSymbol,
-                error: error instanceof Error ? error.message : String(error),
-            });
-        }
-
-        if (!snapshot) {
-            const fallbackEntries = await fetchCoinalyzeOpenInterestHistory(
-                normalizedSymbol,
-                OI_HISTORY_PERIOD,
-                Date.now() - 24 * 60 * 60 * 1000,
-                Date.now()
-            );
-
-            if (fallbackEntries.length === 0) {
-                throw new Error(`No open interest history available for ${normalizedSymbol}`);
-            }
-
-            snapshot = buildHistorySnapshot(fallbackEntries);
-        }
-
-        historySnapshotCache.set(cacheKey, snapshot, OI_CACHE_TTL);
-        return snapshot;
-    })();
-
-    inflightHistoryRequests.set(cacheKey, request);
-
-    try {
-        return await request;
-    } finally {
-        inflightHistoryRequests.delete(cacheKey);
-    }
-}
 
 export async function fetchOpenInterestMarketSnapshot(
     symbol: string,

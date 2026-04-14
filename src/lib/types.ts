@@ -15,7 +15,6 @@ export interface TickerData {
     markPrice?: string;
     fundingRate?: string;
     openInterest?: string;
-    openInterestAmount?: string; // value in USDT usually calculated or from API
     openInterestValue?: string; // added this
     change15m?: number;
     change1h?: number;
@@ -53,10 +52,8 @@ export interface TickerData {
 
     // 🔥 Advanced Technical Indicators
     atr?: number;                    // 平均真实波幅（波动率测量）
-    rollingStd?: number;             // 滚动标准差
     betaToBTC?: number;              // 相对 BTC 的 Beta 系数
     correlationToBTC?: number;       // 与 BTC 的相关系数
-    hurstExponent?: number;          // Hurst 指数（趋势强度）
 
     // CVD (Cumulative Volume Delta)
     cvd?: number;                    // 累计成交量差额
@@ -102,7 +99,6 @@ export interface TickerData {
 
     // ADX
     adx?: number;                          // 平均趋向指数
-    adxSlope?: number;                     // ADX 斜率
     plusDI?: number;                       // +DI
     minusDI?: number;                      // -DI
 
@@ -188,6 +184,20 @@ export interface ScheduledAlertRecord {
 export interface FundingRateItem {
     symbol: string;
     fundingRate: number;
+}
+
+export interface Watchlist {
+    id: string;
+    name: string;
+    symbols: string[];
+    note?: string;
+    createdAt: number;
+    updatedAt: number;
+}
+
+export interface WatchlistsState {
+    watchlists: Watchlist[];
+    activeWatchlistId: string | null;
 }
 
 // Long/Short Ratio Types

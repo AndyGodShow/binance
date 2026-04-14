@@ -27,9 +27,9 @@ export default function AlertNotification({ alerts, onDismiss, onClearAll, onSym
     // Auto-dismiss based on level
     const getAutoDismissTime = (level: AlertLevel): number => {
         switch (level) {
-            case 'info': return 3000;
-            case 'warning': return 5000;
-            case 'critical': return 8000;
+            case 'info': return 15000;
+            case 'warning': return 20000;
+            case 'critical': return 25000;
         }
     };
 

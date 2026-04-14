@@ -14,6 +14,10 @@ import {
 import { LongShortEntry } from '@/lib/types';
 import styles from './LongShortPanel.module.css';
 
+function formatRatioTooltipValue(value: unknown): [string, string] {
+    return [`${Number(value ?? 0).toFixed(4)}`, '多空比值'];
+}
+
 interface LongShortChartProps {
     title: string;
     subtitle: string;
@@ -124,11 +128,7 @@ export default function LongShortChart({ title, subtitle, data, period, accentCo
                                 fontSize: 12,
                                 color: '#EAECEF',
                             }}
-                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                            formatter={((value: any) => [
-                                `${Number(value ?? 0).toFixed(4)}`,
-                                '多空比值'
-                            ]) as any}
+                            formatter={formatRatioTooltipValue}
                             labelStyle={{ color: '#848E9C' }}
                         />
                         <ReferenceLine y={1} stroke="#F6465D" strokeDasharray="4 4" strokeWidth={1.5} label={{ value: '1.0', position: 'right', fill: '#848E9C', fontSize: 10 }} />

@@ -147,6 +147,7 @@ const MemoizedTableRow = memo(({ row, index, maxVolume, onSymbolClick }: TableRo
         prev.row.openInterestValue === next.row.openInterestValue
     );
 });
+MemoizedTableRow.displayName = 'MemoizedTableRow';
 
 const MemoizedMobileCard = memo(({ row, index, maxVolume, onSymbolClick }: TableRowProps) => {
     const quoteVol = parseFloat(row.quoteVolume);
@@ -240,6 +241,7 @@ const MemoizedMobileCard = memo(({ row, index, maxVolume, onSymbolClick }: Table
         prev.row.openInterestValue === next.row.openInterestValue
     );
 });
+MemoizedMobileCard.displayName = 'MemoizedMobileCard';
 
 function DataTable({
     data,

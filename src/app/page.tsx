@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect, useCallback, useDeferredValue } from 'react';
+import { useState, useMemo, useEffect, useCallback, useDeferredValue, useRef } from 'react';
 import { TickerData } from '@/lib/types';
 import { usePageVisibility } from '@/hooks/usePageVisibility';
 import { usePersistentSWR } from '@/hooks/usePersistentSWR';
@@ -8,10 +8,59 @@ import Dashboard from '@/components/Dashboard';
 import StrategyCenter from '@/components/StrategyCenter';
 import SimulatedTrading from '@/components/SimulatedTrading';
 import LongShortPanel from '@/components/LongShortPanel';
+import OnchainTracker from '@/components/OnchainTracker';
 import TabNavigation from '@/components/TabNavigation';
 import ChartDrawer from '@/components/ChartDrawer';
+import WatchlistsPanel from '@/components/WatchlistsPanel';
 import { useStrategyScanner } from '@/hooks/useStrategyScanner';
+import { useWatchlists } from '@/hooks/useWatchlists';
 import { formatPrice } from '@/lib/risk/priceUtils';
+import { StrategySignal } from '@/lib/strategyTypes';
+
+function createDemoSignals(now: number): StrategySignal[] {
+  return [
+    {
+      symbol: 'BTCUSDT',
+      strategyId: 'demo-breakout',
+      strategyName: '演示突破信号',
+      direction: 'long',
+      confidence: 96,
+      reason: '15m / 1h / 4h 同步转强，量能放大，作为演示信号注入。',
+      metrics: { momentum: 2.8, volumeRatio: 1.9 },
+      timestamp: now - 3 * 60 * 1000,
+      price: 108250,
+      status: 'active',
+      stackCount: 3,
+      stackedStrategies: ['演示突破信号', '量能共振', '短周期动量'],
+      comboBonus: 20,
+    },
+    {
+      symbol: 'ETHUSDT',
+      strategyId: 'demo-funding',
+      strategyName: '演示费率反转',
+      direction: 'short',
+      confidence: 89,
+      reason: '费率偏热且价格背离，作为演示做空信号展示。',
+      metrics: { fundingRate: 0.0009, divergence: 1.4 },
+      timestamp: now - 15 * 60 * 1000,
+      price: 5120,
+      status: 'snapshot',
+    },
+    {
+      symbol: 'SOLUSDT',
+      strategyId: 'demo-squeeze',
+      strategyName: '演示挤压释放',
+      direction: 'long',
+      confidence: 91,
+      reason: '波动挤压刚释放，信号已回落但保留供演示查看。',
+      metrics: { squeezeStrength: 0.82, adx: 27 },
+      timestamp: now - 45 * 60 * 1000,
+      lastSeenAt: now - 8 * 60 * 1000,
+      price: 228,
+      status: 'cooling',
+    },
+  ];
+}
 
 type MultiFrameDataMap = Record<string, { o15m: number; o1h: number; o4h: number }>;
 type RsrsDataMap = Record<string, {
@@ -40,6 +89,9 @@ type TimedPayload<T> = {
 const MAX_STRATEGY_MARKET_DATA_AGE_MS = 5 * 60 * 1000;
 const MAX_STRATEGY_FRAME_DATA_AGE_SECONDS = 20 * 60;
 const MAX_STRATEGY_RSRS_DATA_AGE_SECONDS = 6 * 60 * 60;
+const MULTIFRAME_BATCH_SIZE = 60;
+const MULTIFRAME_BATCH_DELAY_MS = 120;
+const DEMO_BASE_TIME = Date.UTC(2026, 3, 10, 10, 30, 0);
 
 function parseOptionalSeconds(value: string | null): number | undefined {
   if (!value) {
@@ -164,35 +216,70 @@ async function fetcherWithMeta<T>(url: string): Promise<TimedPayload<T>> {
 }
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'longshort' | 'strategies' | 'trading'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'watchlists' | 'longshort' | 'onchain' | 'strategies' | 'trading'>('dashboard');
+  const [dashboardWatchlistId, setDashboardWatchlistId] = useState('all');
   const isPageVisible = usePageVisibility();
   const [enableHeavyMarket, setEnableHeavyMarket] = useState(false);
   const [enableDeferredIndicators, setEnableDeferredIndicators] = useState(false);
+  const [framePayload, setFramePayload] = useState<TimedPayload<MultiFrameDataMap>>();
+  const [frameError, setFrameError] = useState<Error | null>(null);
+  const multiframeSymbolsRef = useRef<string[]>([]);
+  const [isDemoMode, setIsDemoMode] = useState(false);
+  const {
+    watchlists,
+    activeWatchlist,
+    addWatchlist,
+    updateWatchlistName,
+    removeWatchlist,
+    setActiveWatchlist,
+    addSymbol,
+    removeSymbol,
+  } = useWatchlists();
+
+  useEffect(() => {
+    if (dashboardWatchlistId === 'all') {
+      return;
+    }
+
+    const exists = watchlists.some((watchlist) => watchlist.id === dashboardWatchlistId);
+    if (!exists) {
+      setDashboardWatchlistId('all');
+    }
+  }, [dashboardWatchlistId, watchlists]);
 
   // Smart refresh: slower when page is hidden to save resources
   const fastMarketRefreshInterval = isPageVisible ? 3000 : 30000;
   const heavyMarketRefreshInterval = isPageVisible ? 30000 : 300000;
   const multiframeRefreshInterval = isPageVisible ? 30000 : 300000;
+  const shouldRunLiveMarketRequests = activeTab !== 'trading';
 
-  const { data: lightMarketData, error: marketError, isLoading: marketLoading } = usePersistentSWR<TickerData[]>('/api/market/light', fetcher, {
+  const { data: lightMarketData, error: marketError, isLoading: marketLoading } = usePersistentSWR<TickerData[]>(
+    shouldRunLiveMarketRequests ? '/api/market/light' : null,
+    shouldRunLiveMarketRequests ? fetcher : null,
+    {
     refreshInterval: fastMarketRefreshInterval,
     revalidateOnFocus: false,
     dedupingInterval: 2000,
     storageTtlMs: 10 * 60 * 1000,
     persistIntervalMs: 20 * 1000,
-  });
+    }
+  );
 
-  const { data: openInterestData } = usePersistentSWR<Record<string, string>>('/api/oi/all', fetcher, {
+  const { data: openInterestData } = usePersistentSWR<Record<string, string>>(
+    shouldRunLiveMarketRequests ? '/api/oi/all' : null,
+    shouldRunLiveMarketRequests ? fetcher : null,
+    {
     refreshInterval: isPageVisible ? 30000 : 300000,
     revalidateOnFocus: false,
     dedupingInterval: 15000,
     storageTtlMs: 10 * 60 * 1000,
     persistIntervalMs: 60 * 1000,
-  });
+    }
+  );
 
   const { data: heavyMarketPayload } = usePersistentSWR<TimedPayload<TickerData[]>>(
-    enableHeavyMarket ? '/api/market' : null,
-    enableHeavyMarket ? ((url: string) => fetcherWithMeta<TickerData[]>(url)) : null,
+    shouldRunLiveMarketRequests && enableHeavyMarket ? '/api/market' : null,
+    shouldRunLiveMarketRequests && enableHeavyMarket ? ((url: string) => fetcherWithMeta<TickerData[]>(url)) : null,
     {
       refreshInterval: heavyMarketRefreshInterval,
       revalidateOnFocus: false,
@@ -203,22 +290,9 @@ export default function Home() {
     }
   );
 
-  const { data: framePayload, error: frameError } = usePersistentSWR<TimedPayload<MultiFrameDataMap>>(
-    enableDeferredIndicators ? '/api/market/multiframe' : null,
-    enableDeferredIndicators ? ((url: string) => fetcherWithMeta<MultiFrameDataMap>(url)) : null,
-    {
-    refreshInterval: multiframeRefreshInterval,
-    revalidateOnFocus: false,
-    dedupingInterval: 15000,
-    storageTtlMs: 30 * 60 * 1000,
-    persistIntervalMs: 5 * 60 * 1000,
-    storageKey: 'persistent-swr:v2:/api/market/multiframe',
-    }
-  );
-
   const { data: rsrsPayload, error: rsrsError } = usePersistentSWR<TimedPayload<RsrsDataMap>>(
-    enableDeferredIndicators ? '/api/rsrs' : null,
-    enableDeferredIndicators ? ((url: string) => fetcherWithMeta<RsrsDataMap>(url)) : null,
+    shouldRunLiveMarketRequests && enableDeferredIndicators ? '/api/rsrs' : null,
+    shouldRunLiveMarketRequests && enableDeferredIndicators ? ((url: string) => fetcherWithMeta<RsrsDataMap>(url)) : null,
     {
     refreshInterval: 60 * 60 * 1000, // Refresh every hour
     revalidateOnFocus: false,
@@ -233,8 +307,36 @@ export default function Home() {
   const frameData = framePayload?.data;
   const rsrsData = rsrsPayload?.data;
 
+  const multiframeSymbols = useMemo(() => {
+    if (!lightMarketData || lightMarketData.length === 0) {
+      return [];
+    }
+
+    return [...lightMarketData]
+      .sort((a, b) => Number(b.quoteVolume) - Number(a.quoteVolume))
+      .map((ticker) => ticker.symbol);
+  }, [lightMarketData]);
+
+  const multiframeSignature = useMemo(
+    () => [...multiframeSymbols].sort().join(','),
+    [multiframeSymbols]
+  );
+
   useEffect(() => {
-    if (!lightMarketData || lightMarketData.length === 0 || (enableHeavyMarket && enableDeferredIndicators)) {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    setIsDemoMode(params.get('demo') === '1');
+  }, []);
+
+  useEffect(() => {
+    multiframeSymbolsRef.current = multiframeSymbols;
+  }, [multiframeSymbols]);
+
+  useEffect(() => {
+    if (!shouldRunLiveMarketRequests || !lightMarketData || lightMarketData.length === 0 || (enableHeavyMarket && enableDeferredIndicators)) {
       return;
     }
 
@@ -244,7 +346,100 @@ export default function Home() {
     }, 150);
 
     return () => window.clearTimeout(timer);
-  }, [enableDeferredIndicators, enableHeavyMarket, lightMarketData]);
+  }, [enableDeferredIndicators, enableHeavyMarket, lightMarketData, shouldRunLiveMarketRequests]);
+
+  useEffect(() => {
+    if (shouldRunLiveMarketRequests) {
+      return;
+    }
+
+    setEnableHeavyMarket(false);
+    setEnableDeferredIndicators(false);
+    setFrameError(null);
+  }, [shouldRunLiveMarketRequests]);
+
+  useEffect(() => {
+    if (!shouldRunLiveMarketRequests || !enableDeferredIndicators || !multiframeSignature) {
+      return;
+    }
+
+    let cancelled = false;
+    let nextRefreshTimer: number | undefined;
+
+    const activeSymbolSet = new Set(multiframeSymbolsRef.current);
+    setFramePayload((prev) => {
+      if (!prev) {
+        return prev;
+      }
+
+      const prunedData = Object.fromEntries(
+        Object.entries(prev.data).filter(([symbol]) => activeSymbolSet.has(symbol))
+      );
+
+      if (Object.keys(prunedData).length === Object.keys(prev.data).length) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        data: prunedData,
+      };
+    });
+
+    const runProgressiveFetch = async () => {
+      setFrameError(null);
+
+      const symbols = multiframeSymbolsRef.current;
+
+      for (let index = 0; index < symbols.length; index += MULTIFRAME_BATCH_SIZE) {
+        if (cancelled) {
+          return;
+        }
+
+        const batch = symbols.slice(index, index + MULTIFRAME_BATCH_SIZE);
+
+        try {
+          const payload = await fetcherWithMeta<MultiFrameDataMap>(
+            `/api/market/multiframe?symbols=${encodeURIComponent(batch.join(','))}`
+          );
+
+          if (cancelled) {
+            return;
+          }
+
+          setFramePayload((prev) => ({
+            data: {
+              ...(prev?.data || {}),
+              ...payload.data,
+            },
+            fetchedAt: Date.now(),
+            dataSource: 'client-batched',
+          }));
+        } catch (error) {
+          if (!cancelled) {
+            setFrameError(error instanceof Error ? error : new Error('Failed to fetch multiframe batch'));
+          }
+        }
+
+        if (index + MULTIFRAME_BATCH_SIZE < symbols.length) {
+          await new Promise((resolve) => window.setTimeout(resolve, MULTIFRAME_BATCH_DELAY_MS));
+        }
+      }
+
+      if (!cancelled) {
+        nextRefreshTimer = window.setTimeout(runProgressiveFetch, multiframeRefreshInterval);
+      }
+    };
+
+    void runProgressiveFetch();
+
+    return () => {
+      cancelled = true;
+      if (nextRefreshTimer !== undefined) {
+        window.clearTimeout(nextRefreshTimer);
+      }
+    };
+  }, [enableDeferredIndicators, multiframeRefreshInterval, multiframeSignature, shouldRunLiveMarketRequests]);
 
   const baseMarketData = useMemo(() => {
     if (!lightMarketData || lightMarketData.length === 0) {
@@ -363,8 +558,18 @@ export default function Home() {
 
   // Run strategy scanner
   const { signals, dismissSignal, clearAll: clearAllSignals } = useStrategyScanner(strategyScanData);
+  const demoSignals = useMemo<StrategySignal[]>(() => {
+    if (!isDemoMode) {
+      return [];
+    }
+
+    return createDemoSignals(DEMO_BASE_TIME);
+  }, [isDemoMode]);
   // Keep the latest known signals visible even if a deferred data source is temporarily stale.
-  const visibleSignals = signals;
+  const visibleSignals = useMemo(
+    () => isDemoMode ? [...demoSignals, ...signals] : signals,
+    [demoSignals, isDemoMode, signals]
+  );
 
   // 🔧 Shared state for chart drawer (shared between Dashboard and StrategyCenter)
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
@@ -442,10 +647,38 @@ export default function Home() {
       )}
 
       {activeTab === 'dashboard' && (
-        <Dashboard processedData={processedData} onSymbolClick={handleSymbolClick} />
+        <Dashboard
+          processedData={processedData}
+          onSymbolClick={handleSymbolClick}
+          demoMode={isDemoMode}
+          watchlists={watchlists}
+          selectedWatchlistId={dashboardWatchlistId}
+          onSelectWatchlist={setDashboardWatchlistId}
+        />
+      )}
+      {activeTab === 'watchlists' && (
+        <WatchlistsPanel
+          marketData={processedData}
+          watchlists={watchlists}
+          activeWatchlistId={activeWatchlist?.id ?? null}
+          onSymbolClick={handleSymbolClick}
+          onSelectWatchlist={setActiveWatchlist}
+          onCreateWatchlist={addWatchlist}
+          onDeleteWatchlist={removeWatchlist}
+          onRenameWatchlist={updateWatchlistName}
+          onAddSymbol={addSymbol}
+          onRemoveSymbol={removeSymbol}
+          onOpenDashboardWatchlist={(watchlistId) => {
+            setDashboardWatchlistId(watchlistId);
+            setActiveTab('dashboard');
+          }}
+        />
       )}
       {activeTab === 'longshort' && (
         <LongShortPanel />
+      )}
+      {activeTab === 'onchain' && (
+        <OnchainTracker />
       )}
       {activeTab === 'strategies' && (
         <StrategyCenter

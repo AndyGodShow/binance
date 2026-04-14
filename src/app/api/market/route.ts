@@ -58,7 +58,7 @@ async function fetchBaseMarketData(): Promise<TickerData[]> {
     if (results[2].status === 'fulfilled' && Array.isArray(results[2].value.symbols)) {
         const exchangeInfo = results[2].value;
         const validSymbolSet = new Set<string>();
-        exchangeInfo.symbols.forEach((s: any) => {
+        exchangeInfo.symbols.forEach((s) => {
             if ((s.contractType === 'PERPETUAL' || s.contractType === 'TRADIFI_PERPETUAL') && s.status === 'TRADING' && s.symbol.endsWith('USDT')) {
                 validSymbolSet.add(s.symbol);
             }

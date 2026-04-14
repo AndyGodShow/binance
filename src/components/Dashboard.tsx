@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useMemo, useEffect, useCallback } from 'react';
-import { TickerData, SortableKey } from '@/lib/types';
+import { useState, useMemo, useCallback } from 'react';
+import { TickerData, SortableKey, AlertRecord, ScheduledAlertRecord, Watchlist } from '@/lib/types';
 import { formatCompact } from '@/lib/utils';
 import { useAlertMonitor } from '@/hooks/useAlertMonitor';
 import { useScheduledAlerts } from '@/hooks/useScheduledAlerts';
+import { filterTickersByWatchlist } from '@/lib/watchlists';
 import ControlBar from './ControlBar';
 import DataTable from './DataTable';
 import AlertNotification from './AlertNotification';
@@ -12,9 +13,15 @@ import AlertSettings from './AlertSettings';
 import ScheduledAlertCard from './ScheduledAlertCard';
 import styles from './Dashboard.module.css';
 
+const DEMO_BASE_TIME = Date.UTC(2026, 3, 10, 10, 30, 0);
+
 interface DashboardProps {
     processedData?: TickerData[];
     onSymbolClick?: (symbol: string) => void;
+    demoMode?: boolean;
+    watchlists?: Watchlist[];
+    selectedWatchlistId?: string;
+    onSelectWatchlist?: (watchlistId: string) => void;
 }
 
 const SORT_LABELS: Record<string, string> = {
@@ -40,8 +47,14 @@ const VOLUME_FILTER_LABELS: Record<string, string> = {
     '10000000_lt': '成交额 < 1000 万',
 };
 
-export default function Dashboard({ processedData: externalData, onSymbolClick }: DashboardProps) {
-    const [mounted, setMounted] = useState(false);
+export default function Dashboard({
+    processedData: externalData,
+    onSymbolClick,
+    demoMode = false,
+    watchlists = [],
+    selectedWatchlistId = 'all',
+    onSelectWatchlist,
+}: DashboardProps) {
     const [search, setSearch] = useState('');
     const [volumeFilter, setVolumeFilter] = useState('0');
     const [compactMode, setCompactMode] = useState(false);
@@ -50,16 +63,20 @@ export default function Dashboard({ processedData: externalData, onSymbolClick }
         key: 'quoteVolume',
         direction: 'desc',
     });
-
-    useEffect(() => {
-        setMounted(true);
-    }, []);
+    const selectedWatchlist = useMemo(
+        () => watchlists.find((watchlist) => watchlist.id === selectedWatchlistId) ?? null,
+        [selectedWatchlistId, watchlists]
+    );
+    const watchlistOptions = useMemo(
+        () => [{ value: 'all', label: '全部市场' }, ...watchlists.map((watchlist) => ({ value: watchlist.id, label: watchlist.name }))],
+        [watchlists]
+    );
 
     // Filter and sort the external data
     const filteredData = useMemo(() => {
         if (!externalData) return [];
 
-        let result = [...externalData];
+        let result = [...filterTickersByWatchlist(externalData, selectedWatchlist)];
 
         // Filter by Search
         if (search) {
@@ -112,7 +129,7 @@ export default function Dashboard({ processedData: externalData, onSymbolClick }
         }
 
         return result;
-    }, [externalData, search, volumeFilter, sortConfig]);
+    }, [externalData, search, selectedWatchlist, sortConfig, volumeFilter]);
 
     // BUG-1: Calculate maxVolume for DataTable progress bars
     const maxVolume = useMemo(() => {
@@ -200,6 +217,86 @@ export default function Dashboard({ processedData: externalData, onSymbolClick }
         { enableSound: alertConfig.enableSound, enableNotification: alertConfig.enableNotification }
     );
 
+    const demoAlerts = useMemo<AlertRecord[]>(() => {
+        if (!demoMode) {
+            return [];
+        }
+
+        const now = DEMO_BASE_TIME;
+        return [
+            {
+                id: 'demo-alert-critical',
+                symbol: 'BTCUSDT',
+                type: 'price',
+                level: 'critical',
+                changePercent: 18.42,
+                direction: 'up',
+                timestamp: now - 8 * 1000,
+                baseValue: 103500,
+                currentValue: 122564,
+                baseTimestamp: now - 28 * 60 * 1000,
+            },
+            {
+                id: 'demo-alert-warning',
+                symbol: 'ETHUSDT',
+                type: 'oi',
+                level: 'warning',
+                changePercent: 11.37,
+                direction: 'up',
+                timestamp: now - 18 * 1000,
+                baseValue: 9200000000,
+                currentValue: 10250000000,
+                baseTimestamp: now - 24 * 60 * 1000,
+            },
+            {
+                id: 'demo-alert-info',
+                symbol: 'SOLUSDT',
+                type: 'price',
+                level: 'info',
+                changePercent: -10.12,
+                direction: 'down',
+                timestamp: now - 32 * 1000,
+                baseValue: 248,
+                currentValue: 222.9,
+                baseTimestamp: now - 19 * 60 * 1000,
+            },
+        ];
+    }, [demoMode]);
+
+    const demoScheduledAlerts = useMemo<ScheduledAlertRecord[]>(() => {
+        if (!demoMode) {
+            return [];
+        }
+
+        return [
+            {
+                id: 'demo-scheduled-funding',
+                type: 'funding-rate',
+                timestamp: DEMO_BASE_TIME - 45 * 1000,
+                topPositive: [
+                    { symbol: 'BTCUSDT', fundingRate: 0.0012 },
+                    { symbol: 'ETHUSDT', fundingRate: 0.0009 },
+                    { symbol: 'SOLUSDT', fundingRate: 0.0007 },
+                ],
+                topNegative: [
+                    { symbol: 'DOGEUSDT', fundingRate: -0.0011 },
+                    { symbol: 'XRPUSDT', fundingRate: -0.0008 },
+                    { symbol: 'ADAUSDT', fundingRate: -0.0006 },
+                ],
+            },
+        ];
+    }, [demoMode]);
+
+    const visibleAlerts = useMemo(
+        () => demoMode ? [...demoAlerts, ...alerts] : alerts,
+        [alerts, demoAlerts, demoMode]
+    );
+
+    const visibleScheduledAlerts = useMemo(
+        () => demoMode ? [...demoScheduledAlerts, ...scheduledAlerts] : scheduledAlerts,
+        [demoMode, demoScheduledAlerts, scheduledAlerts]
+    );
+
     const handleSort = useCallback((key: SortableKey) => {
         let direction: 'asc' | 'desc' = 'desc';
         if (sortConfig && sortConfig.key === key && sortConfig.direction === 'desc') {
@@ -215,10 +312,6 @@ export default function Dashboard({ processedData: externalData, onSymbolClick }
     const handleCloseAlertSettings = useCallback(() => {
         setShowAlertSettings(false);
     }, []);
-
-    if (!mounted) {
-        return null;
-    }
 
     return (
         <div className={styles.dashboard}>
@@ -274,6 +367,9 @@ export default function Dashboard({ processedData: externalData, onSymbolClick }
                 setSearch={setSearch}
                 volumeFilter={volumeFilter}
                 setVolumeFilter={setVolumeFilter}
+                watchlistFilter={selectedWatchlistId}
+                setWatchlistFilter={(watchlistId) => onSelectWatchlist?.(watchlistId)}
+                watchlistOptions={watchlistOptions}
                 compactMode={compactMode}
                 setCompactMode={setCompactMode}
                 onOpenAlertSettings={handleOpenAlertSettings}
@@ -289,22 +385,27 @@ export default function Dashboard({ processedData: externalData, onSymbolClick }
             />
 
             {/* Alert Notifications */}
-            {alerts.length > 0 && (
+            {visibleAlerts.length > 0 && (
                 <AlertNotification
-                    alerts={alerts}
+                    alerts={visibleAlerts}
                     onDismiss={dismissAlert}
                     onClearAll={clearAllAlerts}
+                    onSymbolClick={onSymbolClick}
                 />
             )}
 
             {/* Scheduled Alert Cards */}
-            {scheduledAlerts.slice(0, 2).map((alert) => (
-                <ScheduledAlertCard
-                    key={alert.id}
-                    alert={alert}
-                    onDismiss={dismissScheduledAlert}
-                />
-            ))}
+            {visibleScheduledAlerts.length > 0 && (
+                <div className={styles.scheduledAlertsContainer}>
+                    {visibleScheduledAlerts.slice(0, 2).map((alert) => (
+                        <ScheduledAlertCard
+                            key={alert.id}
+                            alert={alert}
+                            onDismiss={dismissScheduledAlert}
+                        />
+                    ))}
+                </div>
+            )}
 
             {/* Alert Settings Panel */}
             {showAlertSettings && (
