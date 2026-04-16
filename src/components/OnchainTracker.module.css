@@ -153,22 +153,6 @@
     line-height: 1.55;
 }
 
-.heroRail {
-    display: grid;
-    gap: 8px;
-    align-content: start;
-}
-
-.dataChip {
-    display: grid;
-    gap: 4px;
-    padding: 12px 14px;
-    border-radius: 16px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    background: rgba(255, 255, 255, 0.035);
-}
-
-.dataChipLabel,
 .statLabel,
 .marketLabel {
     color: var(--text-secondary);
@@ -178,15 +162,8 @@
     text-transform: uppercase;
 }
 
-.dataChipValue,
 .statValue {
     font-family: 'Roboto Mono', monospace;
-}
-
-.dataChipValue {
-    font-size: 14px;
-    line-height: 1.35;
-    word-break: break-word;
 }
 
 .executiveSummary {

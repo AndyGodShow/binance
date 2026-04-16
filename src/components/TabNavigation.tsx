@@ -2,7 +2,7 @@
 
 import styles from './TabNavigation.module.css';
 
-type TabType = 'dashboard' | 'watchlists' | 'longshort' | 'onchain' | 'strategies' | 'trading';
+type TabType = 'dashboard' | 'leaderboard' | 'macro' | 'watchlists' | 'longshort' | 'onchain' | 'strategies' | 'trading';
 
 interface TabNavigationProps {
     activeTab: TabType;
@@ -17,6 +17,18 @@ export default function TabNavigation({ activeTab, onChange }: TabNavigationProp
                 onClick={() => onChange('dashboard')}
             >
                 📊 数据面板
+            </button>
+            <button
+                className={`${styles.tabBtn} ${activeTab === 'leaderboard' ? styles.active : ''}`}
+                onClick={() => onChange('leaderboard')}
+            >
+                🏆 异动排行榜
+            </button>
+            <button
+                className={`${styles.tabBtn} ${activeTab === 'macro' ? styles.active : ''}`}
+                onClick={() => onChange('macro')}
+            >
+                🌐 宏观视角
             </button>
             <button
                 className={`${styles.tabBtn} ${activeTab === 'watchlists' ? styles.active : ''}`}

@@ -1,12 +1,7 @@
-import type {
-    ChipAnalysis,
-    HistoricalHoldersPoint,
-    TokenHolderMetrics,
-    TokenSearchResult,
-} from './types';
+import type { ChipAnalysis, TokenHolderMetrics, TokenSearchResult } from './types';
 
 export function buildOnchainStorageKey(query: string) {
-    return `persistent-swr:v2:onchain:${query}:default`;
+    return `persistent-swr:v3:onchain:${query}:default`;
 }
 
 export function buildExecutiveSummary(
@@ -24,12 +19,4 @@ export function buildExecutiveSummary(
     const trendLabel = change7d >= 3 ? '持币人数仍在扩散' : change7d <= -1 ? '持币人数开始回落' : '持币人数趋于稳定';
 
     return `${token.symbol} 当前属于${analysis.controlLevel}，Top10 占比 ${top10.toFixed(2)}%，${breadthLabel}，${trendLabel}。`;
-}
-
-export function buildVisibleHistory(points: HistoricalHoldersPoint[], limit = 7) {
-    const sorted = [...points].sort((a, b) => (
-        new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-    ));
-
-    return sorted.slice(-limit);
 }

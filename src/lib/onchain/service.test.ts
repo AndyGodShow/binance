@@ -2,7 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import type { TokenSearchResult } from './types';
-import { filterAndSortSearchResults, normalizeAcquisitionMix, resolveSelectedToken } from './service';
+import {
+    filterAndSortSearchResults,
+    getFallbackBannerMessage,
+    matchOfficialAlphaTokens,
+    normalizeAcquisitionMix,
+    pickPrimaryToken,
+    resolveSelectedToken,
+} from './service';
 
 const sampleTokens: TokenSearchResult[] = [
     {
@@ -141,5 +148,172 @@ test('filterAndSortSearchResults keeps unknown holder counts behind known ones',
     assert.deepEqual(
         ranked.map((token) => token.tokenAddress),
         ['0x222', '0x555']
+    );
+});
+
+test('getFallbackBannerMessage explains missing api key clearly', () => {
+    assert.match(
+        getFallbackBannerMessage('missing_moralis_api_key'),
+        /MORALIS_API_KEY/
+    );
+});
+
+test('getFallbackBannerMessage explains unsupported chains without pretending data exists', () => {
+    assert.match(
+        getFallbackBannerMessage('unsupported_chain'),
+        /不支持/
+    );
+    assert.doesNotMatch(
+        getFallbackBannerMessage('unsupported_chain'),
+        /样本数据/
+    );
+});
+
+test('getFallbackBannerMessage keeps upstream failure guidance as default', () => {
+    assert.match(
+        getFallbackBannerMessage('upstream_request_failed'),
+        /请求失败/
+    );
+    assert.match(
+        getFallbackBannerMessage(),
+        /请求失败/
+    );
+});
+
+test('matchOfficialAlphaTokens prefers official alpha addresses that map back to the cex symbol', () => {
+    const matched = matchOfficialAlphaTokens(
+        [
+            {
+                chainId: '1',
+                chainName: 'Ethereum',
+                contractAddress: '0xeth-pepe',
+                name: 'Pepe',
+                symbol: 'PEPE',
+                cexCoinName: 'PEPE',
+            },
+            {
+                chainId: '56',
+                chainName: 'BNB Chain',
+                contractAddress: '0xbsc-pepe',
+                name: 'Pepe BSC',
+                symbol: 'PEPE',
+                cexCoinName: 'PEPE',
+            },
+            {
+                chainId: '1',
+                chainName: 'Ethereum',
+                contractAddress: '0xother',
+                name: 'Something Else',
+                symbol: 'OTHER',
+                cexCoinName: 'OTHER',
+            },
+        ],
+        ['PEPE'],
+        'PEPE'
+    );
+
+    assert.deepEqual(
+        matched.map((item) => item.contractAddress),
+        ['0xeth-pepe', '0xbsc-pepe']
+    );
+});
+
+test('matchOfficialAlphaTokens ignores name-only lookalikes that are not the cex symbol', () => {
+    const matched = matchOfficialAlphaTokens(
+        [
+            {
+                chainId: 'CT_195',
+                chainName: 'TRON',
+                contractAddress: 'TMacq4TDUw5q8NFBwmbY4RLXvzvG5JTkvi',
+                name: 'PePe',
+                symbol: 'PePe',
+                cexCoinName: '',
+            },
+            {
+                chainId: '1',
+                chainName: 'Ethereum',
+                contractAddress: '0xeth-pepe',
+                name: 'Pepe',
+                symbol: 'PEPE',
+                cexCoinName: 'PEPE',
+            },
+        ],
+        ['PEPE'],
+        'PEPE'
+    );
+
+    assert.deepEqual(
+        matched.map((item) => item.contractAddress),
+        ['0xeth-pepe']
+    );
+});
+
+test('pickPrimaryToken prefers the strongest exact symbol candidate on the priority chain', () => {
+    const selected = pickPrimaryToken([
+        {
+            ...sampleTokens[0],
+            tokenAddress: '0xaaa',
+            chainId: 'bsc',
+            chain: 'bsc',
+            chainName: 'BNB Chain',
+            totalHolders: 500,
+            marketCap: 5_000,
+            totalLiquidityUsd: 3_000,
+        },
+        {
+            ...sampleTokens[0],
+            tokenAddress: '0xbbb',
+            chainId: 'ethereum',
+            chain: 'ethereum',
+            chainName: 'Ethereum',
+            totalHolders: 320,
+            marketCap: 6_000,
+            totalLiquidityUsd: 4_000,
+        },
+        {
+            ...sampleTokens[0],
+            tokenAddress: '0xccc',
+            symbol: 'PEPE2',
+            name: 'Pepe 2.0',
+            chainId: 'ethereum',
+            chain: 'ethereum',
+            chainName: 'Ethereum',
+            totalHolders: 10_000,
+            marketCap: 50_000,
+            totalLiquidityUsd: 20_000,
+        },
+    ], 'PEPE');
+
+    assert.equal(selected?.tokenAddress, '0xbbb');
+});
+
+test('filterAndSortSearchResults still keeps the strongest holder-backed candidates first after prefiltering', () => {
+    const ranked = filterAndSortSearchResults([
+        {
+            ...sampleTokens[0],
+            tokenAddress: '0x901',
+            totalHolders: 900,
+            marketCap: 9000,
+            totalLiquidityUsd: 9000,
+        },
+        {
+            ...sampleTokens[0],
+            tokenAddress: '0x902',
+            totalHolders: 1200,
+            marketCap: 2000,
+            totalLiquidityUsd: 2000,
+        },
+        {
+            ...sampleTokens[0],
+            tokenAddress: '0x903',
+            totalHolders: 300,
+            marketCap: 50000,
+            totalLiquidityUsd: 30000,
+        },
+    ]);
+
+    assert.deepEqual(
+        ranked.map((token) => token.tokenAddress),
+        ['0x902', '0x901', '0x903']
     );
 });

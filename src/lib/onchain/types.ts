@@ -1,4 +1,10 @@
 export type OnchainSourceMode = 'hybrid' | 'fallback';
+export type OnchainFallbackReason =
+    | 'missing_moralis_api_key'
+    | 'no_search_results'
+    | 'unsupported_chain'
+    | 'metrics_unavailable'
+    | 'upstream_request_failed';
 export type ChainFamily = 'evm' | 'solana';
 export type OnchainSearchScope = 'contracts' | 'alpha';
 export type DexWindowKey = 'm5' | 'h1' | 'h6' | 'h24';
@@ -133,6 +139,7 @@ export interface TokenResearchPayload {
     query: string;
     scope: OnchainSearchScope;
     sourceMode: OnchainSourceMode;
+    fallbackReason?: OnchainFallbackReason;
     searchResults: TokenSearchResult[];
     selectedToken: TokenSearchResult | null;
     metrics: TokenHolderMetrics | null;

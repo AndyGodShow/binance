@@ -14,6 +14,8 @@ interface PersistentSWRConfig<T> extends SWRConfiguration<T> {
     storageTtlMs?: number;
     persistIntervalMs?: number;
     storageKey?: string;
+    shouldPersistData?: (data: T) => boolean;
+    shouldRestoreData?: (data: T) => boolean;
 }
 
 function readPersistedValue<T>(storageKey: string, ttlMs: number): T | undefined {
@@ -59,6 +61,18 @@ function writePersistedValue<T>(storageKey: string, data: T) {
     }
 }
 
+function removePersistedValue(storageKey: string) {
+    if (typeof window === 'undefined') {
+        return;
+    }
+
+    try {
+        window.localStorage.removeItem(storageKey);
+    } catch {
+        // Ignore storage access issues.
+    }
+}
+
 export function usePersistentSWR<T>(
     key: string | null,
     fetcher: ((key: string) => Promise<T>) | null,
@@ -68,6 +82,8 @@ export function usePersistentSWR<T>(
         storageTtlMs = 0,
         persistIntervalMs = 0,
         storageKey = key ? `${STORAGE_PREFIX}${key}` : undefined,
+        shouldPersistData,
+        shouldRestoreData,
         keepPreviousData = true,
         ...swrConfig
     } = config;
@@ -93,16 +109,25 @@ export function usePersistentSWR<T>(
         const cached = readPersistedValue<T>(storageKey, storageTtlMs);
         restoredRef.current = storageKey;
 
-        if (cached !== undefined) {
+        if (cached !== undefined && (!shouldRestoreData || shouldRestoreData(cached))) {
             void mutate(cached, {
                 revalidate: false,
                 populateCache: true,
             });
+            return;
         }
-    }, [key, mutate, responseData, storageKey, storageTtlMs]);
+
+        if (cached !== undefined && shouldRestoreData && !shouldRestoreData(cached)) {
+            removePersistedValue(storageKey);
+        }
+    }, [key, mutate, responseData, shouldRestoreData, storageKey, storageTtlMs]);
 
     useEffect(() => {
         if (!storageKey || responseData === undefined) {
+            return;
+        }
+
+        if (shouldPersistData && !shouldPersistData(responseData)) {
             return;
         }
 
@@ -113,7 +138,7 @@ export function usePersistentSWR<T>(
 
         writePersistedValue(storageKey, responseData);
         lastPersistAtRef.current = now;
-    }, [persistIntervalMs, responseData, storageKey]);
+    }, [persistIntervalMs, responseData, shouldPersistData, storageKey]);
 
     return response;
 }

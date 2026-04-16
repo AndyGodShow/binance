@@ -1,5 +1,6 @@
 import { buildChipAnalysis } from './analysis';
 import { fetchBinanceJson } from '@/lib/binanceApi';
+import { logger } from '@/lib/logger';
 import type {
     ChainFamily,
     DexPriceWindow,
@@ -7,6 +8,7 @@ import type {
     HistoricalHoldersPoint,
     HolderAcquisition,
     HolderDistribution,
+    OnchainFallbackReason,
     OnchainSearchScope,
     HolderSupplyBucket,
     TokenHolderMetrics,
@@ -22,6 +24,17 @@ const DEX_SCREENER_BASE = 'https://api.dexscreener.com/latest/dex';
 const DEFAULT_QUERY = 'PEPE';
 const SOLANA_NETWORK = process.env.SOLANA_NETWORK ?? 'mainnet';
 const MIN_HOLDER_COUNT = 100;
+const SUPPORTED_EVM_CHAINS = new Set([
+    'ethereum',
+    'bsc',
+    'base',
+    'polygon',
+    'arbitrum',
+    'optimism',
+    'avalanche',
+    'fantom',
+    'cronos',
+]);
 
 interface BinanceContractSymbol {
     symbol: string;
@@ -35,7 +48,7 @@ interface BinanceExchangeInfoResponse {
     symbols: BinanceContractSymbol[];
 }
 
-interface BinanceAlphaToken {
+export interface BinanceAlphaToken {
     chainId: string;
     chainName: string;
     contractAddress: string;
@@ -131,6 +144,19 @@ function toFamily(chainId: string, chainName: string): ChainFamily {
         return 'solana';
     }
     return 'evm';
+}
+
+function isAddressLikeQuery(query: string) {
+    const trimmed = query.trim();
+    return /^0x[a-fA-F0-9]{40}$/.test(trimmed) || /^[1-9A-HJ-NP-Za-km-z]{32,64}$/.test(trimmed) || /^T[A-Za-z1-9]{25,}$/.test(trimmed);
+}
+
+function isSupportedOnchainToken(token: TokenSearchResult) {
+    return token.chainFamily === 'solana' || SUPPORTED_EVM_CHAINS.has(token.chainId);
+}
+
+function isSupportedChain(chainId: string, chainFamily: ChainFamily) {
+    return chainFamily === 'solana' || SUPPORTED_EVM_CHAINS.has(chainId);
 }
 
 function mapHolderDistribution(input: Record<string, string | number | null | undefined>): HolderDistribution {
@@ -308,9 +334,38 @@ function chainPriority(chainId: string) {
     }
 }
 
+function primaryTokenScore(token: TokenSearchResult, query: string) {
+    const queryTerms = tokenizeSearchInput(query);
+    const symbol = normalizeAssetTerm(token.symbol);
+    const name = normalizeAssetTerm(token.name);
+    let score = 0;
+
+    if (queryTerms.some((term) => symbol === term)) {
+        score += 200;
+    } else if (queryTerms.some((term) => symbol.includes(term))) {
+        score += 120;
+    }
+
+    if (queryTerms.some((term) => name === term)) {
+        score += 120;
+    } else if (queryTerms.some((term) => name.includes(term))) {
+        score += 60;
+    }
+
+    if (token.chainFamily === 'evm') {
+        score += 20;
+    }
+
+    score += chainPriority(token.chainId) * 10;
+    score += Math.min(80, Math.log10((token.totalHolders ?? 0) + 1) * 20);
+    score += Math.min(80, Math.log10((token.totalLiquidityUsd ?? 0) + 1) * 10);
+    score += Math.min(60, Math.log10((token.marketCap ?? 0) + 1) * 8);
+
+    return score;
+}
+
 function mapSearchResults(raw: Array<Record<string, unknown>>): TokenSearchResult[] {
     const unique = new Map<string, TokenSearchResult>();
-    const supportedChainIds = new Set(['ethereum', 'bsc', 'base', 'solana', 'polygon', 'arbitrum', 'optimism', 'avalanche', 'fantom', 'cronos']);
 
     raw.forEach((item) => {
         const chainMeta = mapDexChain(String(item.chainId || ''));
@@ -318,7 +373,7 @@ function mapSearchResults(raw: Array<Record<string, unknown>>): TokenSearchResul
         const tokenAddress = String(baseToken.address || '');
         const key = `${chainMeta.chainId}:${tokenAddress}`;
 
-        if (!tokenAddress || unique.has(key) || !supportedChainIds.has(chainMeta.chainId)) {
+        if (!tokenAddress || unique.has(key) || !isSupportedChain(chainMeta.chainId, chainMeta.chainFamily)) {
             return;
         }
 
@@ -412,10 +467,11 @@ async function fetchCandidateHolderCount(token: TokenSearchResult): Promise<numb
 export function resolveSelectedToken(
     searchResults: TokenSearchResult[],
     tokenAddress?: string | null,
-    chainId?: string | null
+    chainId?: string | null,
+    query = DEFAULT_QUERY
 ) {
     if (!tokenAddress || !chainId) {
-        return searchResults[0] ?? null;
+        return pickPrimaryToken(searchResults, query);
     }
 
     const normalizedAddress = tokenAddress.toLowerCase();
@@ -424,7 +480,7 @@ export function resolveSelectedToken(
     return searchResults.find((token) => (
         token.tokenAddress.toLowerCase() === normalizedAddress
         && token.chainId.toLowerCase() === normalizedChainId
-    )) ?? searchResults[0] ?? null;
+    )) ?? pickPrimaryToken(searchResults, query);
 }
 
 async function fetchBinanceContractUniverse() {
@@ -483,6 +539,83 @@ function mapAlphaChain(chainId: string, chainName: string) {
     return mapDexChain(chainName.toLowerCase());
 }
 
+export function matchOfficialAlphaTokens(
+    universe: BinanceAlphaToken[],
+    matchedBaseAssets: string[],
+    query: string
+) {
+    const officialTerms = new Set(
+        [...matchedBaseAssets, query].flatMap((asset) => tokenizeSearchInput(asset))
+    );
+
+    return universe.filter((item) => {
+        const symbol = normalizeAssetTerm(item.symbol || '');
+        const cexCoin = normalizeAssetTerm(item.cexCoinName || '');
+
+        return Array.from(officialTerms).some((term) => (
+            symbol === term
+            || cexCoin === term
+        ));
+    }).sort((a, b) => {
+        const aMeta = mapAlphaChain(a.chainId, a.chainName);
+        const bMeta = mapAlphaChain(b.chainId, b.chainName);
+        const cexDiff = Number(normalizeAssetTerm(b.cexCoinName || '') === normalizeAssetTerm(query))
+            - Number(normalizeAssetTerm(a.cexCoinName || '') === normalizeAssetTerm(query));
+        if (cexDiff !== 0) {
+            return cexDiff;
+        }
+
+        const symbolDiff = Number(normalizeAssetTerm(b.symbol || '') === normalizeAssetTerm(query))
+            - Number(normalizeAssetTerm(a.symbol || '') === normalizeAssetTerm(query));
+        if (symbolDiff !== 0) {
+            return symbolDiff;
+        }
+
+        return chainPriority(bMeta.chainId) - chainPriority(aMeta.chainId);
+    });
+}
+
+function matchOfficialAlphaTokenByAddress(universe: BinanceAlphaToken[], query: string) {
+    const normalizedQuery = query.trim().toLowerCase();
+    if (!normalizedQuery) {
+        return [];
+    }
+
+    return universe.filter((item) => item.contractAddress.toLowerCase() === normalizedQuery);
+}
+
+function mapAlphaTokenToSearchResult(item: BinanceAlphaToken): TokenSearchResult {
+    const chainMeta = mapAlphaChain(item.chainId, item.chainName);
+    return {
+        tokenAddress: item.contractAddress,
+        chainId: chainMeta.chainId,
+        chain: chainMeta.chain,
+        chainName: chainMeta.chainName,
+        chainFamily: chainMeta.chainFamily,
+        name: item.name,
+        symbol: item.symbol,
+        logo: item.iconUrl ?? null,
+        usdPrice: item.price == null ? null : parseNumber(item.price),
+        marketCap: item.marketCap == null ? null : parseNumber(item.marketCap),
+        totalLiquidityUsd: item.liquidity == null ? null : parseNumber(item.liquidity),
+        securityScore: null,
+        totalHolders: item.holders == null ? null : parseNumber(item.holders),
+        isVerifiedContract: false,
+        turnoverRatio: null,
+        dexTrades: {
+            h1: emptyTradeWindow(),
+            h6: emptyTradeWindow(),
+            h24: emptyTradeWindow(),
+        },
+        dexPriceStats: {
+            m5: emptyPriceWindow(),
+            h1: emptyPriceWindow(),
+            h6: emptyPriceWindow(),
+            h24: emptyPriceWindow(),
+        },
+    };
+}
+
 async function searchTokens(query: string): Promise<TokenSearchResult[]> {
     const url = `${DEX_SCREENER_BASE}/search/?q=${encodeURIComponent(query)}`;
     const json = await fetchDexScreenerJson<{ pairs?: Array<Record<string, unknown>> }>(url);
@@ -499,8 +632,20 @@ async function searchByTerms(terms: string[]) {
 }
 
 async function enrichSearchResultsWithHolderCounts(searchResults: TokenSearchResult[]) {
+    const prioritized = [...searchResults]
+        .filter(isSupportedOnchainToken)
+        .sort((a, b) => {
+            const marketCapDiff = (b.marketCap ?? 0) - (a.marketCap ?? 0);
+            if (marketCapDiff !== 0) {
+                return marketCapDiff;
+            }
+
+            return (b.totalLiquidityUsd ?? 0) - (a.totalLiquidityUsd ?? 0);
+        })
+        .slice(0, 6);
+
     const enriched = await Promise.all(
-        searchResults.map(async (token) => ({
+        prioritized.map(async (token) => ({
             ...token,
             totalHolders: await fetchCandidateHolderCount(token),
         }))
@@ -609,10 +754,13 @@ function filterContractCandidates(
     matchedBaseAssets: string[],
     query: string
 ) {
+    if (matchedBaseAssets.length === 0) {
+        return [...searchResults].sort((a, b) => primaryTokenScore(b, query) - primaryTokenScore(a, query));
+    }
+
     const normalizedTerms = new Set(
         matchedBaseAssets.flatMap((asset) => tokenizeSearchInput(asset))
     );
-    const queryTerms = tokenizeSearchInput(query);
 
     const filtered = searchResults.filter((token) => {
         const symbol = normalizeAssetTerm(token.symbol);
@@ -625,32 +773,7 @@ function filterContractCandidates(
     });
 
     return filtered.sort((a, b) => {
-        const scoreCandidate = (token: TokenSearchResult) => {
-            const symbol = normalizeAssetTerm(token.symbol);
-            const name = normalizeAssetTerm(token.name);
-            let score = 0;
-
-            if (queryTerms.some((term) => symbol === term)) {
-                score += 200;
-            } else if (queryTerms.some((term) => symbol.includes(term))) {
-                score += 120;
-            }
-
-            if (queryTerms.some((term) => name === term)) {
-                score += 120;
-            } else if (queryTerms.some((term) => name.includes(term))) {
-                score += 60;
-            }
-
-            if (token.chainFamily === 'evm') {
-                score += 20;
-            }
-
-            score += chainPriority(token.chainId) * 10;
-            return score;
-        };
-
-        const scoreDiff = scoreCandidate(b) - scoreCandidate(a);
+        const scoreDiff = primaryTokenScore(b, query) - primaryTokenScore(a, query);
         if (scoreDiff !== 0) {
             return scoreDiff;
         }
@@ -671,9 +794,42 @@ function filterContractCandidates(
     });
 }
 
+export function pickPrimaryToken(searchResults: TokenSearchResult[], query: string) {
+    if (searchResults.length === 0) {
+        return null;
+    }
+
+    return [...searchResults].sort((a, b) => {
+        const scoreDiff = primaryTokenScore(b, query) - primaryTokenScore(a, query);
+        if (scoreDiff !== 0) {
+            return scoreDiff;
+        }
+
+        const holderDiff = (b.totalHolders ?? -1) - (a.totalHolders ?? -1);
+        if (holderDiff !== 0) {
+            return holderDiff;
+        }
+
+        const liquidityDiff = (b.totalLiquidityUsd ?? 0) - (a.totalLiquidityUsd ?? 0);
+        if (liquidityDiff !== 0) {
+            return liquidityDiff;
+        }
+
+        return (b.marketCap ?? 0) - (a.marketCap ?? 0);
+    })[0] ?? null;
+}
+
 async function buildContractSearchResults(query: string) {
     try {
         const universe = await fetchBinanceContractUniverse();
+        const officialUniverse = await fetchBinanceAlphaUniverse().catch(() => []);
+        if (isAddressLikeQuery(query)) {
+            const directOfficialMatches = matchOfficialAlphaTokenByAddress(officialUniverse, query).map(mapAlphaTokenToSearchResult);
+            if (directOfficialMatches.length > 0) {
+                return filterAndSortSearchResults(directOfficialMatches, 0);
+            }
+        }
+
         const terms = tokenizeSearchInput(query);
         const fuzzyMatches = universe.filter((item) => terms.some((term) => normalizeAssetTerm(item.baseAsset).includes(term)));
         const matches = universe.filter((item) => {
@@ -683,12 +839,27 @@ async function buildContractSearchResults(query: string) {
         });
 
         const matchedAssets: string[] = (matches.length > 0 ? matches : fuzzyMatches.slice(0, 6)).map((item) => item.baseAsset);
+        const officialMatches = matchOfficialAlphaTokens(officialUniverse, matchedAssets, query);
+        if (officialMatches.length > 0) {
+            const officialCandidates = filterAndSortSearchResults(
+                officialMatches
+                    .map(mapAlphaTokenToSearchResult)
+                    .filter(isSupportedOnchainToken),
+                0
+            );
+            if (officialCandidates.length > 0) {
+                return officialCandidates;
+            }
+        }
+
         const searchTerms: string[] = Array.from(new Set(matchedAssets.flatMap((asset) => tokenizeSearchInput(asset))));
 
         const rawResults = await searchByTerms(searchTerms.length > 0 ? searchTerms.slice(0, 6) : [query]);
-        const enriched = await enrichSearchResultsWithHolderCounts(rawResults);
+        const prefiltered = filterContractCandidates(rawResults, matchedAssets, query);
+        const enrichmentBase = prefiltered.length > 0 ? prefiltered : rawResults;
+        const enriched = await enrichSearchResultsWithHolderCounts(enrichmentBase);
         const filtered = filterContractCandidates(enriched, matchedAssets, query);
-        return filtered.length > 0 ? filtered : enriched;
+        return filtered.length > 0 ? filtered : enrichmentBase.slice(0, 10);
     } catch {
         return enrichSearchResultsWithHolderCounts(await searchTokens(query));
     }
@@ -697,45 +868,10 @@ async function buildContractSearchResults(query: string) {
 async function buildAlphaSearchResults(query: string) {
     try {
         const universe = await fetchBinanceAlphaUniverse();
-        const terms = tokenizeSearchInput(query);
-        const matched = universe.filter((item) => {
-            const symbol = normalizeAssetTerm(item.symbol || '');
-            const name = normalizeAssetTerm(item.name || '');
-            const cexCoin = normalizeAssetTerm(item.cexCoinName || '');
-            return terms.some((term) => symbol === term || symbol.includes(term) || name.includes(term) || cexCoin === term);
-        });
-
-        const mapped = matched.map((item) => {
-            const chainMeta = mapAlphaChain(item.chainId, item.chainName);
-            return {
-                tokenAddress: item.contractAddress,
-                chainId: chainMeta.chainId,
-                chain: chainMeta.chain,
-                chainName: chainMeta.chainName,
-                chainFamily: chainMeta.chainFamily,
-                name: item.name,
-                symbol: item.symbol,
-                logo: item.iconUrl ?? null,
-                usdPrice: item.price == null ? null : parseNumber(item.price),
-                marketCap: item.marketCap == null ? null : parseNumber(item.marketCap),
-                totalLiquidityUsd: item.liquidity == null ? null : parseNumber(item.liquidity),
-                securityScore: null,
-                totalHolders: item.holders == null ? null : parseNumber(item.holders),
-                isVerifiedContract: false,
-                turnoverRatio: null,
-                dexTrades: {
-                    h1: emptyTradeWindow(),
-                    h6: emptyTradeWindow(),
-                    h24: emptyTradeWindow(),
-                },
-                dexPriceStats: {
-                    m5: emptyPriceWindow(),
-                    h1: emptyPriceWindow(),
-                    h6: emptyPriceWindow(),
-                    h24: emptyPriceWindow(),
-                },
-            } satisfies TokenSearchResult;
-        });
+        const matched = isAddressLikeQuery(query)
+            ? matchOfficialAlphaTokenByAddress(universe, query)
+            : matchOfficialAlphaTokens(universe, [query], query);
+        const mapped = matched.map(mapAlphaTokenToSearchResult);
 
         const filtered = filterAndSortSearchResults(mapped);
         return filtered.length > 0 ? filtered : filterAndSortSearchResults(mapped, 0);
@@ -844,74 +980,24 @@ async function fetchTopHolders(token: TokenSearchResult): Promise<TopHolderItem[
     }));
 }
 
-function fallbackPayload(query: string, scope: OnchainSearchScope): TokenResearchPayload {
-    const selectedToken: TokenSearchResult = {
-        tokenAddress: '0x6982508145454ce325ddbe47a25d4ec3d2311933',
-        chainId: 'ethereum',
-        chain: 'ethereum',
-        chainName: 'Ethereum',
-        chainFamily: 'evm',
-        name: 'Pepe',
-        symbol: 'PEPE',
-        logo: null,
-        usdPrice: 0.000024,
-        marketCap: 9800000000,
-        totalLiquidityUsd: 18900000,
-        securityScore: 92,
-        totalHolders: 18908,
-        isVerifiedContract: false,
-        turnoverRatio: 0.19,
-        dexTrades: {
-            h1: { buys: 5598, sells: 7095, total: 12693 },
-            h6: { buys: 28422, sells: 34114, total: 62536 },
-            h24: { buys: 86356, sells: 102037, total: 188393 },
-        },
-        dexPriceStats: {
-            m5: { priceChangePercent: 3.6, volumeUsd: 186000 },
-            h1: { priceChangePercent: -10.91, volumeUsd: 3300000 },
-            h6: { priceChangePercent: -39.55, volumeUsd: 15200000 },
-            h24: { priceChangePercent: 122, volumeUsd: 40600000 },
-        },
-    };
-
-    const metrics: TokenHolderMetrics = {
-        totalHolders: 18908,
-        holderSupply: {
-            top10: { supply: 419000000000, supplyPercent: 0.62 },
-            top25: { supply: 510000000000, supplyPercent: 0.75 },
-            top50: { supply: 560000000000, supplyPercent: 0.82 },
-            top100: { supply: 600000000000, supplyPercent: 0.88 },
-            top250: { supply: 645000000000, supplyPercent: 0.94 },
-            top500: { supply: 666000000000, supplyPercent: 0.97 },
-        },
-        holderChange: {
-            '5min': { change: 4, changePercent: 0.02 },
-            '1h': { change: 28, changePercent: 0.16 },
-            '6h': { change: 110, changePercent: 0.6 },
-            '24h': { change: 420, changePercent: 2.3 },
-            '3d': { change: 820, changePercent: 4.8 },
-            '7d': { change: 1320, changePercent: 7.5 },
-            '30d': { change: 4810, changePercent: 18.6 },
-        },
-        holdersByAcquisition: { swap: 58, transfer: 31, airdrop: 11 },
-        holderDistribution: { whales: 16, sharks: 48, dolphins: 170, fish: 910, octopus: 1840, crabs: 4120, shrimps: 11804 },
-    };
-
-    const historical: HistoricalHoldersPoint[] = Array.from({ length: 7 }, (_, index) => ({
-        timestamp: new Date(Date.now() - (6 - index) * 24 * 60 * 60 * 1000).toISOString(),
-        totalHolders: 16400 + index * 420,
-        netHolderChange: 160 + index * 12,
-        holderPercentChange: 1.2 + index * 0.1,
-        newHoldersByAcquisition: { swap: 52 + index, transfer: 34 - index * 0.3, airdrop: 14 - index * 0.2 },
-        holdersIn: { whales: 0, sharks: 1, dolphins: 2, fish: 12 + index, octopus: 22 + index, crabs: 42 + index * 3, shrimps: 130 + index * 10 },
-        holdersOut: { whales: 0, sharks: 0, dolphins: 1, fish: 6 + index, octopus: 11 + index, crabs: 21 + index, shrimps: 78 + index * 6 },
-    }));
-
-    const topHolders: TopHolderItem[] = [
-        { address: '0x000...dead', label: 'Burn', entity: null, percentage: 21.4, balance: '21.4%', usdValue: null, isContract: true },
-        { address: '0xabc...001', label: 'Whale 1', entity: null, percentage: 12.2, balance: '12.2%', usdValue: null, isContract: false },
-        { address: '0xabc...002', label: 'Whale 2', entity: null, percentage: 8.7, balance: '8.7%', usdValue: null, isContract: false },
-        { address: '0xabc...003', label: 'CEX Wallet', entity: 'Exchange', percentage: 6.1, balance: '6.1%', usdValue: null, isContract: true },
+function fallbackPayload(
+    query: string,
+    scope: OnchainSearchScope,
+    reason: OnchainFallbackReason,
+    overrides?: Partial<Pick<TokenResearchPayload, 'searchResults' | 'selectedToken' | 'notes'>>
+): TokenResearchPayload {
+    const selectedToken = overrides?.selectedToken ?? null;
+    const searchResults = overrides?.searchResults ?? (selectedToken ? [selectedToken] : []);
+    const notes = overrides?.notes ?? [
+        reason === 'missing_moralis_api_key'
+            ? '当前没有配置 MORALIS_API_KEY，所以链上真实指标还没有启用。'
+            : reason === 'no_search_results'
+                ? '这次没有检索到匹配的链上主地址，请换一个币种名、符号或合约地址再试。'
+                : reason === 'unsupported_chain'
+                    ? '主地址已经找到，但这条链当前不在可用的链上控筹支持范围内。'
+                    : reason === 'metrics_unavailable'
+                        ? '主地址已经找到，但持币结构指标暂时拉取失败，所以这次不展示控筹结论。'
+                        : '链上数据源暂时不可用，请稍后重试。'
     ];
 
     return {
@@ -919,19 +1005,31 @@ function fallbackPayload(query: string, scope: OnchainSearchScope): TokenResearc
         query,
         scope,
         sourceMode: 'fallback',
-        searchResults: [selectedToken],
+        fallbackReason: reason,
+        searchResults,
         selectedToken,
-        metrics,
-        historical,
-        topHolders,
-        analysis: buildChipAnalysis(metrics, historical),
-        notes: [
-            MORALIS_API_KEY
-                ? 'Moralis 请求失败，当前显示内置样本，便于继续调页面和交互。'
-                : '当前没有配置 MORALIS_API_KEY，显示的是内置样本数据结构。',
-            '下一步填入 MORALIS_API_KEY 后，这个板块会切到真实的 holder metrics、historical holders 和 top holders。',
-        ],
+        metrics: null,
+        historical: [],
+        topHolders: [],
+        analysis: null,
+        notes,
     };
+}
+
+export function getFallbackBannerMessage(reason?: OnchainFallbackReason) {
+    switch (reason) {
+        case 'missing_moralis_api_key':
+            return '当前显示的是回退样本数据：尚未配置 MORALIS_API_KEY，所以链上真实数据还没有启用。';
+        case 'no_search_results':
+            return '当前没有拿到可用链上结果：这次没有检索到匹配的链上标的，请换一个币种名、符号或合约地址再试。';
+        case 'unsupported_chain':
+            return '当前没有生成控筹结果：主地址已经找到，但这条链暂时不支持链上持币结构追踪。';
+        case 'metrics_unavailable':
+            return '当前没有生成控筹结果：目标币已定位，但持币结构数据暂时拉取失败，请稍后重试。';
+        case 'upstream_request_failed':
+        default:
+            return '当前没有生成控筹结果：链上数据源暂时不可用或请求失败，请稍后重试，或检查链上数据配置。';
+    }
 }
 
 export async function buildTokenResearchPayload(
@@ -940,7 +1038,7 @@ export async function buildTokenResearchPayload(
     scope: OnchainSearchScope = 'contracts'
 ): Promise<TokenResearchPayload> {
     if (!MORALIS_API_KEY) {
-        return fallbackPayload(query, scope);
+        return fallbackPayload(query, scope, 'missing_moralis_api_key');
     }
 
     try {
@@ -951,28 +1049,70 @@ export async function buildTokenResearchPayload(
         const selectedToken = resolveSelectedToken(
             searchResults,
             selection?.tokenAddress,
-            selection?.chainId
+            selection?.chainId,
+            normalizedQuery
         );
         if (!selectedToken) {
-            return fallbackPayload(query, scope);
+            return fallbackPayload(query, scope, 'no_search_results', { searchResults });
         }
         const selectedTokenWithDex = await hydrateDexDetails(selectedToken);
+        if (!isSupportedOnchainToken(selectedTokenWithDex)) {
+            return fallbackPayload(query, scope, 'unsupported_chain', {
+                searchResults,
+                selectedToken: selectedTokenWithDex,
+                notes: [
+                    `已锁定主地址 ${selectedTokenWithDex.symbol}（${selectedTokenWithDex.chainName}），但这条链当前不支持链上控筹指标。`,
+                    '目前仅支持 EVM 主流链与 Solana 的持币结构追踪，其余链会先保留检索结果但不输出控筹结论。',
+                ],
+            });
+        }
 
         const [metricsResult, historicalResult, topHolders] = await Promise.all([
-            fetchMetrics(selectedTokenWithDex).catch(() => null),
-            fetchHistorical(selectedTokenWithDex).catch(() => null),
-            fetchTopHolders(selectedTokenWithDex).catch(() => []),
+            fetchMetrics(selectedTokenWithDex).catch((error) => {
+                logger.error('Failed to fetch onchain holder metrics', error as Error, {
+                    query: normalizedQuery,
+                    chainId: selectedTokenWithDex.chainId,
+                    tokenAddress: selectedTokenWithDex.tokenAddress,
+                });
+                return null;
+            }),
+            fetchHistorical(selectedTokenWithDex).catch((error) => {
+                logger.warn('Failed to fetch onchain holder history', {
+                    query: normalizedQuery,
+                    chainId: selectedTokenWithDex.chainId,
+                    tokenAddress: selectedTokenWithDex.tokenAddress,
+                    error: error instanceof Error ? error.message : String(error),
+                });
+                return null;
+            }),
+            fetchTopHolders(selectedTokenWithDex).catch((error) => {
+                logger.warn('Failed to fetch onchain top holders', {
+                    query: normalizedQuery,
+                    chainId: selectedTokenWithDex.chainId,
+                    tokenAddress: selectedTokenWithDex.tokenAddress,
+                    error: error instanceof Error ? error.message : String(error),
+                });
+                return [];
+            }),
         ]);
 
         if (!metricsResult) {
-            return fallbackPayload(query, scope);
+            return fallbackPayload(query, scope, 'metrics_unavailable', {
+                searchResults,
+                selectedToken: selectedTokenWithDex,
+                notes: [
+                    `已锁定主地址 ${selectedTokenWithDex.symbol}（${selectedTokenWithDex.chainName}），但这次没有拿到 holder metrics。`,
+                    '页面会保留主地址与市场快照，不再伪造控筹、持仓和 Top holders 数据。',
+                ],
+            });
         }
 
         const historical = historicalResult ?? [];
         const notes: string[] = [
             scope === 'alpha'
-                ? '当前模式聚焦 Binance Alpha 币种，适合观察早期热门币的筹码结构。'
-                : '当前模式聚焦 Binance 合约币种，默认优先匹配你在合约里会真正交易的主流标的。',
+                ? '当前模式聚焦 Binance Alpha 币种，并优先围绕官方可识别的主地址做单地址追踪。'
+                : '当前模式聚焦 Binance 合约币种，会先锁定一个主地址，再围绕该地址追踪控筹和持币结构。',
+            '主地址优先使用币安官方可识别地址；若官方地址缺失，则退回流动性、持币人数与链优先级综合判定。',
             '搜索与价格快照来自 DEX Screener，筹码与持币结构来自 Moralis holders、historical holders 和 owners。',
             `候选结果已按持币地址数从高到低排序，并优先过滤掉持币地址少于 ${MIN_HOLDER_COUNT} 的低相关币。`,
         ];
@@ -994,6 +1134,6 @@ export async function buildTokenResearchPayload(
             notes,
         };
     } catch {
-        return fallbackPayload(query, scope);
+        return fallbackPayload(query, scope, 'upstream_request_failed');
     }
 }

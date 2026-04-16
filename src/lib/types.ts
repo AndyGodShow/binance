@@ -112,6 +112,39 @@ export interface TickerData {
 // 🔧 Sortable keys type for table sorting (includes computed fields)
 export type SortableKey = keyof TickerData | 'openInterestValue' | 'rank';
 
+export type LeaderboardWindow = '15m' | '1h' | '4h' | '24h';
+
+export interface OpenInterestWindowChange {
+    percent: number;
+    value: number;
+}
+
+export interface OpenInterestFrameSnapshot {
+    symbol: string;
+    asOf: number;
+    currentValue: number;
+    change15m?: OpenInterestWindowChange;
+    change1h?: OpenInterestWindowChange;
+    change4h?: OpenInterestWindowChange;
+    change24h?: OpenInterestWindowChange;
+}
+
+export interface LeaderboardEntry {
+    symbol: string;
+    value: number;
+    secondaryValue?: number;
+}
+
+export interface DashboardLeaderboards {
+    price: Record<LeaderboardWindow, LeaderboardEntry[]>;
+    oi: Record<LeaderboardWindow, LeaderboardEntry[]>;
+    oiToVolume: LeaderboardEntry[];
+    funding: {
+        positive: LeaderboardEntry[];
+        negative: LeaderboardEntry[];
+    };
+}
+
 export interface OHLC {
     time: number;
     open: number;

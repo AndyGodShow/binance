@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo, useCallback } from 'react';
-import { TickerData, SortableKey, AlertRecord, ScheduledAlertRecord, Watchlist } from '@/lib/types';
+import { TickerData, SortableKey, AlertRecord, ScheduledAlertRecord, Watchlist, OpenInterestFrameSnapshot } from '@/lib/types';
 import { formatCompact } from '@/lib/utils';
 import { useAlertMonitor } from '@/hooks/useAlertMonitor';
 import { useScheduledAlerts } from '@/hooks/useScheduledAlerts';
@@ -17,6 +17,7 @@ const DEMO_BASE_TIME = Date.UTC(2026, 3, 10, 10, 30, 0);
 
 interface DashboardProps {
     processedData?: TickerData[];
+    openInterestFrames?: Record<string, OpenInterestFrameSnapshot>;
     onSymbolClick?: (symbol: string) => void;
     demoMode?: boolean;
     watchlists?: Watchlist[];
@@ -49,6 +50,7 @@ const VOLUME_FILTER_LABELS: Record<string, string> = {
 
 export default function Dashboard({
     processedData: externalData,
+    openInterestFrames = {},
     onSymbolClick,
     demoMode = false,
     watchlists = [],

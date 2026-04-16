@@ -1,0 +1,280 @@
+.panel {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding: 22px;
+    border-radius: 20px;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    background:
+        radial-gradient(circle at top left, rgba(252, 213, 53, 0.08), transparent 28%),
+        linear-gradient(180deg, rgba(18, 22, 29, 0.96) 0%, rgba(13, 17, 23, 0.98) 100%);
+    box-shadow: 0 20px 44px rgba(0, 0, 0, 0.24);
+}
+
+.panelHeader {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+}
+
+.panelTag,
+.cardEyebrow {
+    display: inline-flex;
+    align-items: center;
+    width: fit-content;
+    padding: 5px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(252, 213, 53, 0.16);
+    background: rgba(252, 213, 53, 0.08);
+    color: var(--primary);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+}
+
+.panelTitle {
+    margin-top: 10px;
+    font-size: 26px;
+    font-weight: 800;
+    letter-spacing: -0.04em;
+    color: var(--text-primary);
+}
+
+.panelMeta {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 10px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.panelMeta span,
+.cardMeta {
+    display: inline-flex;
+    align-items: center;
+    min-height: 32px;
+    padding: 6px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.timeframeGrid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+}
+
+.secondaryGrid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+}
+
+.timeframeCard,
+.secondaryCard {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 16px;
+    border-radius: 18px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    background: rgba(255, 255, 255, 0.03);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.cardHeader {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.cardTitle {
+    margin-top: 10px;
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.dualColumn {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.listBlock {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
+}
+
+.listHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.listTitle {
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.listMeta {
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.rankList {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.rankRow {
+    appearance: none;
+    display: grid;
+    grid-template-columns: 34px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 11px 12px;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.025);
+    font: inherit;
+    color: inherit;
+    text-align: left;
+    transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+    height: 54px;
+}
+
+.rankRow:disabled {
+    opacity: 1;
+    cursor: default;
+}
+
+.rankRow:not(:disabled) {
+    cursor: pointer;
+}
+
+.rankRow:not(:disabled):hover {
+    transform: translateY(-1px);
+    border-color: rgba(252, 213, 53, 0.22);
+    background: rgba(252, 213, 53, 0.04);
+}
+
+.rankIndex {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-secondary);
+    font-family: 'Roboto Mono', monospace;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.rankSymbol {
+    min-width: 0;
+    color: var(--text-primary);
+    font-size: 14px;
+    font-weight: 700;
+    font-family: 'Outfit', sans-serif;
+    letter-spacing: 0.02em;
+}
+
+.rankValueGroup {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 2px;
+    min-width: 0;
+}
+
+.rankValue {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.rankSecondary {
+    color: var(--text-secondary);
+    font-family: 'Roboto Mono', monospace;
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+.positive {
+    color: var(--green);
+}
+
+.negative {
+    color: var(--red);
+}
+
+.emphasis {
+    color: var(--primary);
+}
+
+.neutral {
+    color: var(--text-primary);
+}
+
+.emptyState {
+    min-height: 84px;
+    padding: 12px;
+    border-radius: 14px;
+    border: 1px dashed rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.02);
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.6;
+}
+
+@media (max-width: 1100px) {
+    .timeframeGrid,
+    .secondaryGrid,
+    .dualColumn {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 640px) {
+    .panel {
+        padding: 18px;
+        border-radius: 18px;
+    }
+
+    .panelHeader,
+    .cardHeader {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .panelMeta {
+        justify-content: flex-start;
+    }
+
+    .rankRow {
+        grid-template-columns: 30px minmax(0, 1fr);
+    }
+
+    .rankValueGroup {
+        grid-column: 1 / -1;
+        margin-left: 40px;
+        align-items: flex-start;
+    }
+}

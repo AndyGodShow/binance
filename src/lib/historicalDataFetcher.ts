@@ -20,6 +20,10 @@ export class HistoricalDataFetcher {
     private baseUrl = '/api/backtest/klines';
     private maxLimit = 1500;
     private readonly rangeCache = new Map<string, Promise<KlineData[]>>();
+    private activeRequestCount = 0;
+    private readonly requestQueue: Array<() => void> = [];
+    private readonly maxConcurrentRequests = 2;
+    private readonly maxRequestAttempts = 3;
 
     private buildCacheKey(
         symbol: string,
@@ -46,6 +50,77 @@ export class HistoricalDataFetcher {
         });
 
         return Array.from(deduped.values()).sort((a, b) => a.closeTime - b.closeTime);
+    }
+
+    private async withRequestSlot<T>(task: () => Promise<T>): Promise<T> {
+        if (this.activeRequestCount >= this.maxConcurrentRequests) {
+            await new Promise<void>((resolve) => {
+                this.requestQueue.push(resolve);
+            });
+        }
+
+        this.activeRequestCount += 1;
+
+        try {
+            return await task();
+        } finally {
+            this.activeRequestCount -= 1;
+            const next = this.requestQueue.shift();
+            if (next) {
+                next();
+            }
+        }
+    }
+
+    private isRetryableResponseStatus(status: number): boolean {
+        return status === 408 || status === 429 || status >= 500;
+    }
+
+    private isRetryableRequestError(error: unknown): boolean {
+        const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+
+        return [
+            'fetch failed',
+            'networkerror',
+            'network error',
+            'timed out',
+            'timeout',
+            'terminated',
+            'failed to fetch',
+        ].some((pattern) => message.includes(pattern));
+    }
+
+    private async fetchChunkWithRetry(url: string): Promise<Response> {
+        let lastError: Error | null = null;
+
+        for (let attempt = 0; attempt < this.maxRequestAttempts; attempt += 1) {
+            try {
+                const response = await this.withRequestSlot(() => fetch(url));
+
+                if (response.ok) {
+                    return response;
+                }
+
+                const shouldRetry = this.isRetryableResponseStatus(response.status) && attempt < this.maxRequestAttempts - 1;
+                if (shouldRetry) {
+                    await this.sleep(250 * (attempt + 1));
+                    continue;
+                }
+
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            } catch (error) {
+                lastError = error instanceof Error ? error : new Error(String(error));
+                const shouldRetry = this.isRetryableRequestError(error) && attempt < this.maxRequestAttempts - 1;
+
+                if (!shouldRetry) {
+                    throw lastError;
+                }
+
+                await this.sleep(250 * (attempt + 1));
+            }
+        }
+
+        throw lastError ?? new Error('Unknown historical fetch failure');
     }
 
     /**
@@ -93,7 +168,7 @@ export class HistoricalDataFetcher {
                         params.append('includeAuxiliary', 'false');
                     }
 
-                    const response = await fetch(`${this.baseUrl}?${params}`);
+                    const response = await this.fetchChunkWithRetry(`${this.baseUrl}?${params}`);
 
                     if (!response.ok) {
                         throw new Error(`HTTP ${response.status}: ${response.statusText}`);

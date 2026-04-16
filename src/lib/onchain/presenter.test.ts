@@ -1,8 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildExecutiveSummary, buildOnchainStorageKey, buildVisibleHistory } from './presenter';
+import { buildExecutiveSummary, buildOnchainStorageKey } from './presenter';
 import type { ChipAnalysis, HistoricalHoldersPoint, TokenHolderMetrics, TokenSearchResult } from './types';
+
+function buildVisibleHistory(points: HistoricalHoldersPoint[], limit = 7) {
+    const sorted = [...points].sort((a, b) => (
+        new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    ));
+
+    return sorted.slice(-limit);
+}
 
 const sampleToken: TokenSearchResult = {
     tokenAddress: '0xABC',
@@ -81,7 +89,7 @@ const sampleAnalysis: ChipAnalysis = {
 test('buildOnchainStorageKey creates stable default cache key', () => {
     assert.equal(
         buildOnchainStorageKey('PEPE'),
-        'persistent-swr:v2:onchain:PEPE:default'
+        'persistent-swr:v3:onchain:PEPE:default'
     );
 });
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo, useEffect, useCallback, useDeferredValue, useRef } from 'react';
-import { TickerData } from '@/lib/types';
+import { OpenInterestFrameSnapshot, TickerData } from '@/lib/types';
 import { usePageVisibility } from '@/hooks/usePageVisibility';
 import { usePersistentSWR } from '@/hooks/usePersistentSWR';
 import Dashboard from '@/components/Dashboard';
@@ -9,9 +9,11 @@ import StrategyCenter from '@/components/StrategyCenter';
 import SimulatedTrading from '@/components/SimulatedTrading';
 import LongShortPanel from '@/components/LongShortPanel';
 import OnchainTracker from '@/components/OnchainTracker';
+import MacroView from '@/components/MacroView';
 import TabNavigation from '@/components/TabNavigation';
 import ChartDrawer from '@/components/ChartDrawer';
 import WatchlistsPanel from '@/components/WatchlistsPanel';
+import LeaderboardView from '@/components/LeaderboardView';
 import { useStrategyScanner } from '@/hooks/useStrategyScanner';
 import { useWatchlists } from '@/hooks/useWatchlists';
 import { formatPrice } from '@/lib/risk/priceUtils';
@@ -63,6 +65,7 @@ function createDemoSignals(now: number): StrategySignal[] {
 }
 
 type MultiFrameDataMap = Record<string, { o15m: number; o1h: number; o4h: number }>;
+type OpenInterestFrameDataMap = Record<string, OpenInterestFrameSnapshot>;
 type RsrsDataMap = Record<string, {
   beta: number;
   zScore: number;
@@ -91,6 +94,8 @@ const MAX_STRATEGY_FRAME_DATA_AGE_SECONDS = 20 * 60;
 const MAX_STRATEGY_RSRS_DATA_AGE_SECONDS = 6 * 60 * 60;
 const MULTIFRAME_BATCH_SIZE = 60;
 const MULTIFRAME_BATCH_DELAY_MS = 120;
+const OI_MULTIFRAME_BATCH_SIZE = 40;
+const OI_MULTIFRAME_BATCH_DELAY_MS = 140;
 const DEMO_BASE_TIME = Date.UTC(2026, 3, 10, 10, 30, 0);
 
 function parseOptionalSeconds(value: string | null): number | undefined {
@@ -216,13 +221,15 @@ async function fetcherWithMeta<T>(url: string): Promise<TimedPayload<T>> {
 }
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'watchlists' | 'longshort' | 'onchain' | 'strategies' | 'trading'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'leaderboard' | 'macro' | 'watchlists' | 'longshort' | 'onchain' | 'strategies' | 'trading'>('dashboard');
   const [dashboardWatchlistId, setDashboardWatchlistId] = useState('all');
   const isPageVisible = usePageVisibility();
   const [enableHeavyMarket, setEnableHeavyMarket] = useState(false);
   const [enableDeferredIndicators, setEnableDeferredIndicators] = useState(false);
   const [framePayload, setFramePayload] = useState<TimedPayload<MultiFrameDataMap>>();
   const [frameError, setFrameError] = useState<Error | null>(null);
+  const [oiFramePayload, setOiFramePayload] = useState<TimedPayload<OpenInterestFrameDataMap>>();
+  const [oiFrameError, setOiFrameError] = useState<Error | null>(null);
   const multiframeSymbolsRef = useRef<string[]>([]);
   const [isDemoMode, setIsDemoMode] = useState(false);
   const {
@@ -251,7 +258,9 @@ export default function Home() {
   const fastMarketRefreshInterval = isPageVisible ? 3000 : 30000;
   const heavyMarketRefreshInterval = isPageVisible ? 30000 : 300000;
   const multiframeRefreshInterval = isPageVisible ? 30000 : 300000;
+  const oiMultiframeRefreshInterval = isPageVisible ? 60000 : 300000;
   const shouldRunLiveMarketRequests = activeTab !== 'trading';
+  const shouldRunLeaderboardRequests = activeTab === 'dashboard' || activeTab === 'leaderboard';
 
   const { data: lightMarketData, error: marketError, isLoading: marketLoading } = usePersistentSWR<TickerData[]>(
     shouldRunLiveMarketRequests ? '/api/market/light' : null,
@@ -305,6 +314,7 @@ export default function Home() {
 
   const heavyMarketData = heavyMarketPayload?.data;
   const frameData = framePayload?.data;
+  const oiFrameData = oiFramePayload?.data;
   const rsrsData = rsrsPayload?.data;
 
   const multiframeSymbols = useMemo(() => {
@@ -329,7 +339,26 @@ export default function Home() {
 
     const params = new URLSearchParams(window.location.search);
     setIsDemoMode(params.get('demo') === '1');
+    const requestedTab = params.get('tab');
+    if (requestedTab === 'dashboard' || requestedTab === 'leaderboard' || requestedTab === 'macro' || requestedTab === 'watchlists' || requestedTab === 'longshort' || requestedTab === 'onchain' || requestedTab === 'strategies' || requestedTab === 'trading') {
+      setActiveTab(requestedTab as any);
+    }
   }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const url = new URL(window.location.href);
+    if (activeTab === 'dashboard') {
+      url.searchParams.delete('tab');
+    } else {
+      url.searchParams.set('tab', activeTab);
+    }
+
+    window.history.replaceState({}, '', url.toString());
+  }, [activeTab]);
 
   useEffect(() => {
     multiframeSymbolsRef.current = multiframeSymbols;
@@ -356,7 +385,16 @@ export default function Home() {
     setEnableHeavyMarket(false);
     setEnableDeferredIndicators(false);
     setFrameError(null);
+    setOiFrameError(null);
   }, [shouldRunLiveMarketRequests]);
+
+  useEffect(() => {
+    if (shouldRunLeaderboardRequests) {
+      return;
+    }
+
+    setOiFrameError(null);
+  }, [shouldRunLeaderboardRequests]);
 
   useEffect(() => {
     if (!shouldRunLiveMarketRequests || !enableDeferredIndicators || !multiframeSignature) {
@@ -440,6 +478,89 @@ export default function Home() {
       }
     };
   }, [enableDeferredIndicators, multiframeRefreshInterval, multiframeSignature, shouldRunLiveMarketRequests]);
+
+  useEffect(() => {
+    if (!shouldRunLeaderboardRequests || !multiframeSignature) {
+      return;
+    }
+
+    let cancelled = false;
+    let nextRefreshTimer: number | undefined;
+
+    const activeSymbolSet = new Set(multiframeSymbolsRef.current);
+    setOiFramePayload((prev) => {
+      if (!prev) {
+        return prev;
+      }
+
+      const prunedData = Object.fromEntries(
+        Object.entries(prev.data).filter(([symbol]) => activeSymbolSet.has(symbol))
+      );
+
+      if (Object.keys(prunedData).length === Object.keys(prev.data).length) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        data: prunedData,
+      };
+    });
+
+    const runProgressiveFetch = async () => {
+      setOiFrameError(null);
+
+      const symbols = multiframeSymbolsRef.current;
+
+      for (let index = 0; index < symbols.length; index += OI_MULTIFRAME_BATCH_SIZE) {
+        if (cancelled) {
+          return;
+        }
+
+        const batch = symbols.slice(index, index + OI_MULTIFRAME_BATCH_SIZE);
+
+        try {
+          const payload = await fetcherWithMeta<OpenInterestFrameDataMap>(
+            `/api/oi/multiframe?symbols=${encodeURIComponent(batch.join(','))}`
+          );
+
+          if (cancelled) {
+            return;
+          }
+
+          setOiFramePayload((prev) => ({
+            data: {
+              ...(prev?.data || {}),
+              ...payload.data,
+            },
+            fetchedAt: Date.now(),
+            dataSource: 'client-batched',
+          }));
+        } catch (error) {
+          if (!cancelled) {
+            setOiFrameError(error instanceof Error ? error : new Error('Failed to fetch OI multiframe batch'));
+          }
+        }
+
+        if (index + OI_MULTIFRAME_BATCH_SIZE < symbols.length) {
+          await new Promise((resolve) => window.setTimeout(resolve, OI_MULTIFRAME_BATCH_DELAY_MS));
+        }
+      }
+
+      if (!cancelled) {
+        nextRefreshTimer = window.setTimeout(runProgressiveFetch, oiMultiframeRefreshInterval);
+      }
+    };
+
+    void runProgressiveFetch();
+
+    return () => {
+      cancelled = true;
+      if (nextRefreshTimer !== undefined) {
+        window.clearTimeout(nextRefreshTimer);
+      }
+    };
+  }, [multiframeSignature, oiMultiframeRefreshInterval, shouldRunLeaderboardRequests]);
 
   const baseMarketData = useMemo(() => {
     if (!lightMarketData || lightMarketData.length === 0) {
@@ -615,7 +736,7 @@ export default function Home() {
   return (
     <main className="container">
       <TabNavigation activeTab={activeTab} onChange={setActiveTab} />
-      {(marketError || frameError || rsrsError) && (
+      {(marketError || frameError || rsrsError || oiFrameError) && (
         <div
           style={{
             marginBottom: 12,
@@ -649,12 +770,23 @@ export default function Home() {
       {activeTab === 'dashboard' && (
         <Dashboard
           processedData={processedData}
+          openInterestFrames={oiFrameData}
           onSymbolClick={handleSymbolClick}
           demoMode={isDemoMode}
           watchlists={watchlists}
           selectedWatchlistId={dashboardWatchlistId}
           onSelectWatchlist={setDashboardWatchlistId}
         />
+      )}
+      {activeTab === 'leaderboard' && (
+        <LeaderboardView
+          data={processedData}
+          openInterestFrames={oiFrameData}
+          onSymbolClick={handleSymbolClick}
+        />
+      )}
+      {activeTab === 'macro' && (
+        <MacroView />
       )}
       {activeTab === 'watchlists' && (
         <WatchlistsPanel

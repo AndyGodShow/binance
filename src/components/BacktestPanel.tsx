@@ -10,7 +10,7 @@ import { calculateDataQuality, DataQualityMetrics } from '@/lib/dataQuality';
 import { StrategyRiskConfig } from '@/lib/risk/riskConfig';
 import { calculateRiskManagement } from '@/lib/risk/riskCalculator';
 import { applyRiskConfigOverrides } from '@/lib/risk/overrideRiskManagement';
-import { buildHistoricalTickerOverrides } from '@/lib/historicalMultiTimeframe';
+import { buildHistoricalTickerOverrides, getRequiredHistoricalIntervals } from '@/lib/historicalMultiTimeframe';
 import { buildBacktestDiagnostics, BacktestDiagnostics } from '@/lib/backtestDiagnostics';
 import { runPortfolioBacktest, PortfolioBacktestResult } from '@/lib/portfolioBacktestEngine';
 import DataQualityCard from './DataQualityCard';
@@ -23,6 +23,11 @@ type SymbolSource = 'top' | 'range' | 'custom';
 type ExecutionIntervalOption = 'same' | '1m' | '5m' | '15m';
 const TRADE_PAGE_SIZE = 20;
 const DAY_MS = 24 * 60 * 60 * 1000;
+const SYMBOL_VALIDATION_CONCURRENCY = 2;
+const BACKTEST_VALIDATION_LIMIT = 1500;
+const HISTORICAL_LOOKBACK_BUFFER_MS = 35 * DAY_MS;
+const EXECUTION_VALIDATION_OFFSET_MS = 50 * 60 * 60 * 1000;
+const EXECUTION_VALIDATION_CHUNK_MS = 1200 * 60 * 1000;
 
 interface DownloadRequestResult {
     ok: boolean;
@@ -61,7 +66,20 @@ interface BacktestTaskResult {
     error?: Error;
 }
 
-const MAX_BACKTEST_CONCURRENCY = 3;
+interface SymbolValidationResult {
+    supportedSymbols: string[];
+    skippedSymbols: string[];
+}
+
+interface BacktestValidationStage {
+    name: string;
+    interval: string;
+    startTime: number;
+    endTime: number;
+    minCount: number;
+}
+
+const MAX_BACKTEST_CONCURRENCY = 2;
 
 async function requestHistoricalDataDownload(
     symbol: string,
@@ -186,6 +204,169 @@ function parseCustomSymbols(input: string): string[] {
     );
 }
 
+function isBacktestSymbolCandidate(symbol: string): boolean {
+    return /^[A-Z0-9]+USDT$/.test(symbol);
+}
+
+function buildBacktestValidationUrl(symbol: string, stage: BacktestValidationStage): string {
+    const params = new URLSearchParams({
+        symbol,
+        interval: stage.interval,
+        startTime: stage.startTime.toString(),
+        endTime: stage.endTime.toString(),
+        limit: BACKTEST_VALIDATION_LIMIT.toString(),
+        includeAuxiliary: 'false',
+    });
+
+    return `/api/backtest/klines?${params.toString()}`;
+}
+
+function estimateStageMinCount(startTime: number, endTime: number, interval: string, fallbackMinimum: number): number {
+    const intervalMs = intervalToMs(interval);
+    if (!intervalMs) {
+        return fallbackMinimum;
+    }
+
+    const estimatedBars = Math.max(1, Math.floor((endTime - startTime) / intervalMs));
+    return Math.max(fallbackMinimum, Math.min(BACKTEST_VALIDATION_LIMIT, Math.floor(estimatedBars * 0.7)));
+}
+
+function buildSignalValidationStages(
+    signalInterval: string,
+    startTime: number,
+    endTime: number
+): BacktestValidationStage[] {
+    const intervalMs = intervalToMs(signalInterval);
+    if (!intervalMs) {
+        return [];
+    }
+
+    const fullRangeBars = Math.max(1, Math.floor((endTime - startTime) / intervalMs));
+    if (fullRangeBars <= BACKTEST_VALIDATION_LIMIT) {
+        return [{
+            name: `signal-${signalInterval}`,
+            interval: signalInterval,
+            startTime,
+            endTime,
+            minCount: estimateStageMinCount(startTime, endTime, signalInterval, 24),
+        }];
+    }
+
+    const firstStageEnd = Math.min(endTime, startTime + (intervalMs * (BACKTEST_VALIDATION_LIMIT - 1)));
+    const lastStageStart = Math.max(startTime, endTime - (intervalMs * (BACKTEST_VALIDATION_LIMIT - 1)));
+
+    return [
+        {
+            name: `signal-${signalInterval}-head`,
+            interval: signalInterval,
+            startTime,
+            endTime: firstStageEnd,
+            minCount: Math.max(240, Math.floor(BACKTEST_VALIDATION_LIMIT * 0.8)),
+        },
+        {
+            name: `signal-${signalInterval}-tail`,
+            interval: signalInterval,
+            startTime: lastStageStart,
+            endTime,
+            minCount: Math.max(240, Math.floor(BACKTEST_VALIDATION_LIMIT * 0.8)),
+        },
+    ];
+}
+
+function buildExecutionValidationStages(
+    executionInterval: string,
+    startTime: number,
+    endTime: number
+): BacktestValidationStage[] {
+    const firstStageStart = Math.min(endTime, startTime + EXECUTION_VALIDATION_OFFSET_MS);
+    const firstStageEnd = Math.min(endTime, firstStageStart + EXECUTION_VALIDATION_CHUNK_MS);
+    const stages: BacktestValidationStage[] = [{
+        name: `execution-${executionInterval}-1`,
+        interval: executionInterval,
+        startTime: firstStageStart,
+        endTime: firstStageEnd,
+        minCount: estimateStageMinCount(firstStageStart, firstStageEnd, executionInterval, 60),
+    }];
+
+    const secondStageStart = firstStageEnd + 1;
+    if (secondStageStart < endTime) {
+        const secondStageEnd = Math.min(endTime, secondStageStart + EXECUTION_VALIDATION_CHUNK_MS);
+        stages.push({
+            name: `execution-${executionInterval}-2`,
+            interval: executionInterval,
+            startTime: secondStageStart,
+            endTime: secondStageEnd,
+            minCount: estimateStageMinCount(secondStageStart, secondStageEnd, executionInterval, 60),
+        });
+    }
+
+    return stages;
+}
+
+function buildBacktestValidationStages(params: {
+    strategyId: string;
+    preset: PresetRange;
+    signalInterval: string;
+    executionSelection: ExecutionIntervalOption;
+}): BacktestValidationStage[] {
+    const { startTime, endTime } = HistoricalDataFetcher.getPresetRange(params.preset);
+    const stages = buildSignalValidationStages(params.signalInterval, startTime, endTime);
+    const lookbackStartTime = Math.max(0, startTime - HISTORICAL_LOOKBACK_BUFFER_MS);
+
+    getRequiredHistoricalIntervals(params.strategyId)
+        .filter((interval) => interval !== params.signalInterval)
+        .forEach((interval) => {
+            stages.push({
+                name: `mtf-${interval}`,
+                interval,
+                startTime: lookbackStartTime,
+                endTime,
+                minCount: interval === '5m'
+                    ? 120
+                    : interval === '1d'
+                        ? 21
+                        : 8,
+            });
+        });
+
+    const resolvedExecutionInterval = resolveExecutionInterval(params.executionSelection, params.signalInterval);
+    if (resolvedExecutionInterval !== params.signalInterval) {
+        stages.push(...buildExecutionValidationStages(resolvedExecutionInterval, startTime, endTime));
+    }
+
+    return stages;
+}
+
+function isRetryableValidationStatus(status: number): boolean {
+    return status === 408 || status === 429 || status >= 500;
+}
+
+async function probeBacktestValidationStage(symbol: string, stage: BacktestValidationStage): Promise<boolean> {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+            const response = await fetch(buildBacktestValidationUrl(symbol, stage));
+            const payload = await response.json().catch(() => null);
+            const count = Array.isArray(payload?.data) ? payload.data.length : 0;
+
+            if (response.ok) {
+                return count >= stage.minCount;
+            }
+
+            if (!isRetryableValidationStatus(response.status) || attempt === 2) {
+                return false;
+            }
+        } catch {
+            if (attempt === 2) {
+                return false;
+            }
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+    }
+
+    return false;
+}
+
 function intervalToMs(interval: string): number {
     const match = interval.match(/^(\d+)(m|h|d|w|M)$/);
     if (!match) {
@@ -303,6 +484,57 @@ async function runWithConcurrency<T, R>(
     return results;
 }
 
+async function validateBacktestSymbols(
+    symbols: string[],
+    options: {
+        strategyId: string;
+        preset: PresetRange;
+        signalInterval: string;
+        executionSelection: ExecutionIntervalOption;
+    }
+): Promise<SymbolValidationResult> {
+    const uniqueCandidates = Array.from(new Set(symbols.map((symbol) => symbol.trim().toUpperCase())))
+        .filter(Boolean)
+        .filter(isBacktestSymbolCandidate);
+
+    const invalidSymbols = symbols
+        .map((symbol) => symbol.trim().toUpperCase())
+        .filter((symbol) => symbol && !isBacktestSymbolCandidate(symbol));
+
+    const validationStages = buildBacktestValidationStages(options);
+
+    const probeResults = await runWithConcurrency(
+        uniqueCandidates,
+        SYMBOL_VALIDATION_CONCURRENCY,
+        async (symbol) => {
+            for (const stage of validationStages) {
+                const ok = await probeBacktestValidationStage(symbol, stage);
+                if (!ok) {
+                    return {
+                        symbol,
+                        ok: false,
+                    };
+                }
+            }
+
+            return {
+                symbol,
+                ok: true,
+            };
+        }
+    );
+
+    const supportedSymbols = probeResults
+        .filter((result) => result.ok)
+        .map((result) => result.symbol);
+    const skippedSymbols = [
+        ...invalidSymbols,
+        ...probeResults.filter((result) => !result.ok).map((result) => result.symbol),
+    ];
+
+    return { supportedSymbols, skippedSymbols };
+}
+
 export default function BacktestPanel() {
     const [interval, setInterval] = useState('1h');
     const [executionInterval, setExecutionInterval] = useState<ExecutionIntervalOption>('1m');
@@ -327,6 +559,7 @@ export default function BacktestPanel() {
     const [allRuns, setAllRuns] = useState<BacktestRunDetail[]>([]);
     const [batchResults, setBatchResults] = useState<BatchBacktestItem[]>([]);
     const [failedSymbols, setFailedSymbols] = useState<string[]>([]);
+    const [skippedSymbols, setSkippedSymbols] = useState<string[]>([]);
     const [portfolioResult, setPortfolioResult] = useState<PortfolioBacktestResult | null>(null);
     const [portfolioTradePage, setPortfolioTradePage] = useState(1);
     const [detailTradePage, setDetailTradePage] = useState(1);
@@ -525,32 +758,50 @@ export default function BacktestPanel() {
         setAllRuns([]);
         setBatchResults([]);
         setFailedSymbols([]);
+        setSkippedSymbols([]);
         setPortfolioResult(null);
         setPortfolioTradePage(1);
         setDetailTradePage(1);
 
         try {
             const symbols = await resolveSymbols();
-            setResolvedSymbols(symbols);
-            setDownloadStatus(`🔎 已选中 ${symbols.length} 个币种，开始并发回测...`);
+            setDownloadStatus(`🔎 已选中 ${symbols.length} 个币种，正在检查历史回测可用性...`);
+
+            const { supportedSymbols, skippedSymbols: nextSkippedSymbols } = await validateBacktestSymbols(symbols, {
+                strategyId: selectedStrategy,
+                preset,
+                signalInterval: interval,
+                executionSelection: executionInterval,
+            });
+            if (supportedSymbols.length === 0) {
+                throw new Error('所选币池都无法通过历史数据校验，请缩小范围或改用自定义币种。');
+            }
+
+            setResolvedSymbols(supportedSymbols);
+            setSkippedSymbols(nextSkippedSymbols);
+            setDownloadStatus(
+                `🔎 历史数据校验完成：可回测 ${supportedSymbols.length} 个` +
+                (nextSkippedSymbols.length > 0 ? `，跳过 ${nextSkippedSymbols.length} 个` : '') +
+                '，开始并发回测...'
+            );
 
             let finishedCount = 0;
             let successCount = 0;
             const taskResults = await runWithConcurrency<string, BacktestTaskResult>(
-                symbols,
+                supportedSymbols,
                 MAX_BACKTEST_CONCURRENCY,
                 async (symbol, index) => {
-                    setDownloadStatus(`⏳ 正在回测 ${symbol} (${index + 1}/${symbols.length})，已完成 ${finishedCount}/${symbols.length}...`);
+                    setDownloadStatus(`⏳ 正在回测 ${symbol} (${index + 1}/${supportedSymbols.length})，已完成 ${finishedCount}/${supportedSymbols.length}...`);
 
                     try {
                         const run = await runSingleBacktest(symbol, selectedStrategy, preset, interval, executionInterval);
                         finishedCount += 1;
                         successCount += 1;
-                        setDownloadStatus(`⏳ 已完成 ${finishedCount}/${symbols.length}，成功 ${successCount} 个...`);
+                        setDownloadStatus(`⏳ 已完成 ${finishedCount}/${supportedSymbols.length}，成功 ${successCount} 个...`);
                         return { symbol, run };
                     } catch (runError) {
                         finishedCount += 1;
-                        setDownloadStatus(`⏳ 已完成 ${finishedCount}/${symbols.length}，成功 ${successCount} 个...`);
+                        setDownloadStatus(`⏳ 已完成 ${finishedCount}/${supportedSymbols.length}，成功 ${successCount} 个...`);
                         logger.error(`Backtest failed for ${symbol}`, runError as Error);
                         return {
                             symbol,
@@ -602,8 +853,9 @@ export default function BacktestPanel() {
             const zeroTradeCount = completedRuns.filter((run) => run.result.totalTrades === 0).length;
             const completedCount = completedRuns.length;
             setDownloadStatus(
-                `✅ 批量回测完成：成功 ${completedCount}/${symbols.length}` +
+                `✅ 批量回测完成：成功 ${completedCount}/${supportedSymbols.length}` +
                 (failed.length > 0 ? `，失败 ${failed.length}` : '') +
+                (nextSkippedSymbols.length > 0 ? `，预筛跳过 ${nextSkippedSymbols.length}` : '') +
                 (zeroTradeCount > 0 ? `，其中 ${zeroTradeCount} 个币种未产生交易` : '')
             );
 
@@ -862,6 +1114,12 @@ export default function BacktestPanel() {
             {resolvedSymbols.length > 0 && (
                 <div className={styles.poolInfo}>
                     本次币池：{resolvedSymbols.join(', ')}
+                </div>
+            )}
+
+            {skippedSymbols.length > 0 && (
+                <div className={styles.info}>
+                    已跳过不可回测标的：{skippedSymbols.join(', ')}
                 </div>
             )}
 

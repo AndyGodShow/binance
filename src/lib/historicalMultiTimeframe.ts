@@ -156,7 +156,7 @@ function calculateTimeAlignedChange(klines: KlineData[], timestamp: number, look
     return ((currentClose - pastClose) / pastClose) * 100;
 }
 
-function getRequiredIntervals(strategyId: string): SupportedInterval[] {
+export function getRequiredHistoricalIntervals(strategyId: string): SupportedInterval[] {
     if (!MULTIFRAME_STRATEGIES.has(strategyId)) {
         return [];
     }
@@ -175,7 +175,7 @@ function getRequiredIntervals(strategyId: string): SupportedInterval[] {
 export async function buildHistoricalTickerOverrides(
     options: HistoricalMultiTimeframeOptions
 ): Promise<Map<number, HistoricalTickerOverrides>> {
-    const requiredIntervals = getRequiredIntervals(options.strategyId);
+    const requiredIntervals = getRequiredHistoricalIntervals(options.strategyId);
     if (requiredIntervals.length === 0 || options.baseKlines.length === 0) {
         return new Map();
     }
@@ -183,32 +183,30 @@ export async function buildHistoricalTickerOverrides(
     const fetchStartTime = Math.max(0, options.startTime - HISTORICAL_LOOKBACK_BUFFER_MS);
     const intervalData = new Map<SupportedInterval, KlineData[]>();
 
-    await Promise.all(
-        requiredIntervals.map(async (interval) => {
-            if (interval === options.baseInterval) {
-                intervalData.set(interval, options.baseKlines);
-                return;
-            }
+    for (const interval of requiredIntervals) {
+        if (interval === options.baseInterval) {
+            intervalData.set(interval, options.baseKlines);
+            continue;
+        }
 
-            try {
-                const klines = await options.fetchRangeData(
-                    options.symbol,
-                    interval,
-                    fetchStartTime,
-                    options.endTime
-                );
-                intervalData.set(interval, klines);
-            } catch (error) {
-                logger.warn('Historical multi-timeframe fetch failed, falling back to partial overrides', {
-                    symbol: options.symbol,
-                    strategyId: options.strategyId,
-                    interval,
-                    error: error instanceof Error ? error.message : String(error),
-                });
-                intervalData.set(interval, []);
-            }
-        })
-    );
+        try {
+            const klines = await options.fetchRangeData(
+                options.symbol,
+                interval,
+                fetchStartTime,
+                options.endTime
+            );
+            intervalData.set(interval, klines);
+        } catch (error) {
+            logger.warn('Historical multi-timeframe fetch failed, falling back to partial overrides', {
+                symbol: options.symbol,
+                strategyId: options.strategyId,
+                interval,
+                error: error instanceof Error ? error.message : String(error),
+            });
+            intervalData.set(interval, []);
+        }
+    }
 
     const overrides = new Map<number, HistoricalTickerOverrides>();
     const trend5mKlines = intervalData.get('5m') || [];

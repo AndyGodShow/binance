@@ -8,6 +8,7 @@ import {
     buildExecutiveSummary,
     buildOnchainStorageKey,
 } from '@/lib/onchain/presenter';
+import { getFallbackBannerMessage } from '@/lib/onchain/service';
 import type {
     ChipScoreBreakdownItem,
     DexPriceWindow,
@@ -42,6 +43,10 @@ export default function OnchainTracker() {
     }, [query, scope]);
 
     const storageKey = useMemo(() => buildOnchainStorageKey(`${scope}:${query}`), [query, scope]);
+    const shouldUsePersistedOnchainData = useCallback(
+        (payload: TokenResearchPayload) => payload.sourceMode === 'hybrid',
+        []
+    );
 
     const { data, error, isLoading } = usePersistentSWR<TokenResearchPayload>(
         apiUrl,
@@ -53,6 +58,8 @@ export default function OnchainTracker() {
             storageTtlMs: 5 * 60 * 1000,
             persistIntervalMs: 60 * 1000,
             storageKey,
+            shouldPersistData: shouldUsePersistedOnchainData,
+            shouldRestoreData: shouldUsePersistedOnchainData,
         }
     );
 
@@ -62,6 +69,10 @@ export default function OnchainTracker() {
     const topHolders = data?.topHolders ?? [];
 
     const isFallback = data?.sourceMode === 'fallback';
+    const fallbackMessage = useMemo(
+        () => getFallbackBannerMessage(data?.fallbackReason),
+        [data?.fallbackReason]
+    );
 
     const lastSubmitRef = useRef(0);
     const cooldownTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -103,17 +114,17 @@ export default function OnchainTracker() {
         scope === 'alpha'
             ? {
                 label: '币安 Alpha',
-                subtitle: '先从币安 Alpha 币池定位目标，再判断它是不是被少数地址主导、筹码是否正在扩散。',
+                subtitle: '先从币安 Alpha 官方名录定位主地址，再判断它是不是被少数地址主导、筹码是否正在扩散。',
                 badge: 'Alpha 观察',
-                emptyText: '输入一个 Alpha 币后，这里会展示它的控筹情况、筹码分布和持币地址变化。',
-                directText: '已按 Binance Alpha 名录自动定位主研究对象。',
+                emptyText: '输入一个 Alpha 币后，这里会围绕主地址展示它的控筹情况、筹码分布和持币地址变化。',
+                directText: '已按 Binance Alpha 名录优先锁定主地址进行追踪。',
             }
             : {
                 label: '币安合约',
-                subtitle: '默认只研究你在币安合约里真正会碰到的币，先定位主标的，再看谁在控筹、筹码落在哪一层。',
+                subtitle: '默认只研究你在币安合约里真正会碰到的币，并优先锁定一个主地址，再看谁在控筹、筹码落在哪一层。',
                 badge: '合约主池',
-                emptyText: '输入一个合约币后，这里会展示它的控筹情况、筹码分布和持币地址变化。',
-                directText: '已按币安合约主标的自动直达研究页。',
+                emptyText: '输入一个合约币后，这里会围绕主地址展示它的控筹情况、筹码分布和持币地址变化。',
+                directText: '已按币安合约标的优先锁定单一主地址进行追踪。',
             }
     ), [scope]);
 
@@ -167,18 +178,13 @@ export default function OnchainTracker() {
                     </div>
                 </div>
 
-                <div className={styles.heroRail}>
-                    <DataChip label="研究范围" value={scopeMeta.label} />
-                    <DataChip label="候选数量" value={String(data?.searchResults.length ?? 0)} />
-                    <DataChip label="持币过滤" value=">= 100 地址" />
-                </div>
             </header>
 
             {error && <div className={styles.errorBanner}>单币筹码分析加载失败，请稍后再试。</div>}
 
             {isFallback && (
                 <div className={styles.fallbackBanner}>
-                    当前显示的是回退样本数据，通常意味着当前数据源暂时不可用或请求失败。稍后重试，或检查链上数据配置。
+                    {fallbackMessage}
                 </div>
             )}
 
@@ -302,21 +308,53 @@ export default function OnchainTracker() {
                                 </div>
                             </section>
                         </>
+                    ) : selected ? (
+                        <section className={styles.tokenHero}>
+                            <div className={styles.tokenMain}>
+                                <div className={styles.tokenHeader}>
+                                    <div>
+                                        <div className={styles.tokenRow}>
+                                            <h3 className={styles.tokenTitle}>{selected.symbol}</h3>
+                                            <span className={styles.scopeBadge}>{scopeMeta.badge}</span>
+                                            <span className={styles.chainBadge}>{selected.chainName}</span>
+                                        </div>
+                                        <p className={styles.tokenName}>{selected.name}</p>
+                                    </div>
+                                    <div className={styles.priceCluster}>
+                                        <strong className={styles.priceValue}>{formatMaybeCurrency(selected.usdPrice)}</strong>
+                                        <span className={styles.priceHint}>现价快照</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className={styles.marketStrip}>
+                                <MarketMetric label="市值" value={formatMaybeCompact(selected.marketCap)} />
+                                <MarketMetric label="24H 成交额" value={formatMaybeCurrencyCompact(selected.dexPriceStats.h24.volumeUsd)} />
+                                <MarketMetric label="流动性" value={formatMaybeCurrencyCompact(selected.totalLiquidityUsd)} />
+                                <MarketMetric label="主地址" value={truncateAddress(selected.tokenAddress)} />
+                                <MarketMetric label="所属链" value={selected.chainName} />
+                            </div>
+
+                            <section className={styles.conclusionSection}>
+                                <div className={styles.sectionHead}>
+                                    <div>
+                                        <span className={styles.sectionKicker}>研究备注</span>
+                                        <h4 className={styles.sectionTitle}>当前状态</h4>
+                                    </div>
+                                </div>
+                                <div className={styles.researchFootnote}>
+                                    {data?.notes.map((note, idx) => (
+                                        <p key={idx}>{note}</p>
+                                    ))}
+                                </div>
+                            </section>
+                        </section>
                     ) : (
                         <div className={styles.emptyState}>{scopeMeta.emptyText}</div>
                     )}
                 </main>
             </div>
         </section>
-    );
-}
-
-function DataChip({ label, value }: { label: string; value: string }) {
-    return (
-        <div className={styles.dataChip}>
-            <span className={styles.dataChipLabel}>{label}</span>
-            <strong className={styles.dataChipValue}>{value}</strong>
-        </div>
     );
 }
 
@@ -480,6 +518,14 @@ function formatMaybeCurrencyCompact(value: number | null | undefined) {
 function formatPercent(value: number) {
     const normalized = value < 1 ? value * 100 : value;
     return `${normalized.toFixed(2)}%`;
+}
+
+function truncateAddress(value: string) {
+    if (value.length <= 14) {
+        return value;
+    }
+
+    return `${value.slice(0, 6)}...${value.slice(-4)}`;
 }
 
 function formatMaybeSignedPercent(value: number | null | undefined) {
