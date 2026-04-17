@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import type { TokenSearchResult } from './types';
+import type { TokenSearchResult } from './types.ts';
 import {
     filterAndSortSearchResults,
     getFallbackBannerMessage,
@@ -9,7 +9,7 @@ import {
     normalizeAcquisitionMix,
     pickPrimaryToken,
     resolveSelectedToken,
-} from './service';
+} from './service.ts';
 
 const sampleTokens: TokenSearchResult[] = [
     {
@@ -77,16 +77,16 @@ test('resolveSelectedToken prefers exact address and chain match', () => {
     assert.equal(selected?.chainId, '0x2105');
 });
 
-test('resolveSelectedToken falls back to first candidate when selection is missing', () => {
+test('resolveSelectedToken falls back to strongest primary candidate when selection is missing', () => {
     const selected = resolveSelectedToken(sampleTokens, null, null);
 
-    assert.equal(selected?.tokenAddress, '0x111');
+    assert.equal(selected?.tokenAddress, '0x222');
 });
 
-test('resolveSelectedToken ignores partial mismatches', () => {
+test('resolveSelectedToken ignores partial mismatches and falls back to strongest candidate', () => {
     const selected = resolveSelectedToken(sampleTokens, '0x222', '0x1');
 
-    assert.equal(selected?.tokenAddress, '0x111');
+    assert.equal(selected?.tokenAddress, '0x222');
 });
 
 test('normalizeAcquisitionMix converts raw counts into percentages', () => {

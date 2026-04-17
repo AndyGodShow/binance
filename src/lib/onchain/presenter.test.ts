@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildExecutiveSummary, buildOnchainStorageKey } from './presenter';
-import type { ChipAnalysis, HistoricalHoldersPoint, TokenHolderMetrics, TokenSearchResult } from './types';
+import { buildExecutiveSummary, buildOnchainStorageKey } from './presenter.ts';
+import type { ChipAnalysis, HistoricalHoldersPoint, TokenHolderMetrics, TokenSearchResult } from './types.ts';
 
 function buildVisibleHistory(points: HistoricalHoldersPoint[], limit = 7) {
     const sorted = [...points].sort((a, b) => (

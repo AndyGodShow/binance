@@ -3,7 +3,7 @@
 import { useMemo } from 'react';
 
 import { usePersistentSWR } from '@/hooks/usePersistentSWR';
-import type { MacroDashboardData, MacroMonitorCard } from '@/lib/macro';
+import { normalizeMacroDashboardData, type MacroDashboardData, type MacroMonitorCard } from '@/lib/macro';
 import styles from './MacroView.module.css';
 
 const fetcher = async (url: string) => {
@@ -14,13 +14,16 @@ const fetcher = async (url: string) => {
     return res.json() as Promise<MacroDashboardData>;
 };
 
+const INDEX_SYMBOLS = new Set(['^GSPC', '^IXIC', '^NDX', '000001.SS', '^KS11', '^N225']);
+const ZERO_DECIMAL_PRICE_SYMBOLS = new Set(['XAUUSD=X', 'GC=F']);
+
 function formatSignedPercent(value: number): string {
     return `${value > 0 ? '+' : ''}${value.toFixed(2)}%`;
 }
 
 function formatAssetPrice(symbol: string, value: number): string {
-    if (symbol === '^KS11' || symbol === '^N225') {
-        return value.toLocaleString('en-US', { maximumFractionDigits: 0 });
+    if (INDEX_SYMBOLS.has(symbol)) {
+        return value.toLocaleString('en-US', { maximumFractionDigits: 2 });
     }
 
     if (symbol === '^TNX') {
@@ -28,8 +31,8 @@ function formatAssetPrice(symbol: string, value: number): string {
     }
 
     return `$${value.toLocaleString('en-US', {
-        minimumFractionDigits: symbol === 'GC=F' ? 0 : 2,
-        maximumFractionDigits: symbol === 'GC=F' ? 0 : 2,
+        minimumFractionDigits: ZERO_DECIMAL_PRICE_SYMBOLS.has(symbol) ? 0 : 2,
+        maximumFractionDigits: ZERO_DECIMAL_PRICE_SYMBOLS.has(symbol) ? 0 : 2,
     })}`;
 }
 
@@ -57,8 +60,14 @@ function getChangeClass(value: number): string {
     return value >= 0 ? styles.tonePositive : styles.toneNegative;
 }
 
+function getRegimeDisplayText(code: MacroDashboardData['regime']['code']): string {
+    if (code === 'RISK_ON') return '进攻环境';
+    if (code === 'RISK_OFF') return '防守环境';
+    return '中性环境';
+}
+
 export default function MacroView() {
-    const { data, error, isLoading } = usePersistentSWR<MacroDashboardData>(
+    const { data: rawData, error, isLoading } = usePersistentSWR<MacroDashboardData>(
         '/api/macro',
         fetcher,
         {
@@ -69,6 +78,7 @@ export default function MacroView() {
             persistIntervalMs: 60 * 1000,
         }
     );
+    const data = useMemo(() => rawData ? normalizeMacroDashboardData(rawData) : undefined, [rawData]);
 
     const monitorRows = useMemo<Array<{
         label: string;
@@ -84,8 +94,8 @@ export default function MacroView() {
 
         return [
             {
-                label: 'Regime 判断',
-                valueText: data.regime.code,
+                label: '宏观环境判断',
+                valueText: getRegimeDisplayText(data.regime.code),
                 hint: data.regime.summary,
                 statusLabel: `${data.regime.label} · 综合评分 ${data.regime.score > 0 ? '+' : ''}${data.regime.score}`,
                 tone: data.regime.code === 'RISK_ON' ? 'positive' : data.regime.code === 'RISK_OFF' ? 'negative' : 'neutral',
@@ -98,6 +108,13 @@ export default function MacroView() {
         ];
     }, [data]);
 
+    const pageClassName = useMemo(() => {
+        if (!data) return styles.page;
+        if (data.regime.code === 'RISK_ON') return `${styles.page} ${styles.pageRiskOn}`;
+        if (data.regime.code === 'RISK_OFF') return `${styles.page} ${styles.pageRiskOff}`;
+        return `${styles.page} ${styles.pageNeutral}`;
+    }, [data]);
+
     if (isLoading && !data) {
         return <div className={styles.placeholder}>宏观视角正在加载跨市场数据…</div>;
     }
@@ -105,13 +122,6 @@ export default function MacroView() {
     if (error && !data) {
         return <div className={styles.placeholder}>宏观视角暂时不可用，请稍后重试。</div>;
     }
-
-    const pageClassName = useMemo(() => {
-        if (!data) return styles.page;
-        if (data.regime.code === 'RISK_ON') return `${styles.page} ${styles.pageRiskOn}`;
-        if (data.regime.code === 'RISK_OFF') return `${styles.page} ${styles.pageRiskOff}`;
-        return `${styles.page} ${styles.pageNeutral}`;
-    }, [data]);
 
     if (!data) {
         return null;
@@ -121,10 +131,10 @@ export default function MacroView() {
         <section className={pageClassName}>
             <header className={styles.hero}>
                 <div className={styles.heroCopy}>
-                    <div className={styles.kicker}>Macro Workspace</div>
+                    <div className={styles.kicker}>宏观工作台</div>
                     <h1 className={styles.title}>宏观视角</h1>
                     <p className={styles.subtitle}>
-                        把美股风险偏好、避险资产、亚洲指数、BTC 价格和 ETF 资金流放进同一工作区，
+                        把美股风险偏好、大宗商品、中韩日指数、BTC 价格和 ETF 资金流放进同一工作区，
                         用来判断今天更适合进攻、观望还是防守。
                     </p>
                 </div>
@@ -186,7 +196,7 @@ export default function MacroView() {
 
             <section className={styles.marketTape}>
                 {data.groups.map((group) => {
-                    const isCompactGroup = group.title === '比特币 ETF' && group.items.length === 1;
+                    const isCompactGroup = group.title === '数字资产 ETF' && group.items.length === 1;
 
                     return (
                     <div key={group.title} className={`${styles.marketGroup} ${isCompactGroup ? styles.marketGroupCompact : ''}`}>
@@ -228,7 +238,7 @@ export default function MacroView() {
             <section className={styles.workspace}>
                 <div className={styles.regimePanel}>
                     <div className={styles.panelEyebrow}>环境定位</div>
-                    <div className={styles.regimeCode}>{data.regime.code}</div>
+                    <div className={styles.regimeCode}>{getRegimeDisplayText(data.regime.code)}</div>
                     <div className={styles.regimeLine}>
                         <span>{data.regime.label}</span>
                         <span>{data.regime.statusLine}</span>
@@ -256,7 +266,7 @@ export default function MacroView() {
                             <div className={styles.panelEyebrow}>宏观监控</div>
                             <h2 className={styles.panelTitle}>关键开关</h2>
                         </div>
-                        <p className={styles.panelHint}>Regime 判断 · VIX · F&G · DXY · 美债</p>
+                        <p className={styles.panelHint}>环境判断 · 恐贪 · 波动率 · 美元 · 美债</p>
                     </div>
 
                     <div className={styles.monitorTable}>
@@ -393,7 +403,7 @@ export default function MacroView() {
             </section>
 
             <footer className={styles.footerNote}>
-                数据源：Yahoo Finance、Alternative.me、Binance、Farside Investors。这个页面用于做宏观定位和风险开关，不替代具体进出场信号。
+                数据源：雅虎财经、Alternative.me、Binance、Farside Investors。这个页面用于做宏观定位和风险开关，不替代具体进出场信号。
             </footer>
         </section>
     );

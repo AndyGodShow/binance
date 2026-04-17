@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildChipAnalysis } from './analysis';
-import type { HistoricalHoldersPoint, TokenHolderMetrics } from './types';
+import { buildChipAnalysis, buildChipDataQuality } from './analysis.ts';
+import type { HistoricalHoldersPoint, TokenHolderMetrics, TopHolderItem } from './types.ts';
 
 function createMetrics(overrides: Partial<TokenHolderMetrics> = {}): TokenHolderMetrics {
     return {
@@ -66,6 +66,21 @@ function createHistorical(overrides: Partial<HistoricalHoldersPoint> = {}): Hist
     ];
 }
 
+function createTopHolders(overrides: Partial<TopHolderItem>[] = []): TopHolderItem[] {
+    const defaults: TopHolderItem[] = [
+        { address: '0x1', label: null, entity: null, percentage: 8, balance: null, usdValue: null, isContract: false },
+        { address: '0x2', label: null, entity: null, percentage: 6, balance: null, usdValue: null, isContract: false },
+        { address: '0x3', label: null, entity: null, percentage: 4, balance: null, usdValue: null, isContract: false },
+        { address: '0x4', label: null, entity: null, percentage: 3, balance: null, usdValue: null, isContract: false },
+        { address: '0x5', label: null, entity: null, percentage: 2, balance: null, usdValue: null, isContract: false },
+    ];
+
+    return defaults.map((holder, index) => ({
+        ...holder,
+        ...(overrides[index] ?? {}),
+    }));
+}
+
 test('buildChipAnalysis classifies heavily concentrated token as high control', () => {
     const analysis = buildChipAnalysis(createMetrics(), createHistorical());
 
@@ -117,4 +132,26 @@ test('buildChipAnalysis can detect more distributed structure', () => {
     assert.equal(analysis.distributionLevel, '长尾分散');
     assert.equal(analysis.trendLevel, '趋于稳定');
     assert.ok(analysis.chipScore < 45, `期望相对分散（得分 ${analysis.chipScore}）`);
+});
+
+test('buildChipDataQuality downgrades confidence when top holders include contracts and burn addresses', () => {
+    const quality = buildChipDataQuality(
+        createMetrics(),
+        createHistorical(),
+        createTopHolders([
+            { label: 'Uniswap V2 Pair', percentage: 12, isContract: true },
+            { label: 'Burn Address', percentage: 8 },
+        ])
+    );
+
+    assert.equal(quality.confidence, '中');
+    assert.equal(quality.flaggedTopHolderSharePercent, 20);
+    assert.match(quality.warnings.join(' '), /非普通持仓地址/);
+});
+
+test('buildChipDataQuality marks missing top holders as low confidence', () => {
+    const quality = buildChipDataQuality(createMetrics(), createHistorical(), []);
+
+    assert.equal(quality.confidence, '低');
+    assert.match(quality.warnings.join(' '), /Top holders 明细/);
 });

@@ -1,6 +1,6 @@
-import { buildChipAnalysis } from './analysis';
-import { fetchBinanceJson } from '@/lib/binanceApi';
-import { logger } from '@/lib/logger';
+import { buildChipAnalysis, buildChipDataQuality } from './analysis.ts';
+import { fetchBinanceJson } from '../binanceApi.ts';
+import { logger } from '../logger.ts';
 import type {
     ChainFamily,
     DexPriceWindow,
@@ -549,13 +549,9 @@ export function matchOfficialAlphaTokens(
     );
 
     return universe.filter((item) => {
-        const symbol = normalizeAssetTerm(item.symbol || '');
         const cexCoin = normalizeAssetTerm(item.cexCoinName || '');
 
-        return Array.from(officialTerms).some((term) => (
-            symbol === term
-            || cexCoin === term
-        ));
+        return cexCoin.length > 0 && Array.from(officialTerms).some((term) => cexCoin === term);
     }).sort((a, b) => {
         const aMeta = mapAlphaChain(a.chainId, a.chainName);
         const bMeta = mapAlphaChain(b.chainId, b.chainName);
@@ -1011,6 +1007,7 @@ function fallbackPayload(
         metrics: null,
         historical: [],
         topHolders: [],
+        dataQuality: buildChipDataQuality(null, [], []),
         analysis: null,
         notes,
     };
@@ -1019,7 +1016,7 @@ function fallbackPayload(
 export function getFallbackBannerMessage(reason?: OnchainFallbackReason) {
     switch (reason) {
         case 'missing_moralis_api_key':
-            return '当前显示的是回退样本数据：尚未配置 MORALIS_API_KEY，所以链上真实数据还没有启用。';
+            return '当前没有生成真实链上结果：尚未配置 MORALIS_API_KEY，所以 holder metrics、Top holders 和筹码分布还没有启用。';
         case 'no_search_results':
             return '当前没有拿到可用链上结果：这次没有检索到匹配的链上标的，请换一个币种名、符号或合约地址再试。';
         case 'unsupported_chain':
@@ -1108,6 +1105,7 @@ export async function buildTokenResearchPayload(
         }
 
         const historical = historicalResult ?? [];
+        const dataQuality = buildChipDataQuality(metricsResult, historical, topHolders);
         const notes: string[] = [
             scope === 'alpha'
                 ? '当前模式聚焦 Binance Alpha 币种，并优先围绕官方可识别的主地址做单地址追踪。'
@@ -1130,6 +1128,7 @@ export async function buildTokenResearchPayload(
             metrics: metricsResult,
             historical,
             topHolders,
+            dataQuality,
             analysis: buildChipAnalysis(metricsResult, historical),
             notes,
         };

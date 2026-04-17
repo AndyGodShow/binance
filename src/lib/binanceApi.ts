@@ -1,4 +1,4 @@
-import { logger } from '@/lib/logger';
+import { logger } from './logger.ts';
 
 const DEFAULT_BINANCE_FAPI_BASES = [
     'https://fapi.binance.com',

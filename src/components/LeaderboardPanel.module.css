@@ -2,7 +2,7 @@
     display: flex;
     flex-direction: column;
     gap: 16px;
-    padding: 22px;
+    padding: clamp(16px, 2vw, 22px);
     border-radius: 20px;
     border: 1px solid rgba(255, 255, 255, 0.07);
     background:
@@ -65,7 +65,7 @@
 
 .timeframeGrid {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
     gap: 14px;
 }
 
@@ -80,7 +80,7 @@
     display: flex;
     flex-direction: column;
     gap: 14px;
-    padding: 16px;
+    padding: clamp(14px, 1.6vw, 16px);
     border-radius: 18px;
     border: 1px solid rgba(255, 255, 255, 0.06);
     background: rgba(255, 255, 255, 0.03);
@@ -103,8 +103,10 @@
 
 .dualColumn {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     gap: 12px;
+    min-width: 0;
+    align-items: stretch;
 }
 
 .listBlock {
@@ -112,6 +114,7 @@
     flex-direction: column;
     gap: 10px;
     min-width: 0;
+    width: 100%;
 }
 
 .listHeader {
@@ -134,19 +137,19 @@
 }
 
 .rankList {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
+    display: grid;
+    grid-auto-rows: 52px;
+    gap: 7px;
 }
 
 .rankRow {
     appearance: none;
     display: grid;
-    grid-template-columns: 34px minmax(0, 1fr) auto;
+    grid-template-columns: 34px minmax(0, 1fr) 96px;
     align-items: center;
     gap: 10px;
     width: 100%;
-    padding: 11px 12px;
+    padding: 9px 11px;
     border: 1px solid rgba(255, 255, 255, 0.05);
     border-radius: 14px;
     background: rgba(255, 255, 255, 0.025);
@@ -154,7 +157,9 @@
     color: inherit;
     text-align: left;
     transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
-    height: 54px;
+    height: 52px;
+    min-height: 52px;
+    overflow: hidden;
 }
 
 .rankRow:disabled {
@@ -200,7 +205,10 @@
     flex-direction: column;
     align-items: flex-end;
     gap: 2px;
-    min-width: 0;
+    min-width: 96px;
+    width: 100%;
+    min-height: 31px;
+    justify-content: center;
 }
 
 .rankValue {
@@ -214,7 +222,12 @@
     color: var(--text-secondary);
     font-family: 'Roboto Mono', monospace;
     font-size: 11px;
+    line-height: 1.1;
     white-space: nowrap;
+}
+
+.rankSecondaryPlaceholder {
+    visibility: hidden;
 }
 
 .positive {
@@ -244,15 +257,20 @@
     line-height: 1.6;
 }
 
-@media (max-width: 1100px) {
+@media (max-width: 900px) {
     .timeframeGrid,
-    .secondaryGrid,
+    .secondaryGrid {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 720px) {
     .dualColumn {
         grid-template-columns: 1fr;
     }
 }
 
-@media (max-width: 640px) {
+@media (max-width: 520px) {
     .panel {
         padding: 18px;
         border-radius: 18px;

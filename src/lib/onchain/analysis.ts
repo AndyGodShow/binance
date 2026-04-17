@@ -1,8 +1,10 @@
 import type {
     ChipAnalysis,
+    ChipDataQuality,
     ChipScoreBreakdownItem,
     HistoricalHoldersPoint,
     TokenHolderMetrics,
+    TopHolderItem,
 } from './types';
 
 function clamp(value: number, min: number, max: number) {
@@ -19,6 +21,98 @@ function formatPct(value: number) {
 
 function latestOrNull(points: HistoricalHoldersPoint[]) {
     return points.length > 0 ? points[points.length - 1] : null;
+}
+
+function isKnownNonUserHolder(holder: TopHolderItem) {
+    const address = holder.address.toLowerCase();
+    const descriptor = `${holder.label ?? ''} ${holder.entity ?? ''}`.toLowerCase();
+
+    if (holder.isContract) {
+        return true;
+    }
+
+    if (/^0x0{20,}$/.test(address) || address.includes('000000000000000000000000000000000000dead')) {
+        return true;
+    }
+
+    return [
+        'burn',
+        'dead',
+        'null address',
+        'black hole',
+        'uniswap',
+        'pancake',
+        'sushiswap',
+        'pair',
+        'pool',
+        'liquidity',
+        'router',
+        'bridge',
+        'binance',
+        'coinbase',
+        'okx',
+        'bybit',
+        'kraken',
+        'kucoin',
+        'gate.io',
+        'mexc',
+        'exchange',
+    ].some((keyword) => descriptor.includes(keyword));
+}
+
+export function buildChipDataQuality(
+    metrics: TokenHolderMetrics | null,
+    historical: HistoricalHoldersPoint[],
+    topHolders: TopHolderItem[]
+): ChipDataQuality {
+    const warnings: string[] = [];
+    const topHolderCoveragePercent = topHolders.length > 0
+        ? topHolders.reduce((sum, holder) => sum + holder.percentage, 0)
+        : null;
+    const flaggedTopHolderSharePercent = topHolders
+        .filter(isKnownNonUserHolder)
+        .reduce((sum, holder) => sum + holder.percentage, 0);
+
+    if (!metrics || metrics.totalHolders <= 0) {
+        warnings.push('没有拿到有效 holder metrics，当前不能生成可靠筹码分布。');
+    }
+
+    if (topHolders.length === 0) {
+        warnings.push('数据源没有返回 Top holders 明细，无法校验头部地址是否包含交易所、LP、销毁或合约地址。');
+    } else if (topHolders.length < 5) {
+        warnings.push('Top holders 明细少于 5 个，头部筹码覆盖不完整。');
+    }
+
+    if (flaggedTopHolderSharePercent >= 5) {
+        warnings.push(`Top holders 中约 ${flaggedTopHolderSharePercent.toFixed(2)}% 属于合约、LP、交易所、销毁等非普通持仓地址，原始控筹占比可能被高估。`);
+    }
+
+    if (historical.length > 0 && historical.length < 7) {
+        warnings.push('历史持币序列少于 7 天，只能观察快照，趋势判断可信度较低。');
+    }
+
+    let confidence: ChipDataQuality['confidence'] = '高';
+    if (!metrics || metrics.totalHolders <= 0 || topHolders.length === 0) {
+        confidence = '低';
+    } else if (topHolders.length < 5 || historical.length < 7 || flaggedTopHolderSharePercent >= 5) {
+        confidence = '中';
+    }
+
+    const summary = confidence === '高'
+        ? 'holder metrics、Top holders 与历史序列都较完整，可以作为较可靠的筹码结构参考。'
+        : confidence === '中'
+            ? '链上主数据可用，但存在地址污染或历史覆盖不足，控筹结论需要结合 Top holders 明细复核。'
+            : '关键校验数据缺失，当前只能作为粗略市场快照，不能当作准确筹码分布。';
+
+    return {
+        confidence,
+        summary,
+        topHoldersCount: topHolders.length,
+        historicalDays: historical.length,
+        topHolderCoveragePercent,
+        flaggedTopHolderSharePercent,
+        warnings,
+    };
 }
 
 export function buildChipAnalysis(

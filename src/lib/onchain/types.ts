@@ -124,6 +124,16 @@ export interface ChipSummaryCard {
     description: string;
 }
 
+export interface ChipDataQuality {
+    confidence: '高' | '中' | '低';
+    summary: string;
+    topHoldersCount: number;
+    historicalDays: number;
+    topHolderCoveragePercent: number | null;
+    flaggedTopHolderSharePercent: number;
+    warnings: string[];
+}
+
 export interface ChipAnalysis {
     chipScore: number;
     controlLevel: '高度控筹' | '中度集中' | '相对分散';
@@ -145,6 +155,7 @@ export interface TokenResearchPayload {
     metrics: TokenHolderMetrics | null;
     historical: HistoricalHoldersPoint[];
     topHolders: TopHolderItem[];
+    dataQuality: ChipDataQuality;
     analysis: ChipAnalysis | null;
     notes: string[];
 }

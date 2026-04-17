@@ -19,6 +19,14 @@ import { useWatchlists } from '@/hooks/useWatchlists';
 import { formatPrice } from '@/lib/risk/priceUtils';
 import { StrategySignal } from '@/lib/strategyTypes';
 
+type AppTab = 'dashboard' | 'leaderboard' | 'macro' | 'watchlists' | 'longshort' | 'onchain' | 'strategies' | 'trading';
+
+const APP_TABS: AppTab[] = ['dashboard', 'leaderboard', 'macro', 'watchlists', 'longshort', 'onchain', 'strategies', 'trading'];
+
+function isAppTab(value: string | null): value is AppTab {
+  return value !== null && APP_TABS.includes(value as AppTab);
+}
+
 function createDemoSignals(now: number): StrategySignal[] {
   return [
     {
@@ -221,7 +229,7 @@ async function fetcherWithMeta<T>(url: string): Promise<TimedPayload<T>> {
 }
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'leaderboard' | 'macro' | 'watchlists' | 'longshort' | 'onchain' | 'strategies' | 'trading'>('dashboard');
+  const [activeTab, setActiveTab] = useState<AppTab>('dashboard');
   const [dashboardWatchlistId, setDashboardWatchlistId] = useState('all');
   const isPageVisible = usePageVisibility();
   const [enableHeavyMarket, setEnableHeavyMarket] = useState(false);
@@ -340,8 +348,8 @@ export default function Home() {
     const params = new URLSearchParams(window.location.search);
     setIsDemoMode(params.get('demo') === '1');
     const requestedTab = params.get('tab');
-    if (requestedTab === 'dashboard' || requestedTab === 'leaderboard' || requestedTab === 'macro' || requestedTab === 'watchlists' || requestedTab === 'longshort' || requestedTab === 'onchain' || requestedTab === 'strategies' || requestedTab === 'trading') {
-      setActiveTab(requestedTab as any);
+    if (isAppTab(requestedTab)) {
+      setActiveTab(requestedTab);
     }
   }, []);
 

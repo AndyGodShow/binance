@@ -5,8 +5,9 @@ import {
     buildMacroDashboard,
     parseBitboBtcEtfFlowHtml,
     parseBtcEtfFlowText,
+    normalizeMacroDashboardData,
     type MacroSourcePayload,
-} from './macro';
+} from './macro.ts';
 
 function createPayload(overrides: Partial<MacroSourcePayload> = {}): MacroSourcePayload {
     return {
@@ -17,7 +18,8 @@ function createPayload(overrides: Partial<MacroSourcePayload> = {}): MacroSource
             NVDA: { symbol: 'NVDA', label: 'NVDA', market: '美股', price: 196.51, changePercent: 3.8 },
             'GC=F': { symbol: 'GC=F', label: 'GOLD', market: '大宗', price: 4843, changePercent: -0.15 },
             'CL=F': { symbol: 'CL=F', label: 'OIL', market: '大宗', price: 90.9, changePercent: -0.42 },
-            IBIT: { symbol: 'IBIT', label: 'IBIT', market: '比特币 ETF', price: 42.13, changePercent: 1.3 },
+            IBIT: { symbol: 'IBIT', label: 'BTC现货ETF', market: '数字资产 ETF', price: 42.13, changePercent: 1.3 },
+            ETHA: { symbol: 'ETHA', label: 'ETH现货ETF', market: '数字资产 ETF', price: 31.68, changePercent: 1.8 },
             '^KS11': { symbol: '^KS11', label: 'KOSPI', market: '韩日指数', price: 6106, changePercent: 2.31 },
             '^N225': { symbol: '^N225', label: '日经', market: '韩日指数', price: 58157, changePercent: 0.48 },
             '^VIX': { symbol: '^VIX', label: 'VIX', market: '监控', price: 18.36, changePercent: 0.1 },
@@ -35,6 +37,11 @@ function createPayload(overrides: Partial<MacroSourcePayload> = {}): MacroSource
             high24h: 76009,
             low24h: 73767,
             fundingRate: -0.0082,
+            longShortRatio: 1.42,
+        },
+        ethBtc: {
+            price: 0.03412,
+            changePercent: 0.4,
         },
         etfFlow: {
             date: '2026-04-14',
@@ -91,12 +98,70 @@ test('buildMacroDashboard can classify risk-off regime', () => {
             high24h: 73500,
             low24h: 69920,
             fundingRate: 0.041,
+            longShortRatio: 2.72,
         },
     }));
 
     assert.equal(dashboard.regime.code, 'RISK_OFF');
     assert.equal(dashboard.regime.statusLine, '偏防守');
     assert.ok(dashboard.regime.score <= -3);
+});
+
+test('buildMacroDashboard exposes localized macro market groups', () => {
+    const dashboard = buildMacroDashboard(createPayload({
+        assets: {
+            '^GSPC': { symbol: '^GSPC', label: '标普500指数', market: '美股', price: 6802, changePercent: 0.6 },
+            '^IXIC': { symbol: '^IXIC', label: '纳斯达克综合指数', market: '美股', price: 22900, changePercent: 0.9 },
+            '^NDX': { symbol: '^NDX', label: '纳斯达克100', market: '美股', price: 25100, changePercent: 0.8 },
+            'XAUUSD=X': { symbol: 'XAUUSD=X', label: '伦敦金', market: '大宗商品', price: 4843, changePercent: -0.15 },
+            'XAGUSD=X': { symbol: 'XAGUSD=X', label: '伦敦银', market: '大宗商品', price: 61.2, changePercent: 0.32 },
+            'CL=F': { symbol: 'CL=F', label: 'WTI原油', market: '大宗商品', price: 90.9, changePercent: -0.42 },
+            '000001.SS': { symbol: '000001.SS', label: '上证指数', market: '中韩日指数', price: 3984, changePercent: 0.28 },
+            '^KS11': { symbol: '^KS11', label: '韩国KOSPI', market: '中韩日指数', price: 6106, changePercent: 2.31 },
+            '^N225': { symbol: '^N225', label: '日经225', market: '中韩日指数', price: 58157, changePercent: 0.48 },
+            IBIT: { symbol: 'IBIT', label: 'BTC现货ETF', market: '数字资产 ETF', price: 42.13, changePercent: 1.3 },
+            ETHA: { symbol: 'ETHA', label: 'ETH现货ETF', market: '数字资产 ETF', price: 31.68, changePercent: 1.8 },
+            '^VIX': { symbol: '^VIX', label: 'VIX', market: '监控', price: 18.36, changePercent: 0.1 },
+            'DX-Y.NYB': { symbol: 'DX-Y.NYB', label: 'DXY', market: '监控', price: 98.11, changePercent: -0.01 },
+            '^TNX': { symbol: '^TNX', label: 'US10Y', market: '监控', price: 4.256, changePercent: -0.95 },
+        },
+    }));
+
+    assert.deepEqual(
+        dashboard.groups.map((group) => [group.title, group.items.map((item) => item.displaySymbol)]),
+        [
+            ['美股', ['标普500指数', '纳斯达克综合指数', '纳斯达克100']],
+            ['大宗商品', ['伦敦金', '伦敦银', 'WTI原油']],
+            ['数字资产 ETF', ['BTC现货ETF', 'ETH现货ETF']],
+            ['中韩日指数', ['上证指数', '韩国KOSPI', '日经225']],
+        ]
+    );
+});
+
+test('buildMacroDashboard uses Chinese monitor labels', () => {
+    const dashboard = buildMacroDashboard(createPayload());
+
+    assert.equal(dashboard.monitors.fearGreed.label, '恐惧与贪婪指数');
+    assert.equal(dashboard.monitors.us10y.label, '美国10年期国债收益率');
+    assert.equal(dashboard.monitors.ethBtc.label, 'ETH 相对 BTC 强弱');
+});
+
+test('normalizeMacroDashboardData makes legacy persisted arrays safe to render', () => {
+    const dashboard = buildMacroDashboard(createPayload());
+    const legacyDashboard = {
+        ...dashboard,
+        groups: undefined,
+        insights: undefined,
+        sourceStatus: undefined,
+        etfFlow: dashboard.etfFlow ? { ...dashboard.etfFlow, flows: undefined } : undefined,
+    };
+
+    const normalized = normalizeMacroDashboardData(legacyDashboard);
+
+    assert.deepEqual(normalized.groups, []);
+    assert.deepEqual(normalized.insights, []);
+    assert.deepEqual(normalized.sourceStatus, []);
+    assert.deepEqual(normalized.etfFlow?.flows, []);
 });
 
 test('parseBtcEtfFlowText extracts latest day and rolling 7d totals', () => {

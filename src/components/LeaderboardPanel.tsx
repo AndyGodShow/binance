@@ -108,6 +108,9 @@ function RankingList({ title, items, variant, onSymbolClick }: RankingListProps)
                                     {secondaryValue && (
                                         <span className={styles.rankSecondary}>{secondaryValue}</span>
                                     )}
+                                    {!secondaryValue && (
+                                        <span className={`${styles.rankSecondary} ${styles.rankSecondaryPlaceholder}`}>--</span>
+                                    )}
                                 </span>
                             </button>
                         );

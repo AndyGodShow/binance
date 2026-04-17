@@ -54,18 +54,23 @@ interface YahooAssetConfig {
     symbol: string;
     label: string;
     market: string;
+    querySymbols?: string[];
     normalizePrice?: (value: number) => number;
 }
 
 const YAHOO_ASSETS: YahooAssetConfig[] = [
-    { symbol: 'SPY', label: 'SPY', market: '美股' },
-    { symbol: 'QQQ', label: 'QQQ', market: '美股' },
-    { symbol: 'NVDA', label: 'NVDA', market: '美股' },
-    { symbol: 'GC=F', label: 'GOLD', market: '大宗' },
-    { symbol: 'CL=F', label: 'OIL', market: '大宗' },
-    { symbol: 'IBIT', label: 'IBIT', market: '比特币 ETF' },
-    { symbol: '^KS11', label: 'KOSPI', market: '韩日指数' },
-    { symbol: '^N225', label: '日经', market: '韩日指数' },
+    { symbol: '^GSPC', label: '标普500指数', market: '美股' },
+    { symbol: '^IXIC', label: '纳斯达克综合指数', market: '美股' },
+    { symbol: '^NDX', label: '纳斯达克100', market: '美股' },
+    { symbol: 'XAUUSD=X', label: '伦敦金', market: '大宗商品', querySymbols: ['XAUUSD=X', 'GC=F'] },
+    { symbol: 'XAGUSD=X', label: '伦敦银', market: '大宗商品', querySymbols: ['XAGUSD=X', 'SI=F'] },
+    { symbol: 'CL=F', label: 'WTI原油', market: '大宗商品' },
+    { symbol: 'BZ=F', label: '布伦特原油', market: '大宗商品' },
+    { symbol: 'IBIT', label: 'BTC现货ETF', market: '数字资产 ETF' },
+    { symbol: 'ETHA', label: 'ETH现货ETF', market: '数字资产 ETF' },
+    { symbol: '000001.SS', label: '上证指数', market: '中韩日指数' },
+    { symbol: '^KS11', label: '韩国KOSPI', market: '中韩日指数' },
+    { symbol: '^N225', label: '日经225', market: '中韩日指数' },
     { symbol: '^VIX', label: 'VIX', market: '监控' },
     { symbol: 'DX-Y.NYB', label: 'DXY', market: '监控' },
     { symbol: '^TNX', label: 'US10Y', market: '监控' },
@@ -86,50 +91,65 @@ function normalizeHtmlToText(html: string): string {
 }
 
 async function fetchYahooAsset(asset: YahooAssetConfig): Promise<MacroSourceAsset | null> {
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(asset.symbol)}?interval=1d&range=5d&includePrePost=false`;
-    const response = await fetch(url, {
-        headers: {
-            'User-Agent': 'Mozilla/5.0',
-            'Accept': 'application/json',
-        },
-        next: { revalidate: 300 },
-    });
+    const querySymbols = asset.querySymbols && asset.querySymbols.length > 0 ? asset.querySymbols : [asset.symbol];
+    let lastError: unknown;
 
-    if (!response.ok) {
-        throw new Error(`Yahoo request failed for ${asset.symbol}: ${response.status}`);
+    for (const querySymbol of querySymbols) {
+        try {
+            const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(querySymbol)}?interval=1d&range=5d&includePrePost=false`;
+            const response = await fetch(url, {
+                headers: {
+                    'User-Agent': 'Mozilla/5.0',
+                    'Accept': 'application/json',
+                },
+                next: { revalidate: 300 },
+            });
+
+            if (!response.ok) {
+                throw new Error(`Yahoo request failed for ${querySymbol}: ${response.status}`);
+            }
+
+            const payload = await response.json() as YahooChartResponse;
+            const result = payload.chart?.result?.[0];
+            if (!result) {
+                continue;
+            }
+
+            const closes = result.indicators?.quote?.[0]?.close?.filter((value): value is number => Number.isFinite(value)) ?? [];
+            const lastClose = closes.length > 0 ? closes[closes.length - 1] : undefined;
+            const priceRaw = result.meta?.regularMarketPrice ?? lastClose ?? result.meta?.previousClose;
+            const previousCloseRaw = result.meta?.chartPreviousClose ?? result.meta?.previousClose ?? (closes.length > 1 ? closes[closes.length - 2] : undefined);
+
+            if (!Number.isFinite(priceRaw)) {
+                continue;
+            }
+
+            const resolvedPriceRaw = priceRaw as number;
+            const price = asset.normalizePrice ? asset.normalizePrice(resolvedPriceRaw) : resolvedPriceRaw;
+            const previousClose = Number.isFinite(previousCloseRaw)
+                ? (asset.normalizePrice ? asset.normalizePrice(previousCloseRaw as number) : (previousCloseRaw as number))
+                : undefined;
+            const changePercent = previousClose && previousClose !== 0
+                ? ((price - previousClose) / previousClose) * 100
+                : 0;
+
+            return {
+                symbol: asset.symbol,
+                label: asset.label,
+                market: asset.market,
+                price,
+                changePercent,
+            };
+        } catch (error) {
+            lastError = error;
+        }
     }
 
-    const payload = await response.json() as YahooChartResponse;
-    const result = payload.chart?.result?.[0];
-    if (!result) {
-        return null;
+    if (lastError) {
+        throw lastError;
     }
 
-    const closes = result.indicators?.quote?.[0]?.close?.filter((value): value is number => Number.isFinite(value)) ?? [];
-    const lastClose = closes.length > 0 ? closes[closes.length - 1] : undefined;
-    const priceRaw = result.meta?.regularMarketPrice ?? lastClose ?? result.meta?.previousClose;
-    const previousCloseRaw = result.meta?.chartPreviousClose ?? result.meta?.previousClose ?? (closes.length > 1 ? closes[closes.length - 2] : undefined);
-
-    if (!Number.isFinite(priceRaw)) {
-        return null;
-    }
-
-    const resolvedPriceRaw = priceRaw as number;
-    const price = asset.normalizePrice ? asset.normalizePrice(resolvedPriceRaw) : resolvedPriceRaw;
-    const previousClose = Number.isFinite(previousCloseRaw)
-        ? (asset.normalizePrice ? asset.normalizePrice(previousCloseRaw as number) : (previousCloseRaw as number))
-        : undefined;
-    const changePercent = previousClose && previousClose !== 0
-        ? ((price - previousClose) / previousClose) * 100
-        : 0;
-
-    return {
-        symbol: asset.symbol,
-        label: asset.label,
-        market: asset.market,
-        price,
-        changePercent,
-    };
+    return null;
 }
 
 async function fetchFearGreed(): Promise<FearGreedSnapshot> {
@@ -180,7 +200,7 @@ async function fetchBtcSnapshot() {
 }
 
 async function fetchEthBtcSnapshot() {
-    const ticker = await fetchBinanceJson<Binance24hTicker>('/fapi/v1/ticker/24hr?symbol=ETHBTC', { revalidate: 30 });
+    const ticker = await fetchBinanceJson<Binance24hTicker>('/api/v3/ticker/24hr?symbol=ETHBTC', { revalidate: 30 });
     return {
         price: Number.parseFloat(ticker.lastPrice),
         changePercent: Number.parseFloat(ticker.priceChangePercent),
@@ -278,7 +298,7 @@ export async function GET() {
                 key: 'market',
                 label: '跨市场行情',
                 provider: 'Yahoo Finance',
-                status: Object.keys(assets).length >= 8 ? 'live' : 'fallback',
+                status: Object.keys(assets).length >= Math.ceil(YAHOO_ASSETS.length * 0.75) ? 'live' : 'fallback',
                 detail: `${Object.keys(assets).length} 个市场读数`,
             },
             {

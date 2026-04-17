@@ -112,7 +112,18 @@ export interface MacroDashboardData {
     sourceStatus: MacroSourceStatus[];
 }
 
+type PersistedMacroDashboardData = Omit<Partial<MacroDashboardData>, 'etfFlow'> & {
+    etfFlow?: Partial<BtcEtfFlowSnapshot>;
+};
+
 const ETF_COLUMN_SYMBOLS = ['IBIT', 'FBTC', 'BITB', 'ARKB', 'BTCO', 'EZBC', 'BRRR', 'HODL', 'BTCW', 'GBTC', 'BTC', 'DEFI'];
+
+const MACRO_GROUPS: Array<{ title: string; markets: string[] }> = [
+    { title: '美股', markets: ['美股'] },
+    { title: '大宗商品', markets: ['大宗商品', '大宗'] },
+    { title: '数字资产 ETF', markets: ['数字资产 ETF', '比特币 ETF'] },
+    { title: '中韩日指数', markets: ['中韩日指数', '韩日指数'] },
+];
 
 function clampScore(score: number): number {
     return Math.max(-5, Math.min(5, score));
@@ -200,12 +211,10 @@ function formatSignedPercent(value: number, fractionDigits = 2): string {
 }
 
 function buildGroups(assets: Record<string, MacroSourceAsset>): MacroBoardGroup[] {
-    const bucketOrder = ['美股', '大宗', '比特币 ETF', '韩日指数'];
-
-    return bucketOrder.map((title) => ({
-        title,
+    return MACRO_GROUPS.map((group) => ({
+        title: group.title,
         items: Object.values(assets)
-            .filter((asset) => asset.market === title || (title === '韩日指数' && asset.market === '韩日指数'))
+            .filter((asset) => group.markets.includes(asset.market))
             .map((asset) => ({
                 symbol: asset.symbol,
                 displaySymbol: asset.label,
@@ -217,7 +226,7 @@ function buildGroups(assets: Record<string, MacroSourceAsset>): MacroBoardGroup[
 }
 
 function computeMomentumScore(payload: MacroSourcePayload): number {
-    const tracked = ['SPY', 'QQQ', 'NVDA', 'IBIT', '^KS11', '^N225'];
+    const tracked = ['^GSPC', '^IXIC', '^NDX', 'SPY', 'QQQ', 'IBIT', 'ETHA', '000001.SS', '^KS11', '^N225'];
     const changes = tracked
         .map((symbol) => payload.assets[symbol]?.changePercent)
         .filter((value): value is number => Number.isFinite(value));
@@ -300,10 +309,23 @@ export function buildMacroDashboard(payload: MacroSourcePayload): MacroDashboard
     const fundingState = classifyFunding(payload.btc.fundingRate);
     const lsRatioState = classifyLsRatio(payload.btc.longShortRatio);
 
+    const riskAssetSummary = ['^GSPC', '^IXIC', '^NDX']
+        .map((symbol) => payload.assets[symbol])
+        .filter((asset): asset is MacroSourceAsset => Boolean(asset))
+        .map((asset) => `${asset.label} ${formatSignedPercent(asset.changePercent)}`)
+        .join(' / ');
+    const legacyRiskAssetSummary = ['SPY', 'QQQ']
+        .map((symbol) => payload.assets[symbol])
+        .filter((asset): asset is MacroSourceAsset => Boolean(asset))
+        .map((asset) => `${asset.label} ${formatSignedPercent(asset.changePercent)}`)
+        .join(' / ');
+
     const insights = [
-        payload.assets.SPY && payload.assets.QQQ
-            ? `风险资产温度仍在：SPY ${formatSignedPercent(payload.assets.SPY.changePercent)} / QQQ ${formatSignedPercent(payload.assets.QQQ.changePercent)}。`
-            : undefined,
+        riskAssetSummary
+            ? `美股风险温度：${riskAssetSummary}。`
+            : legacyRiskAssetSummary
+                ? `美股风险温度：${legacyRiskAssetSummary}。`
+                : undefined,
         payload.assets['DX-Y.NYB']
             ? `美元指数 ${payload.assets['DX-Y.NYB'].price.toFixed(2)}，${classifyDxy(payload.assets['DX-Y.NYB'].price).statusLabel}。`
             : undefined,
@@ -321,7 +343,7 @@ export function buildMacroDashboard(payload: MacroSourcePayload): MacroDashboard
         regime: computeRegime(payload),
         monitors: {
             fearGreed: {
-                label: 'Fear & Greed Index',
+                label: '恐惧与贪婪指数',
                 value: payload.fearGreed.value,
                 valueText: `${payload.fearGreed.value}`,
                 hint: fearGreedState.hint,
@@ -346,7 +368,7 @@ export function buildMacroDashboard(payload: MacroSourcePayload): MacroDashboard
                 deltaText: dxy ? formatSignedPercent(dxy.changePercent) : undefined,
             },
             us10y: {
-                label: 'US10Y 美债收益率',
+                label: '美国10年期国债收益率',
                 value: us10y?.price ?? 0,
                 valueText: `${(us10y?.price ?? 0).toFixed(3)}%`,
                 hint: us10yState.hint,
@@ -355,7 +377,7 @@ export function buildMacroDashboard(payload: MacroSourcePayload): MacroDashboard
                 deltaText: us10y ? formatSignedPercent(us10y.changePercent) : undefined,
             },
             ethBtc: {
-                label: 'ETH/BTC 汇率 (近24h)',
+                label: 'ETH 相对 BTC 强弱',
                 value: payload.ethBtc.price,
                 valueText: payload.ethBtc.price.toFixed(5),
                 hint: ethBtcState.hint,
@@ -389,6 +411,21 @@ export function buildMacroDashboard(payload: MacroSourcePayload): MacroDashboard
         etfFlow: payload.etfFlow,
         insights,
         sourceStatus: [],
+    };
+}
+
+export function normalizeMacroDashboardData(data: PersistedMacroDashboardData): MacroDashboardData {
+    return {
+        ...(data as MacroDashboardData),
+        groups: Array.isArray(data.groups) ? data.groups : [],
+        insights: Array.isArray(data.insights) ? data.insights : [],
+        sourceStatus: Array.isArray(data.sourceStatus) ? data.sourceStatus : [],
+        etfFlow: data.etfFlow
+            ? {
+                ...(data.etfFlow as BtcEtfFlowSnapshot),
+                flows: Array.isArray(data.etfFlow.flows) ? data.etfFlow.flows : [],
+            }
+            : undefined,
     };
 }
 

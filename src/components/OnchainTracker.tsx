@@ -10,7 +10,6 @@ import {
 } from '@/lib/onchain/presenter';
 import { getFallbackBannerMessage } from '@/lib/onchain/service';
 import type {
-    ChipScoreBreakdownItem,
     DexPriceWindow,
     DexTradeWindow,
     OnchainSearchScope,
@@ -67,6 +66,7 @@ export default function OnchainTracker() {
     const metrics = data?.metrics ?? null;
     const analysis = data?.analysis ?? null;
     const topHolders = data?.topHolders ?? [];
+    const dataQuality = data?.dataQuality ?? null;
 
     const isFallback = data?.sourceMode === 'fallback';
     const fallbackMessage = useMemo(
@@ -217,6 +217,30 @@ export default function OnchainTracker() {
                                         </div>
                                     )}
 
+                                    {dataQuality && (
+                                        <div className={styles.qualityPanel}>
+                                            <div>
+                                                <span className={styles.executiveLabel}>数据可信度</span>
+                                                <strong className={qualityClassName(dataQuality.confidence)}>
+                                                    {dataQuality.confidence}可信
+                                                </strong>
+                                            </div>
+                                            <p>{dataQuality.summary}</p>
+                                            <div className={styles.qualityMeta}>
+                                                <span>Top holders {dataQuality.topHoldersCount}</span>
+                                                <span>历史 {dataQuality.historicalDays} 天</span>
+                                                <span>污染占比 {dataQuality.flaggedTopHolderSharePercent.toFixed(2)}%</span>
+                                            </div>
+                                            {dataQuality.warnings.length > 0 && (
+                                                <div className={styles.qualityWarnings}>
+                                                    {dataQuality.warnings.slice(0, 2).map((warning) => (
+                                                        <span key={warning}>{warning}</span>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+
                                 </div>
 
                                 <div className={styles.marketStrip}>
@@ -235,6 +259,7 @@ export default function OnchainTracker() {
                                             <span className={styles.sectionKicker}>控筹快照</span>
                                             <h4 className={styles.sectionTitle}>控筹总览</h4>
                                         </div>
+                                        <p className={styles.sectionHint}>头部占比是原始链上读数，遇到交易所、LP、销毁地址时请看数据可信度提示。</p>
                                     </div>
                                     <div className={styles.metricsGrid}>
                                         <StatCard label="Top1" value={formatTopHolderShare(topHolders, 1)} hint="第一大地址占比" />
@@ -244,11 +269,6 @@ export default function OnchainTracker() {
                                         <StatCard label="Top50" value={formatPercent(metrics.holderSupply.top50.supplyPercent)} hint="前五十地址占比" />
                                         <StatCard label="7d 变化" value={`${metrics.holderChange['7d'].changePercent.toFixed(2)}%`} hint="持币地址变化" />
                                         <StatCard label="1h 变化" value={`${metrics.holderChange['1h'].changePercent.toFixed(2)}%`} hint="短线扩散速度" />
-                                    </div>
-                                    <div className={styles.breakdownList}>
-                                        {analysis.breakdown.map((item) => (
-                                            <BreakdownRow key={item.id} item={item} />
-                                        ))}
                                     </div>
                                 </article>
                             </section>
@@ -368,30 +388,6 @@ function StatCard({ label, value, hint }: { label: string; value: string; hint: 
     );
 }
 
-function BreakdownRow({ item }: { item: ChipScoreBreakdownItem }) {
-    const width = `${Math.min(100, Math.max(10, Math.abs(item.score) * 4))}%`;
-    const scoreClass = item.score >= 0 ? styles.positive : styles.negative;
-
-    return (
-        <div className={styles.breakdownItem}>
-            <div className={styles.breakdownHead}>
-                <span>{item.label}</span>
-                <strong className={scoreClass}>{item.score >= 0 ? `+${item.score}` : item.score}</strong>
-            </div>
-            <div className={styles.breakdownMeta}>
-                <span>{item.value}</span>
-                <span>{item.rationale}</span>
-            </div>
-            <div className={styles.breakdownTrack}>
-                <div
-                    className={`${styles.breakdownBar} ${item.score >= 0 ? styles.breakdownPositive : styles.breakdownNegative}`}
-                    style={{ width }}
-                />
-            </div>
-        </div>
-    );
-}
-
 function DexTradeActivityView({ trades }: { trades: TokenSearchResult['dexTrades'] }) {
     const rows: Array<{ label: string; trade: DexTradeWindow }> = [
         { label: '1h', trade: trades.h1 },
@@ -447,17 +443,20 @@ function TopHoldersView({ holders }: { holders: TopHolderItem[] }) {
 
     return (
         <div className={styles.holderTable}>
+            <div className={`${styles.holderRow} ${styles.holderHeaderRow}`}>
+                <span>排名</span>
+                <span>地址 / 标签</span>
+                <span>占比</span>
+            </div>
             {holders.map((holder, index) => (
                 <div key={`${holder.address}-${index}`} className={styles.holderRow}>
-                    <div>
-                        <strong>
-                            #{index + 1} {holder.label || holder.entity || 'Unlabeled'}
-                        </strong>
-                        <div className={styles.walletAddress}>
-                            {holder.address.length <= 14
-                                ? holder.address
-                                : `${holder.address.slice(0, 6)}...${holder.address.slice(-4)}`}
+                    <div className={styles.holderRank}>#{index + 1}</div>
+                    <div className={styles.holderIdentity}>
+                        <div className={styles.holderNameLine}>
+                            <strong>{holder.label || holder.entity || '未标记地址'}</strong>
+                            {holder.isContract && <span className={styles.holderTag}>合约</span>}
                         </div>
+                        <div className={styles.walletAddress}>{truncateAddress(holder.address)}</div>
                     </div>
                     <div className={styles.holderMeta}>
                         <strong>{holder.percentage.toFixed(2)}%</strong>
@@ -558,6 +557,12 @@ function toneClassForChange(value: number | null | undefined) {
     }
 
     return value >= 0 ? styles.positive : styles.negative;
+}
+
+function qualityClassName(confidence: '高' | '中' | '低') {
+    if (confidence === '高') return `${styles.qualityValue} ${styles.qualityHigh}`;
+    if (confidence === '中') return `${styles.qualityValue} ${styles.qualityMedium}`;
+    return `${styles.qualityValue} ${styles.qualityLow}`;
 }
 
 function formatTopHolderShare(holders: TopHolderItem[], count: number) {
