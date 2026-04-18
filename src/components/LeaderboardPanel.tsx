@@ -2,6 +2,7 @@
 
 import { useMemo } from 'react';
 
+import { trimLeaderboardDisplaySymbol } from '@/lib/leaderboardDisplay';
 import { buildDashboardLeaderboards } from '@/lib/leaderboard';
 import type { LeaderboardEntry, LeaderboardWindow, OpenInterestFrameSnapshot, TickerData } from '@/lib/types';
 import { formatCompact } from '@/lib/utils';
@@ -20,10 +21,6 @@ interface RankingListProps {
     items: LeaderboardEntry[];
     variant: 'percent' | 'oi' | 'ratio' | 'funding';
     onSymbolClick?: (symbol: string) => void;
-}
-
-function trimSymbol(symbol: string): string {
-    return symbol.replace('USDT', '');
 }
 
 function formatSignedPercent(value: number, digits: number = 2): string {
@@ -90,6 +87,7 @@ function RankingList({ title, items, variant, onSymbolClick }: RankingListProps)
                     {items.map((item, index) => {
                         const secondaryValue = renderSecondaryValue(item, variant);
                         const clickable = Boolean(onSymbolClick);
+                        const displaySymbol = trimLeaderboardDisplaySymbol(item.symbol);
 
                         return (
                             <button
@@ -100,7 +98,9 @@ function RankingList({ title, items, variant, onSymbolClick }: RankingListProps)
                                 onClick={() => onSymbolClick?.(item.symbol)}
                             >
                                 <span className={styles.rankIndex}>{index + 1}</span>
-                                <span className={styles.rankSymbol}>{trimSymbol(item.symbol)}</span>
+                                <span className={styles.rankSymbol} title={displaySymbol}>
+                                    {displaySymbol}
+                                </span>
                                 <span className={styles.rankValueGroup}>
                                     <span className={`${styles.rankValue} ${getValueTone(item.value, variant)}`}>
                                         {renderPrimaryValue(item, variant)}
