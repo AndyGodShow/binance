@@ -3,7 +3,7 @@
  * 用于分析价格区间的成交量分布，识别支撑/阻力位
  */
 
-import { OHLC } from './types';
+import type { OHLC } from './types.ts';
 
 export interface VolumeProfile {
     symbol: string;
@@ -141,4 +141,3 @@ function calculateValueArea(
 
     return { vah, val };
 }
-

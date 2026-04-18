@@ -1,0 +1,15 @@
+data_dir: data/external/btc-trading-since-2020-raw
+output_dir: data/ledger_strategy
+primary_symbol: XBTUSD
+min_trade_qty: 1
+preferred_symbols: [XBTUSD, XBTUSDT, ETHUSD, ETHUSDT]
+risk:
+  initial_equity_xbt: 1.0
+  risk_per_trade: 0.01
+  max_position_units: 100000
+  max_daily_loss_xbt: 0.05
+  max_consecutive_losses: 3
+backtest:
+  fee_buffer_xbt: 0.0
+  use_reconstructed_exit: true
+  require_rule_match: true

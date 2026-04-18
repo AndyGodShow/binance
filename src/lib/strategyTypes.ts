@@ -1,5 +1,5 @@
-import { TickerData } from './types';
-import { RiskManagement } from './risk/types';
+import type { TickerData } from './types.ts';
+import type { RiskManagement } from './risk/types.ts';
 
 export type StrategySignalStatus = 'active' | 'snapshot' | 'cooling';
 

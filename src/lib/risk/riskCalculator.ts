@@ -3,13 +3,14 @@
  * 统一的风控接口
  */
 
-import { RiskManagement, RiskCalculationParams } from './types';
-import { calculateSqueezeRisk } from './squeezeRisk';
-import { calculateBreakoutRisk } from './breakoutRisk';
-import { calculateTrendRisk } from './trendRisk';
-import { calculateInflowRisk } from './inflowRisk';
-import { calculateRSRSRisk } from './rsrsRisk';
-import { atrPercentToPriceDistance, roundPrice, roundPercentage } from './priceUtils';
+import type { RiskManagement, RiskCalculationParams } from './types.ts';
+import { calculateSqueezeRisk } from './squeezeRisk.ts';
+import { calculateBreakoutRisk } from './breakoutRisk.ts';
+import { calculateTrendRisk } from './trendRisk.ts';
+import { calculateInflowRisk } from './inflowRisk.ts';
+import { calculateRSRSRisk } from './rsrsRisk.ts';
+import { calculateWeiShenRisk } from './weiShenRisk.ts';
+import { atrPercentToPriceDistance, roundPrice, roundPercentage } from './priceUtils.ts';
 
 /**
  * 主风控计算函数 - 根据策略ID分发
@@ -33,6 +34,9 @@ export function calculateRiskManagement(
 
         case 'volatility-squeeze':
             return calculateSqueezeRisk(params);
+
+        case 'wei-shen-ledger':
+            return calculateWeiShenRisk(params);
 
         default:
             // 降级为基础风控
@@ -117,10 +121,11 @@ function calculateBasicRisk(params: RiskCalculationParams): RiskManagement {
 }
 
 // 导出所有风控函数
-export * from './types';
-export * from './positionSizer';
-export * from './squeezeRisk';
-export * from './breakoutRisk';
-export * from './trendRisk';
-export * from './inflowRisk';
-export * from './rsrsRisk';
+export * from './types.ts';
+export * from './positionSizer.ts';
+export * from './squeezeRisk.ts';
+export * from './breakoutRisk.ts';
+export * from './trendRisk.ts';
+export * from './inflowRisk.ts';
+export * from './rsrsRisk.ts';
+export * from './weiShenRisk.ts';

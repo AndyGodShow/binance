@@ -1,9 +1,10 @@
-import { TradingStrategy, StrategySignal, CompositeCondition } from '../lib/strategyTypes';
-import { TickerData } from '../lib/types';
-import { cooldownManager } from '../lib/cooldownManager';
-import { logger } from '../lib/logger';
-import { calculateRiskManagement } from '../lib/risk/riskCalculator';
-import { APP_CONFIG } from '../lib/config';
+import type { TradingStrategy, StrategySignal, CompositeCondition } from '../lib/strategyTypes.ts';
+import type { TickerData } from '../lib/types.ts';
+import { cooldownManager } from '../lib/cooldownManager.ts';
+import { logger } from '../lib/logger.ts';
+import { calculateRiskManagement } from '../lib/risk/riskCalculator.ts';
+import { APP_CONFIG } from '../lib/config.ts';
+import { getStrategyParameterConfig } from '../lib/strategyParameters.ts';
 
 // 策略参数配置：检查条件并创建条件对象
 function checkCondition(
@@ -16,9 +17,6 @@ function checkCondition(
     return { name, description, met, value, threshold };
 }
 
-// 冷却期：120分钟 - 统计套利型
-const COOLDOWN_PERIOD = 120 * 60 * 1000;
-
 // 🔥 机构级 RSRS 策略：VW-TLS 回归 + 鲁棒统计 + 自适应窗口 + 减速预警
 export const rsrsStrategy: TradingStrategy = {
     id: 'rsrs-trend',
@@ -28,8 +26,9 @@ export const rsrsStrategy: TradingStrategy = {
     enabled: true,
 
     detect: (ticker: TickerData): StrategySignal | null => {
+        const params = getStrategyParameterConfig('rsrs-trend');
         // 冷却期检查
-        if (cooldownManager.check(ticker.symbol, 'rsrs-trend', COOLDOWN_PERIOD)) {
+        if (cooldownManager.check(ticker.symbol, 'rsrs-trend', params.cooldownPeriodMs)) {
             return null;
         }
 
@@ -61,13 +60,16 @@ export const rsrsStrategy: TradingStrategy = {
         const conditions: CompositeCondition[] = [];
 
         // ========== 条件1: RSRS 右偏修正信号 ==========
-        const isExtreme = Math.abs(rsrsFinal) > Math.abs(longThreshold) * 1.5;
-        const rsrsCondition = isLongSignal || isShortSignal;
+        const isExtreme = Math.abs(rsrsFinal) > Math.abs(longThreshold) * params.extremeMultiplier;
+        const rsrsCondition =
+            (isLongSignal || isShortSignal) &&
+            r2 >= params.r2Floor &&
+            Math.abs(rsrsROC) >= params.rocFloor;
 
         // 🔥 核心优化：减速预警检测
         const isDecelerating = direction === 'long'
-            ? (rsrsAcceleration < -5)  // 多头减速：加速度显著为负
-            : (rsrsAcceleration > 5);   // 空头减速：加速度显著为正
+            ? (rsrsAcceleration < -params.decelerationThreshold)
+            : (rsrsAcceleration > params.decelerationThreshold);
 
         const decelerationWarning = isExtreme && isDecelerating;
 
@@ -89,16 +91,16 @@ export const rsrsStrategy: TradingStrategy = {
         const details: string[] = [];
 
         if (direction === 'long') {
-            if (change4h > 3) { trendScore += 40; details.push('4h✓'); }
-            if (change1h > 3) { trendScore += 30; details.push('1h✓'); }
-            if (change15m > 3) { trendScore += 15; details.push('15m✓'); }
+            if (change4h > params.trendThresholds.change4h) { trendScore += 40; details.push('4h✓'); }
+            if (change1h > params.trendThresholds.change1h) { trendScore += 30; details.push('1h✓'); }
+            if (change15m > params.trendThresholds.change15m) { trendScore += 15; details.push('15m✓'); }
         } else {
-            if (change4h < -3) { trendScore += 40; details.push('4h✓'); }
-            if (change1h < -3) { trendScore += 30; details.push('1h✓'); }
-            if (change15m < -3) { trendScore += 15; details.push('15m✓'); }
+            if (change4h < -params.trendThresholds.change4h) { trendScore += 40; details.push('4h✓'); }
+            if (change1h < -params.trendThresholds.change1h) { trendScore += 30; details.push('1h✓'); }
+            if (change15m < -params.trendThresholds.change15m) { trendScore += 15; details.push('15m✓'); }
         }
 
-        const TREND_THRESHOLD = 60; // 合格线60分
+        const TREND_THRESHOLD = params.trendScoreThreshold;
         const trendCondition = trendScore >= TREND_THRESHOLD;
         const avgChange = Math.abs((change15m + change1h + change4h) / 3);
 
@@ -115,7 +117,7 @@ export const rsrsStrategy: TradingStrategy = {
         const avgVolume = ticker.volumeMA || currentVolume;
         const volumeRatio = avgVolume > 0 ? currentVolume / avgVolume : 1;
 
-        const VOLUME_THRESHOLD = 1.5; // 成交量 > 1.5倍均值
+        const VOLUME_THRESHOLD = params.volumeRatioThreshold;
         const volumeCondition = volumeRatio > VOLUME_THRESHOLD;
 
         conditions.push(checkCondition(
@@ -173,38 +175,34 @@ export const rsrsStrategy: TradingStrategy = {
         // const conditions = [resonanceCondition, rSquaredCondition, rocCondition, accelerationCondition];
         const conditionsMet = conditions.filter(c => c.met).length;
 
-        // 必须满足至少3个条件才触发
+        if (params.rejectExtremeDecelerating && decelerationWarning) {
+            return null;
+        }
+
         if (conditionsMet >= REQUIRED_CONDITIONS) {
-            // 根据各项指标计算置信度
-            let confidence = 80; // 基础置信度
+            let confidence = params.confidence.base;
 
-            // RSRS极端信号加成
             if (isExtreme) {
-                confidence += 5;
+                confidence += params.confidence.extremeBonus;
             }
 
-            // 🔥 减速预警：降低置信度（提示风险）
             if (decelerationWarning) {
-                confidence -= 10; // 趋势减速，降低信心
+                confidence -= params.confidence.decelerationPenalty;
             }
 
-            // 趋势加速 ROC 大于 10%
-            if (Math.abs(rsrsROC) > 10) {
-                confidence += 5;
+            if (Math.abs(rsrsROC) > params.confidence.rocBonusThreshold) {
+                confidence += params.confidence.rocBonus;
             }
 
-            // 成交量强度加成 (>2倍均值时额外+5)
-            if (volumeRatio >= 2.0) {
-                confidence += 5;
+            if (volumeRatio >= params.confidence.strongVolumeRatioThreshold) {
+                confidence += params.confidence.strongVolumeBonus;
             }
 
-            // 全部4个条件满足时额外加成
             if (conditionsMet === 4) {
-                confidence += 5;
+                confidence += params.confidence.allConditionsBonus;
             }
 
-            // 🔥 超严格模式: 最低置信度过滤
-            if (confidence < 85) {  // RSRS 降低至 85分
+            if (confidence < params.confidence.minConfidence) {
                 return null;
             }
 
@@ -215,9 +213,9 @@ export const rsrsStrategy: TradingStrategy = {
             return {
                 symbol: ticker.symbol,
                 strategyId: 'rsrs-trend',
-                strategyName: '🎯 RSRS 趋势突破',
+                strategyName: '🎯 RSRS 量化增强',
                 direction,
-                confidence: Math.min(100, Math.max(0, confidence)),
+                confidence: Math.min(params.confidence.maxConfidence, Math.max(0, confidence)),
                 reason: `${metConditions.join(' | ')}`,
                 metrics: {
                     rsrsFinal,
@@ -245,10 +243,11 @@ export const rsrsStrategy: TradingStrategy = {
                         return calculateRiskManagement('rsrs', {
                             entryPrice: parseFloat(ticker.lastPrice),
                             direction,
-                            confidence: Math.min(100, Math.max(0, confidence)),
+                            confidence: Math.min(params.confidence.maxConfidence, Math.max(0, confidence)),
                             bollingerLower: ticker.bollingerLower,
                             bollingerUpper: ticker.bollingerUpper,
                             rsrsZScore: zScore,
+                            rsrsR2: r2,
                              // 从全局配置读取风控设置
                     accountBalance: APP_CONFIG.RISK.DEFAULT_ACCOUNT_BALANCE, // TODO: 支持从前端用户设置传入
                     riskPercentage: APP_CONFIG.RISK.DEFAULT_RISK_PER_TRADE,

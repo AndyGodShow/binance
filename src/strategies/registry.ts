@@ -1,11 +1,12 @@
-import { TradingStrategy } from '../lib/strategyTypes';
+import type { TradingStrategy } from '../lib/strategyTypes.ts';
 import {
     strongBreakoutStrategy,
     trendConfirmationStrategy,
     capitalInflowStrategy
-} from './compositeStrategies';
-import { rsrsStrategy } from './rsrs';
-import { volatilitySqueezeStrategy } from './volatilitySqueeze';
+} from './compositeStrategies.ts';
+import { rsrsStrategy } from './rsrs.ts';
+import { volatilitySqueezeStrategy } from './volatilitySqueeze.ts';
+import { weiShenStrategy } from './weiShen.ts';
 
 class StrategyRegistry {
     private strategies: Map<string, TradingStrategy> = new Map();
@@ -23,6 +24,9 @@ class StrategyRegistry {
 
         // 注册 Volatility Squeeze 策略
         this.register(volatilitySqueezeStrategy);
+
+        // 注册账本反推策略
+        this.register(weiShenStrategy);
     }
 
     /**

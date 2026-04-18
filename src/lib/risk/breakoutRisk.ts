@@ -3,15 +3,15 @@
  * 特点：追涨型，需要严格止损
  */
 
-import {
+import type {
     RiskManagement,
     RiskCalculationParams,
     StopLoss,
     TakeProfit,
     TakeProfitTarget
-} from './types';
-import { calculateOptimalPosition } from './positionSizer';
-import { atrPercentToPriceDistance, roundPrice, roundPercentage } from './priceUtils';
+} from './types.ts';
+import { calculateOptimalPosition } from './positionSizer.ts';
+import { atrPercentToPriceDistance, roundPrice, roundPercentage } from './priceUtils.ts';
 
 export function calculateBreakoutRisk(params: RiskCalculationParams): RiskManagement {
     const {

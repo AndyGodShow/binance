@@ -3,15 +3,15 @@
  * 特点：量价配合，短线爆发
  */
 
-import {
+import type {
     RiskManagement,
     RiskCalculationParams,
     StopLoss,
     TakeProfit,
     TakeProfitTarget
-} from './types';
-import { calculateOptimalPosition } from './positionSizer';
-import { atrPercentToPriceDistance, roundPrice, roundPercentage } from './priceUtils';
+} from './types.ts';
+import { calculateOptimalPosition } from './positionSizer.ts';
+import { atrPercentToPriceDistance, roundPrice, roundPercentage } from './priceUtils.ts';
 
 export function calculateInflowRisk(params: RiskCalculationParams): RiskManagement {
     const {
@@ -121,21 +121,12 @@ export function calculateInflowRisk(params: RiskCalculationParams): RiskManageme
     };
 
     // ========== 仓位计算 ==========
-    let strategyBonus = 0;
-
-    // 高换手率加成
-    const turnoverRatio = params.turnoverRatio || 0;
-    if (turnoverRatio > 3.5) {
-        strategyBonus += 5; // 新资金识别
-    }
-
     const positionSizing = calculateOptimalPosition({
         confidence,
         accountBalance,
         riskPercentage,
         entryPrice,
         stopLoss: stopLossPrice,
-        strategyBonus,
         // 资金流入历史数据（示例）
         winRate: 0.58,
         avgWin: 3.5,

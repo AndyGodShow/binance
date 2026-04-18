@@ -1,5 +1,5 @@
-import { KlineData } from '@/app/api/backtest/klines/route';
-import { TickerData } from './types';
+import type { KlineData } from '../app/api/backtest/klines/route.ts';
+import type { TickerData } from './types.ts';
 import {
     calculateBollingerBands,
     calculateKeltnerChannels,
@@ -7,9 +7,9 @@ import {
     calculateMomentumHistogram,
     calculateADX,
     calculateBandwidthPercentile,
-    OHLC
-} from './indicators';
-import { calculateVolumeProfile } from './volumeProfile';
+} from './indicators.ts';
+import type { OHLC } from './indicators.ts';
+import { calculateVolumeProfile } from './volumeProfile.ts';
 
 /**
  * 从K线数据计算技术指标

@@ -1,4 +1,4 @@
-import { KlineData } from '@/app/api/backtest/klines/route';
+import type { KlineData } from '../app/api/backtest/klines/route.ts';
 
 function parseUtcDateString(date: string): number {
     const match = date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -17,13 +17,17 @@ function parseUtcDateString(date: string): number {
  * 自动处理分页，突破单次1500条的限制
  */
 export class HistoricalDataFetcher {
-    private baseUrl = '/api/backtest/klines';
+    private baseUrl: string;
     private maxLimit = 1500;
     private readonly rangeCache = new Map<string, Promise<KlineData[]>>();
     private activeRequestCount = 0;
     private readonly requestQueue: Array<() => void> = [];
     private readonly maxConcurrentRequests = 2;
     private readonly maxRequestAttempts = 3;
+
+    constructor(options: { baseUrl?: string } = {}) {
+        this.baseUrl = options.baseUrl || '/api/backtest/klines';
+    }
 
     private buildCacheKey(
         symbol: string,

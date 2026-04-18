@@ -1,4 +1,4 @@
-import { DataQualityMetrics } from '@/lib/dataQuality';
+import type { DataQualityMetrics } from './dataQuality.ts';
 
 export interface BacktestDiagnosticCheck {
     key: string;

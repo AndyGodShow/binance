@@ -8,12 +8,13 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint src scripts",
-    "test": "node --test \"src/lib/**/*.test.ts\" \"scripts/**/*.test.mjs\"",
+    "test": "node --experimental-specifier-resolution=node --test \"src/lib/**/*.test.ts\" \"scripts/**/*.test.mjs\"",
     "typecheck": "bash ./scripts/typecheck.sh",
     "verify": "npm run lint && npm run test && npm run typecheck && npm run build",
     "verify:api": "node ./scripts/verify-api-smoke.mjs",
     "verify:backtest": "node ./scripts/verify-backtest-batch.mjs",
-    "verify:stability": "node ./scripts/verify-stability.mjs"
+    "verify:stability": "node ./scripts/verify-stability.mjs",
+    "optimize:strategies": "node --experimental-specifier-resolution=node ./scripts/optimize-strategies.mjs"
   },
   "dependencies": {
     "@vercel/blob": "^2.3.3",

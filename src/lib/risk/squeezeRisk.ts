@@ -3,15 +3,15 @@
  * 特点：狙击型入场，极高盈亏比
  */
 
-import {
+import type {
     RiskManagement,
     RiskCalculationParams,
     StopLoss,
     TakeProfit,
     TakeProfitTarget
-} from './types';
-import { calculateOptimalPosition } from './positionSizer';
-import { roundPrice, roundPercentage } from './priceUtils';
+} from './types.ts';
+import { calculateOptimalPosition } from './positionSizer.ts';
+import { roundPrice, roundPercentage } from './priceUtils.ts';
 
 export function calculateSqueezeRisk(params: RiskCalculationParams): RiskManagement {
     const {

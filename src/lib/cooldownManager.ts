@@ -75,6 +75,7 @@ class CooldownManager {
         this.cleanupInterval = setInterval(() => {
             this.cleanup();
         }, this.cleanupIntervalMs);
+        this.cleanupInterval.unref?.();
     }
 
     /**

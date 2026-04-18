@@ -3,15 +3,15 @@
  * 特点：统计套利，均值回归
  */
 
-import {
+import type {
     RiskManagement,
     RiskCalculationParams,
     StopLoss,
     TakeProfit,
     TakeProfitTarget
-} from './types';
-import { calculateOptimalPosition } from './positionSizer';
-import { roundPrice, roundPercentage } from './priceUtils';
+} from './types.ts';
+import { calculateOptimalPosition } from './positionSizer.ts';
+import { roundPrice, roundPercentage } from './priceUtils.ts';
 
 export function calculateRSRSRisk(params: RiskCalculationParams): RiskManagement {
     const {

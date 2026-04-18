@@ -1,10 +1,11 @@
-import { TradingStrategy, StrategySignal, CompositeCondition } from '../lib/strategyTypes';
-import { TickerData } from '../lib/types';
-import { cooldownManager } from '../lib/cooldownManager';
-import { logger } from '../lib/logger';
-import { APP_CONFIG } from '../lib/config';
-import { TREND_CONFIRMATION_RULES, trendStateManager } from '../lib/trendStateManager';
-import { calculateRiskManagement } from '@/lib/risk/riskCalculator';
+import type { TradingStrategy, StrategySignal, CompositeCondition } from '../lib/strategyTypes.ts';
+import type { TickerData } from '../lib/types.ts';
+import { cooldownManager } from '../lib/cooldownManager.ts';
+import { logger } from '../lib/logger.ts';
+import { APP_CONFIG } from '../lib/config.ts';
+import { getTrendConfirmationRules, trendStateManager } from '../lib/trendStateManager.ts';
+import { getStrategyParameterConfig } from '../lib/strategyParameters.ts';
+import { calculateRiskManagement } from '../lib/risk/riskCalculator.ts';
 
 // 辅助函数：检查条件并创建条件对象
 function checkCondition(
@@ -17,27 +18,6 @@ function checkCondition(
     return { name, description, met, value, threshold };
 }
 
-// 🎯 差异化冷却期：根据策略类型调整
-const COOLDOWN_PERIODS = {
-    'strong-breakout': 45 * 60 * 1000,      // 45分钟 - 追涨型
-    'trend-confirmation': 60 * 60 * 1000,   // 60分钟 - 趋势型
-    'capital-inflow': 30 * 60 * 1000,       // 30分钟 - 短线型
-};
-
-const STRONG_BREAKOUT_RULES = {
-    breakoutBufferPercent: 0.3,
-    minVolume24h: 10000000,
-    minOiChange4h: 15,
-    minEmaDistancePercent: 1,
-    maxEmaDistancePercent: 8,
-    momentumThresholds: {
-        change15m: 2,
-        change1h: 4,
-        change4h: 8,
-        change24h: 12,
-    },
-} as const;
-
 // ==================== 复合策略 1: 强势突破（机构级优化版）====================
 export const strongBreakoutStrategy: TradingStrategy = {
     id: 'strong-breakout',
@@ -47,7 +27,8 @@ export const strongBreakoutStrategy: TradingStrategy = {
     enabled: true,
 
     detect: (ticker: TickerData): StrategySignal | null => {
-        if (cooldownManager.check(ticker.symbol, 'strong-breakout', COOLDOWN_PERIODS['strong-breakout'])) {
+        const params = getStrategyParameterConfig('strong-breakout');
+        if (cooldownManager.check(ticker.symbol, 'strong-breakout', params.cooldownPeriodMs)) {
             return null;
         }
 
@@ -67,7 +48,7 @@ export const strongBreakoutStrategy: TradingStrategy = {
             typeof breakout21dPercent === 'number' &&
             Number.isFinite(breakout21dHigh) &&
             Number.isFinite(breakout21dPercent) &&
-            breakout21dPercent >= STRONG_BREAKOUT_RULES.breakoutBufferPercent;
+            breakout21dPercent >= params.breakoutBufferPercent;
 
         conditions.push(checkCondition(
             'daily-breakout',
@@ -76,7 +57,7 @@ export const strongBreakoutStrategy: TradingStrategy = {
                 : `未突破过去21根已完成日线高点${typeof breakout21dHigh === 'number' ? ` (参考${breakout21dHigh.toFixed(4)})` : ' (缺少日线数据)'}`,
             breakoutCondition,
             breakout21dPercent,
-            STRONG_BREAKOUT_RULES.breakoutBufferPercent
+            params.breakoutBufferPercent
         ));
 
         if (!breakoutCondition) {
@@ -89,10 +70,10 @@ export const strongBreakoutStrategy: TradingStrategy = {
         const change4h = ticker.change4h || 0;
 
         const momentumChecks = [
-            change15m > STRONG_BREAKOUT_RULES.momentumThresholds.change15m,
-            change1h > STRONG_BREAKOUT_RULES.momentumThresholds.change1h,
-            change4h > STRONG_BREAKOUT_RULES.momentumThresholds.change4h,
-            change24h > STRONG_BREAKOUT_RULES.momentumThresholds.change24h,
+            change15m > params.momentumThresholds.change15m,
+            change1h > params.momentumThresholds.change1h,
+            change4h > params.momentumThresholds.change4h,
+            change24h > params.momentumThresholds.change24h,
         ];
         const mtfMetCount = momentumChecks.filter(Boolean).length;
         const mtfCondition = mtfMetCount >= 3;
@@ -109,28 +90,28 @@ export const strongBreakoutStrategy: TradingStrategy = {
             return null;
         }
 
-        // ========== 24h 成交额条件：> $20M ==========
+        // ========== 24h 成交额条件 ==========
         const volume = parseFloat(ticker.quoteVolume);
-        const volumeCondition = volume > STRONG_BREAKOUT_RULES.minVolume24h;
+        const volumeCondition = volume > params.minVolume24h;
 
         conditions.push(checkCondition(
             'volume-threshold',
-            `24h成交额 > $10M (当前${(volume / 1000000).toFixed(1)}M)`,
+            `24h成交额 > $${(params.minVolume24h / 1000000).toFixed(0)}M (当前${(volume / 1000000).toFixed(1)}M)`,
             volumeCondition,
             volume,
-            STRONG_BREAKOUT_RULES.minVolume24h
+            params.minVolume24h
         ));
 
         // ========== 4小时持仓量正增长 > 15% ==========
         const oiChangePercent = ticker.oiChangePercent || 0;
-        const oiCondition = oiChangePercent > STRONG_BREAKOUT_RULES.minOiChange4h;
+        const oiCondition = oiChangePercent > params.minOiChange4h;
 
         conditions.push(checkCondition(
             'oi-volatility',
-            `4h持仓量正增长 > 15% (当前${oiChangePercent.toFixed(1)}%)`,
+            `4h持仓量正增长 > ${params.minOiChange4h}% (当前${oiChangePercent.toFixed(1)}%)`,
             oiCondition,
             oiChangePercent,
-            STRONG_BREAKOUT_RULES.minOiChange4h
+            params.minOiChange4h
         ));
 
         // ========== 5分钟 EMA 趋势条件 ==========
@@ -158,52 +139,56 @@ export const strongBreakoutStrategy: TradingStrategy = {
         const strengthCondition =
             typeof emaDistancePercent === 'number' &&
             Number.isFinite(emaDistancePercent) &&
-            emaDistancePercent >= STRONG_BREAKOUT_RULES.minEmaDistancePercent;
+            emaDistancePercent >= params.minEmaDistancePercent;
 
         conditions.push(checkCondition(
             'ema-strength',
             typeof emaDistancePercent === 'number'
-                ? `价格高于 EMA20 至少 1% (当前${emaDistancePercent.toFixed(2)}%)`
-                : '价格高于 EMA20 至少 1% (缺少5m EMA数据)',
+                ? `价格高于 EMA20 至少 ${params.minEmaDistancePercent}% (当前${emaDistancePercent.toFixed(2)}%)`
+                : `价格高于 EMA20 至少 ${params.minEmaDistancePercent}% (缺少5m EMA数据)`,
             strengthCondition,
             emaDistancePercent,
-            STRONG_BREAKOUT_RULES.minEmaDistancePercent
+            params.minEmaDistancePercent
         ));
 
         const overheatCondition =
             typeof emaDistancePercent === 'number' &&
             Number.isFinite(emaDistancePercent) &&
-            emaDistancePercent <= STRONG_BREAKOUT_RULES.maxEmaDistancePercent;
+            emaDistancePercent <= params.maxEmaDistancePercent;
 
         conditions.push(checkCondition(
             'ema-overheat',
             typeof emaDistancePercent === 'number'
-                ? `价格不高于 EMA20 超过 8% (当前${emaDistancePercent.toFixed(2)}%)`
-                : '价格不高于 EMA20 超过 8% (缺少5m EMA数据)',
+                ? `价格不高于 EMA20 超过 ${params.maxEmaDistancePercent}% (当前${emaDistancePercent.toFixed(2)}%)`
+                : `价格不高于 EMA20 超过 ${params.maxEmaDistancePercent}% (缺少5m EMA数据)`,
             overheatCondition,
             emaDistancePercent,
-            STRONG_BREAKOUT_RULES.maxEmaDistancePercent
+            params.maxEmaDistancePercent
         ));
 
         const conditionsMet = conditions.filter(c => c.met).length;
 
         if (conditionsMet === conditions.length) {
-            let confidence = 86;
+            let confidence = params.confidence.base;
 
             if (mtfMetCount === 4) {
-                confidence += 4;
+                confidence += params.confidence.allMomentumBonus;
             }
-            if (typeof breakout21dPercent === 'number' && breakout21dPercent >= 1) {
-                confidence += 2;
+            if (typeof breakout21dPercent === 'number' && breakout21dPercent >= params.confidence.strongBreakoutPercent) {
+                confidence += params.confidence.strongBreakoutBonus;
             }
-            if (oiChangePercent >= 25) {
-                confidence += 2;
+            if (oiChangePercent >= params.confidence.strongOiThreshold) {
+                confidence += params.confidence.strongOiBonus;
             }
-            if (volume >= 50000000) {
-                confidence += 2;
+            if (volume >= params.confidence.strongVolumeThreshold) {
+                confidence += params.confidence.strongVolumeBonus;
             }
-            if (typeof emaDistancePercent === 'number' && emaDistancePercent >= 1.5 && emaDistancePercent <= 4) {
-                confidence += 2;
+            if (
+                typeof emaDistancePercent === 'number' &&
+                emaDistancePercent >= params.confidence.optimalEmaDistanceMin &&
+                emaDistancePercent <= params.confidence.optimalEmaDistanceMax
+            ) {
+                confidence += params.confidence.optimalEmaBonus;
             }
 
             const metConditions = conditions.filter(c => c.met).map(c => c.description);
@@ -217,7 +202,7 @@ export const strongBreakoutStrategy: TradingStrategy = {
                     riskManagement = calculateRiskManagement('strong-breakout', {
                         entryPrice: parseFloat(ticker.lastPrice),
                         direction: 'long',
-                    confidence: Math.min(95, confidence),
+                    confidence: Math.min(params.confidence.maxConfidence, confidence),
                     atr,
                     keltnerLower: ticker.keltnerLower,
                     keltnerUpper: ticker.keltnerUpper,
@@ -235,7 +220,7 @@ export const strongBreakoutStrategy: TradingStrategy = {
                 strategyId: 'strong-breakout',
                 strategyName: '🎯 强势突破',
                 direction: 'long',
-                confidence: Math.min(95, confidence),
+                confidence: Math.min(params.confidence.maxConfidence, confidence),
                 reason: `${conditionsMet}/${conditions.length} 条件满足：${metConditions.join(' | ')}`,
                 metrics: {
                     change1h,
@@ -276,7 +261,9 @@ export const trendConfirmationStrategy: TradingStrategy = {
     enabled: true,
 
     detect: (ticker: TickerData): StrategySignal | null => {
-        if (cooldownManager.check(ticker.symbol, 'trend-confirmation', COOLDOWN_PERIODS['trend-confirmation'])) {
+        const params = getStrategyParameterConfig('trend-confirmation');
+        const trendRules = getTrendConfirmationRules();
+        if (cooldownManager.check(ticker.symbol, 'trend-confirmation', params.cooldownPeriodMs)) {
             return null;
         }
 
@@ -311,11 +298,11 @@ export const trendConfirmationStrategy: TradingStrategy = {
         }
         const avgDirectionalChange = (Math.abs(change15m) + Math.abs(change1h) + Math.abs(change4h)) / 3;
         const startRule = direction === 'long'
-            ? TREND_CONFIRMATION_RULES.longStart
-            : TREND_CONFIRMATION_RULES.shortStart;
+            ? trendRules.longStart
+            : trendRules.shortStart;
         const holdRule = direction === 'long'
-            ? TREND_CONFIRMATION_RULES.longHold
-            : TREND_CONFIRMATION_RULES.shortHold;
+            ? trendRules.longHold
+            : trendRules.shortHold;
         const momentumReady = direction === 'long'
             ? (
                 change15m >= holdRule.change15m &&
@@ -341,10 +328,10 @@ export const trendConfirmationStrategy: TradingStrategy = {
 
         conditions.push(checkCondition(
             'liquidity-threshold',
-            `成交额>$${(TREND_CONFIRMATION_RULES.minBaseQuoteVolume / 1000000).toFixed(0)}M 且持仓>$${(TREND_CONFIRMATION_RULES.minBaseOiValue / 1000000).toFixed(0)}M (当前${(quoteVolume / 1000000).toFixed(1)}M / ${(oiValue / 1000000).toFixed(1)}M)`,
+            `成交额>$${(trendRules.minBaseQuoteVolume / 1000000).toFixed(0)}M 且持仓>$${(trendRules.minBaseOiValue / 1000000).toFixed(0)}M (当前${(quoteVolume / 1000000).toFixed(1)}M / ${(oiValue / 1000000).toFixed(1)}M)`,
             liquidityCondition,
             oiValue,
-            TREND_CONFIRMATION_RULES.minBaseOiValue
+            trendRules.minBaseOiValue
         ));
 
         const gmmaCondition = direction === 'long'
@@ -376,10 +363,10 @@ export const trendConfirmationStrategy: TradingStrategy = {
 
         conditions.push(checkCondition(
             'oi-expansion',
-            `4h持仓扩张 > ${TREND_CONFIRMATION_RULES.minBaseOiExpansion}% (当前${oiChangePercent.toFixed(1)}%)`,
+            `4h持仓扩张 > ${trendRules.minBaseOiExpansion}% (当前${oiChangePercent.toFixed(1)}%)`,
             participationCondition,
             oiChangePercent,
-            TREND_CONFIRMATION_RULES.minBaseOiExpansion
+            trendRules.minBaseOiExpansion
         ));
 
         const stretchCondition = emaDistancePercent !== null && direction === 'long'
@@ -401,21 +388,18 @@ export const trendConfirmationStrategy: TradingStrategy = {
         // ========== Beta 系数过滤（独立性验证）==========
         const beta = ticker.betaToBTC || 1.0;
         const correlation = ticker.correlationToBTC || 0;
-        const isBTCCorrelated = Math.abs(correlation) > 0.9;
+        const isBTCCorrelated = Math.abs(correlation) > params.betaFilter.correlationThreshold;
 
         let betaCondition = true;
         let betaDesc = '';
 
-        if (isBTCCorrelated && beta < 1.2) {
-            // 高度跟随 BTC 且不强于大盘，降低评级
+        if (params.betaFilter.enabled && isBTCCorrelated && beta < params.betaFilter.minBetaWhenCorrelated) {
             betaCondition = false;
             betaDesc = `⚠️ 高度跟随 BTC (Beta=${beta.toFixed(2)}, 相关=${correlation.toFixed(2)})`;
-        } else if (beta > 1.2) {
-            // 强于大盘
+        } else if (beta > params.confidence.betaStrengthThreshold) {
             betaCondition = true;
             betaDesc = `✓ 强于大盘 (Beta=${beta.toFixed(2)})`;
         } else {
-            // 独立行情
             betaCondition = true;
             betaDesc = `独立行情 (Beta=${beta.toFixed(2)})`;
         }
@@ -436,40 +420,45 @@ export const trendConfirmationStrategy: TradingStrategy = {
             gmmaCondition &&
             multiEmaCondition &&
             participationCondition &&
-            stretchCondition;
+            stretchCondition &&
+            betaCondition;
 
         if (!coreConditionsMet) {
             return null;
         }
 
         let confidence = evaluation.event === 'reversal'
-            ? 90
+            ? params.confidence.reversal
             : evaluation.event === 'resume'
-            ? 88
+            ? params.confidence.resume
             : evaluation.event === 'start'
-            ? 87
-            : 85;
+            ? params.confidence.start
+            : params.confidence.active;
 
         if (
             (direction === 'long' && change15m >= startRule.change15m && change1h >= startRule.change1h && change4h >= startRule.change4h) ||
             (direction === 'short' && change15m <= startRule.change15m && change1h <= startRule.change1h && change4h <= startRule.change4h)
         ) {
-            confidence += 2;
+            confidence += params.confidence.strongStartBonus;
         }
-        if (quoteVolume >= 50_000_000) {
-            confidence += 2;
+        if (quoteVolume >= params.confidence.highVolumeThreshold) {
+            confidence += params.confidence.highVolumeBonus;
         }
-        if (oiValue >= 30_000_000) {
-            confidence += 1;
+        if (oiValue >= params.confidence.highOiValueThreshold) {
+            confidence += params.confidence.highOiValueBonus;
         }
-        if (oiChangePercent >= 15) {
-            confidence += 2;
+        if (oiChangePercent >= params.confidence.highOiExpansionThreshold) {
+            confidence += params.confidence.highOiExpansionBonus;
         }
-        if (emaDistancePercent !== null && Math.abs(emaDistancePercent) >= 0.8 && Math.abs(emaDistancePercent) <= 3.2) {
-            confidence += 1;
+        if (
+            emaDistancePercent !== null &&
+            Math.abs(emaDistancePercent) >= params.confidence.optimalEmaDistanceMin &&
+            Math.abs(emaDistancePercent) <= params.confidence.optimalEmaDistanceMax
+        ) {
+            confidence += params.confidence.optimalEmaBonus;
         }
-        if (beta > 1.2) {
-            confidence += 2;
+        if (beta > params.confidence.betaStrengthThreshold) {
+            confidence += params.confidence.betaStrengthBonus;
         }
 
         const metConditions = conditions.filter(c => c.met).map(c => c.description);
@@ -488,11 +477,12 @@ export const trendConfirmationStrategy: TradingStrategy = {
             riskManagement = calculateRiskManagement('trend-confirmation', {
                 entryPrice: parseFloat(ticker.lastPrice),
                 direction,
-                confidence: Math.min(95, confidence),
+                confidence: Math.min(params.confidence.maxConfidence, confidence),
                 atr: ticker.atr,
                 keltnerMid: ticker.keltnerMid,
                 keltnerUpper: ticker.keltnerUpper,
                 keltnerLower: ticker.keltnerLower,
+                bandwidthPercentile: ticker.bandwidthPercentile,
                 fundingRateTrend: 'stable',
                 betaToBTC: beta,
                 accountBalance: APP_CONFIG.RISK.DEFAULT_ACCOUNT_BALANCE, // TODO: 从用户设置获取
@@ -507,7 +497,7 @@ export const trendConfirmationStrategy: TradingStrategy = {
             strategyId: 'trend-confirmation',
             strategyName: '🎯 趋势确认',
             direction,
-            confidence: Math.min(95, confidence),
+            confidence: Math.min(params.confidence.maxConfidence, confidence),
             reason: `${eventLabel}：${metConditions.join(' | ')}`,
             metrics: {
                 change15m,
@@ -544,7 +534,8 @@ export const capitalInflowStrategy: TradingStrategy = {
     enabled: true,
 
     detect: (ticker: TickerData): StrategySignal | null => {
-        if (cooldownManager.check(ticker.symbol, 'capital-inflow', COOLDOWN_PERIODS['capital-inflow'])) {
+        const params = getStrategyParameterConfig('capital-inflow');
+        if (cooldownManager.check(ticker.symbol, 'capital-inflow', params.cooldownPeriodMs)) {
             return null;
         }
 
@@ -555,13 +546,16 @@ export const capitalInflowStrategy: TradingStrategy = {
         const change4h = ticker.change4h || 0;
         const change15m = ticker.change15m || 0;
 
-        const priceGrowthCondition = change1h > 8 && change4h > 5 && change15m > change1h * 0.6;
+        const priceGrowthCondition =
+            change1h > params.priceGrowth.minChange1h &&
+            change4h > params.priceGrowth.minChange4h &&
+            change15m > change1h * params.priceGrowth.minChange15mTo1hRatio;
         conditions.push(checkCondition(
             'price-growth',
             `价格快速增长: 1h ${change1h.toFixed(1)}%, 4h ${change4h.toFixed(1)}%`,
             priceGrowthCondition,
             change1h,
-            8
+            params.priceGrowth.minChange1h
         ));
 
         // ========== CVD 质量验证 ==========
@@ -570,18 +564,24 @@ export const capitalInflowStrategy: TradingStrategy = {
         const cvdSlope = ticker.cvdSlope;
         const hasCvdData = typeof cvd === 'number' && typeof cvdSlope === 'number';
 
-        // 价格上涨 + CVD 斜率向上 = 主动买盘（高质量）
-        const isActiveBuying = change1h > 0 && hasCvdData && cvdSlope > 0;
+        const isActiveBuying =
+            change1h > 0 &&
+            hasCvdData &&
+            cvdSlope > params.quality.minCvdSlope;
 
-        const volumeCondition = volume > 30000000;
-        const qualityCondition = volumeCondition && hasCvdData && cvdSlope > 0;
+        const volumeCondition = volume > params.quality.minVolume24h;
+        const qualityCondition =
+            volumeCondition &&
+            (!params.quality.requireCvdData || hasCvdData) &&
+            hasCvdData &&
+            cvdSlope > params.quality.minCvdSlope;
 
         conditions.push(checkCondition(
             'high-volume-quality',
-            `成交量>$30M (当前${(volume / 1000000).toFixed(1)}M) ${!hasCvdData ? '⚠️缺少CVD数据' : isActiveBuying ? '✓主动买盘' : '⚠️被动推升'}`,
+            `成交量>$${(params.quality.minVolume24h / 1000000).toFixed(0)}M (当前${(volume / 1000000).toFixed(1)}M) ${!hasCvdData ? '⚠️缺少CVD数据' : isActiveBuying ? '✓主动买盘' : '⚠️被动推升'}`,
             qualityCondition,
             volume,
-            30000000
+            params.quality.minVolume24h
         ));
 
         // ========== Volume Profile VAH 突破 ==========
@@ -595,46 +595,50 @@ export const capitalInflowStrategy: TradingStrategy = {
         let vpBreakout = false;
         let vpDesc = '';
 
-        if (vah && poc) {
+        if (typeof vah === 'number' && typeof poc === 'number') {
             const aboveVAH = currentPrice > vah;
             const distanceFromPOC = ((currentPrice - poc) / poc * 100);
 
-            // 价格突破 VAH 且远离 POC（脱离密集成交区）
-            vpBreakout = aboveVAH && distanceFromPOC > 2;
+            vpBreakout = aboveVAH && distanceFromPOC > params.volumeProfile.minDistanceFromPocPercent;
             vpDesc = `${aboveVAH ? '已突破VAH' : '未突破VAH'} (距POC ${distanceFromPOC.toFixed(1)}%)`;
-        } else {
-            vpBreakout = change24h > 10; // 无数据时降级为价格突破
+        } else if (params.volumeProfile.allowPriceOnlyFallback) {
+            vpBreakout = change24h > params.volumeProfile.minChange24hFallback;
             vpDesc = '价格突破 (无VP数据)';
+        } else {
+            vpBreakout = false;
+            vpDesc = '缺少VP数据';
         }
 
-        const breakoutCondition = vpBreakout && volumeRatio > 1.5;
+        const breakoutCondition =
+            (!params.volumeProfile.requireVolumeProfile || (typeof vah === 'number' && typeof poc === 'number')) &&
+            vpBreakout &&
+            volumeRatio > params.volumeProfile.minVolumeRatio;
 
         conditions.push(checkCondition(
             'volume-profile-breakout',
             `${vpDesc} 且量增${volumeRatio.toFixed(1)}x`,
             breakoutCondition,
             change24h,
-            10
+            params.volumeProfile.allowPriceOnlyFallback
+                ? params.volumeProfile.minChange24hFallback
+                : params.volumeProfile.minDistanceFromPocPercent
         ));
 
         const conditionsMet = conditions.filter(c => c.met).length;
 
         // 🔥 严格模式: 必须满足全部3个条件
         if (conditionsMet >= 3) {
-            let confidence = 68 + (conditionsMet * 7);
+            let confidence = params.confidence.base + (conditionsMet * params.confidence.conditionBonus);
 
-            // CVD 主动买盘加成
             if (isActiveBuying) {
-                confidence += 5;
+                confidence += params.confidence.activeBuyingBonus;
             }
 
-            // 超大成交量加成
-            if (volume > 100000000) {
-                confidence += 3;
+            if (volume > params.confidence.hugeVolumeThreshold) {
+                confidence += params.confidence.hugeVolumeBonus;
             }
 
-            // 🔥 严格模式: 最低置信度过滤
-            if (confidence < 80) {
+            if (confidence < params.confidence.minConfidence) {
                 return null;
             }
 
@@ -647,13 +651,12 @@ export const capitalInflowStrategy: TradingStrategy = {
                 riskManagement = calculateRiskManagement('capital-inflow', {
                     entryPrice: parseFloat(ticker.lastPrice),
                     direction: 'long',
-                    confidence: Math.min(88, confidence),
+                    confidence: Math.min(params.confidence.maxConfidence, confidence),
                     atr: ticker.atr,
                     vah: ticker.vah,
                     val: ticker.val,
                     poc: ticker.poc,
                     cvdSlope: ticker.cvdSlope,
-                    turnoverRatio: 0,
                     // 从全局安全配置读取默认值
                     accountBalance: APP_CONFIG.RISK.DEFAULT_ACCOUNT_BALANCE, // TODO: 从用户设置获取
                     riskPercentage: APP_CONFIG.RISK.DEFAULT_RISK_PER_TRADE
@@ -667,7 +670,7 @@ export const capitalInflowStrategy: TradingStrategy = {
                 strategyId: 'capital-inflow',
                 strategyName: '🎯 资金流入',
                 direction: 'long',
-                confidence: Math.min(88, confidence),
+                confidence: Math.min(params.confidence.maxConfidence, confidence),
                 reason: `${conditionsMet}/3 条件满足：${metConditions.join(' | ')}`,
                 metrics: {
                     change1h,

@@ -3,15 +3,15 @@
  * 特点：跟随型，趋势延续性强
  */
 
-import {
+import type {
     RiskManagement,
     RiskCalculationParams,
     StopLoss,
     TakeProfit,
     TakeProfitTarget
-} from './types';
-import { calculateOptimalPosition } from './positionSizer';
-import { atrPercentToPriceDistance, roundPrice, roundPercentage } from './priceUtils';
+} from './types.ts';
+import { calculateOptimalPosition } from './positionSizer.ts';
+import { atrPercentToPriceDistance, roundPrice, roundPercentage } from './priceUtils.ts';
 
 export function calculateTrendRisk(params: RiskCalculationParams): RiskManagement {
     const {

@@ -150,6 +150,26 @@ export const DEFAULT_RISK_CONFIGS: Record<string, StrategyRiskConfig> = {
         historicalAvgWin: 4.8,
         historicalAvgLoss: 1.7,
     },
+
+    // 魏神策略：账本反推偏空执行策略
+    'wei-shen-ledger': {
+        stopLoss: {
+            type: 'atr',
+            atrMultiplier: 2.2,
+            maxPercentage: 4,
+        },
+        takeProfit: {
+            targets: [
+                { stopMultiplier: 1.5, closePercentage: 50, moveStopToEntry: true },
+                { stopMultiplier: 2.8, closePercentage: 100, moveStopToEntry: false },
+            ],
+        },
+        timeStop: { maxBars: 36, profitThreshold: 0.6 },
+        maxLeverage: 3,
+        historicalWinRate: 0.24,
+        historicalAvgWin: 0.51,
+        historicalAvgLoss: 0.02,
+    },
 };
 
 /**

@@ -45,3 +45,41 @@ http://localhost:3000
 ## 说明
 
 该项目仍在持续迭代中，主要用于个人研究、数据观察和策略验证。
+
+## 账本反推策略框架
+
+本仓库新增了一个独立的 Python 研究管线，用于从 `bwjoke/BTC-Trading-Since-2020` 这类真实交易账本中反向提炼可解释、可回测、可扩展的策略规则。
+
+运行方式：
+
+```bash
+python3 -m unittest tests.test_ledger_strategy
+bash scripts/run_ledger_strategy.sh
+```
+
+默认输入目录：
+
+```text
+data/external/btc-trading-since-2020-raw
+```
+
+默认输出目录：
+
+```text
+data/ledger_strategy
+```
+
+主要输出：
+
+- `schema_scan.json`：字段扫描与 schema 映射。
+- `normalized/*.csv`：订单、成交、钱包流水、持仓快照、保证金快照、钱包快照和合约元数据的统一类型层。
+- `trade_reconstruction/reconstructed_trades.csv`：开仓、加仓、减仓、平仓、反手后的交易生命周期。
+- `strategy_inference/rules.json`：模块化策略规则与默认参数。
+- `backtest/trades.csv` 与 `backtest/equity_curve.csv`：回测交易明细和收益曲线。
+- `reports/ledger_strategy_report.md`：自动生成的分析报告。
+
+前端策略专区中已注册 `魏神策略`。当前版本不再把历史 UTC 时间窗当成硬条件，而是把时间作为弱加分；核心判断改为多维市场状态评分，包括方向动量、趋势结构、持仓扩张、资金费率、流动性、波动过滤、价格位置、CVD、成交密集区和清算热力图等可扩展特征。
+
+扩展市场数据时，实现或替换 `src/ledger_strategy/strategy/modules.py` 中的 `MarketContextProvider.features_at(symbol, timestamp)`，即可接入 K 线、波动率、资金费率、持仓量和基差等上下文。
+
+当前限制：默认版本是账本行为策略，不把历史账户权益曲线当作策略证明；在接入完整 OHLCV 之前，止盈止损只能基于重建交易结果和账本路径推断。

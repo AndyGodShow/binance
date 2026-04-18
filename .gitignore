@@ -6,6 +6,8 @@
 # historical data (too large for git)
 /data/historical/
 /data/daily-news/
+/data/external/
+/data/ledger_strategy/
 /.pnp
 .pnp.*
 .yarn/*
@@ -16,6 +18,8 @@
 
 # testing
 /coverage
+__pycache__/
+*.pyc
 
 # next.js
 /.next/

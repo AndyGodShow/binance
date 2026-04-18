@@ -1,4 +1,4 @@
-import { KlineData } from '@/app/api/backtest/klines/route';
+import type { KlineData } from '../app/api/backtest/klines/route.ts';
 
 /**
  * 数据质量指标

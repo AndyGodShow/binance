@@ -1,4 +1,4 @@
-import { BacktestResult, EquityPoint, Trade } from './backtestEngine';
+import type { BacktestResult, EquityPoint, Trade } from './backtestEngine.ts';
 
 export interface PortfolioBacktestConfig {
     initialCapital: number;

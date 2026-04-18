@@ -1,3 +1,6 @@
+import { DEFAULT_STRATEGY_PARAMETER_CONFIGS, getStrategyParameterConfig } from './strategyParameters.ts';
+import type { TrendConfirmationRules } from './strategyParameters.ts';
+
 export type TrendDirection = 'long' | 'short';
 export type TrendPhase =
     | 'idle'
@@ -41,54 +44,11 @@ export interface TrendStateEvaluation {
     flags: TrendFlags;
 }
 
-export const TREND_CONFIRMATION_RULES = {
-    minQuoteVolume: 12_000_000,
-    minBaseQuoteVolume: 8_000_000,
-    minOiValue: 6_000_000,
-    minBaseOiValue: 4_000_000,
-    minOiExpansion: 4,
-    minBaseOiExpansion: 2,
-    longStart: {
-        change15m: 0.2,
-        change1h: 0.8,
-        change4h: 2.2,
-        minEmaDistance: 0.1,
-        maxEmaDistance: 5.0,
-    },
-    shortStart: {
-        change15m: -0.2,
-        change1h: -0.8,
-        change4h: -2.2,
-        minEmaDistance: -5.0,
-        maxEmaDistance: -0.1,
-    },
-    longHold: {
-        change15m: -0.05,
-        change1h: 0.35,
-        change4h: 1.3,
-        minEmaDistance: -0.4,
-        maxEmaDistance: 6.5,
-    },
-    shortHold: {
-        change15m: 0.05,
-        change1h: -0.35,
-        change4h: -1.3,
-        minEmaDistance: -6.5,
-        maxEmaDistance: 0.4,
-    },
-    longPullback: {
-        min1h: -1.0,
-        min4h: 0.8,
-        minEmaDistance: -2.2,
-        maxEmaDistance: 6.5,
-    },
-    shortPullback: {
-        max1h: 1.0,
-        max4h: -0.8,
-        minEmaDistance: -6.5,
-        maxEmaDistance: 2.2,
-    },
-} as const;
+export const TREND_CONFIRMATION_RULES = DEFAULT_STRATEGY_PARAMETER_CONFIGS['trend-confirmation'].rules;
+
+export function getTrendConfirmationRules(): TrendConfirmationRules {
+    return getStrategyParameterConfig('trend-confirmation').rules;
+}
 
 interface RangeRule {
     minEmaDistance: number;
@@ -100,14 +60,15 @@ function inRange(value: number | null, rule: RangeRule): boolean {
 }
 
 export function buildTrendFlags(snapshot: TrendSnapshot): TrendFlags {
+    const rules = getTrendConfirmationRules();
     const liquidityOk =
-        snapshot.quoteVolume >= TREND_CONFIRMATION_RULES.minQuoteVolume &&
-        snapshot.oiValue >= TREND_CONFIRMATION_RULES.minOiValue;
+        snapshot.quoteVolume >= rules.minQuoteVolume &&
+        snapshot.oiValue >= rules.minOiValue;
     const baseLiquidityOk =
-        snapshot.quoteVolume >= TREND_CONFIRMATION_RULES.minBaseQuoteVolume &&
-        snapshot.oiValue >= TREND_CONFIRMATION_RULES.minBaseOiValue;
-    const participationOk = snapshot.oiChangePercent >= TREND_CONFIRMATION_RULES.minOiExpansion;
-    const baseParticipationOk = snapshot.oiChangePercent >= TREND_CONFIRMATION_RULES.minBaseOiExpansion;
+        snapshot.quoteVolume >= rules.minBaseQuoteVolume &&
+        snapshot.oiValue >= rules.minBaseOiValue;
+    const participationOk = snapshot.oiChangePercent >= rules.minOiExpansion;
+    const baseParticipationOk = snapshot.oiChangePercent >= rules.minBaseOiExpansion;
 
     const longStructureOk = snapshot.gmmaTrend === 'bullish' && snapshot.multiEmaTrend !== 'bearish';
     const shortStructureOk = snapshot.gmmaTrend === 'bearish' && snapshot.multiEmaTrend !== 'bullish';
@@ -116,51 +77,51 @@ export function buildTrendFlags(snapshot: TrendSnapshot): TrendFlags {
         liquidityOk &&
         participationOk &&
         longStructureOk &&
-        snapshot.change15m >= TREND_CONFIRMATION_RULES.longStart.change15m &&
-        snapshot.change1h >= TREND_CONFIRMATION_RULES.longStart.change1h &&
-        snapshot.change4h >= TREND_CONFIRMATION_RULES.longStart.change4h &&
-        inRange(snapshot.emaDistancePercent, TREND_CONFIRMATION_RULES.longStart);
+        snapshot.change15m >= rules.longStart.change15m &&
+        snapshot.change1h >= rules.longStart.change1h &&
+        snapshot.change4h >= rules.longStart.change4h &&
+        inRange(snapshot.emaDistancePercent, rules.longStart);
 
     const shortStartReady =
         liquidityOk &&
         participationOk &&
         shortStructureOk &&
-        snapshot.change15m <= TREND_CONFIRMATION_RULES.shortStart.change15m &&
-        snapshot.change1h <= TREND_CONFIRMATION_RULES.shortStart.change1h &&
-        snapshot.change4h <= TREND_CONFIRMATION_RULES.shortStart.change4h &&
-        inRange(snapshot.emaDistancePercent, TREND_CONFIRMATION_RULES.shortStart);
+        snapshot.change15m <= rules.shortStart.change15m &&
+        snapshot.change1h <= rules.shortStart.change1h &&
+        snapshot.change4h <= rules.shortStart.change4h &&
+        inRange(snapshot.emaDistancePercent, rules.shortStart);
 
     const longHoldOk =
         baseLiquidityOk &&
         baseParticipationOk &&
         longStructureOk &&
-        snapshot.change15m >= TREND_CONFIRMATION_RULES.longHold.change15m &&
-        snapshot.change1h >= TREND_CONFIRMATION_RULES.longHold.change1h &&
-        snapshot.change4h >= TREND_CONFIRMATION_RULES.longHold.change4h &&
-        inRange(snapshot.emaDistancePercent, TREND_CONFIRMATION_RULES.longHold);
+        snapshot.change15m >= rules.longHold.change15m &&
+        snapshot.change1h >= rules.longHold.change1h &&
+        snapshot.change4h >= rules.longHold.change4h &&
+        inRange(snapshot.emaDistancePercent, rules.longHold);
 
     const shortHoldOk =
         baseLiquidityOk &&
         baseParticipationOk &&
         shortStructureOk &&
-        snapshot.change15m <= TREND_CONFIRMATION_RULES.shortHold.change15m &&
-        snapshot.change1h <= TREND_CONFIRMATION_RULES.shortHold.change1h &&
-        snapshot.change4h <= TREND_CONFIRMATION_RULES.shortHold.change4h &&
-        inRange(snapshot.emaDistancePercent, TREND_CONFIRMATION_RULES.shortHold);
+        snapshot.change15m <= rules.shortHold.change15m &&
+        snapshot.change1h <= rules.shortHold.change1h &&
+        snapshot.change4h <= rules.shortHold.change4h &&
+        inRange(snapshot.emaDistancePercent, rules.shortHold);
 
     const longPullbackOk =
         baseLiquidityOk &&
         longStructureOk &&
-        snapshot.change1h >= TREND_CONFIRMATION_RULES.longPullback.min1h &&
-        snapshot.change4h >= TREND_CONFIRMATION_RULES.longPullback.min4h &&
-        inRange(snapshot.emaDistancePercent, TREND_CONFIRMATION_RULES.longPullback);
+        snapshot.change1h >= rules.longPullback.min1h &&
+        snapshot.change4h >= rules.longPullback.min4h &&
+        inRange(snapshot.emaDistancePercent, rules.longPullback);
 
     const shortPullbackOk =
         baseLiquidityOk &&
         shortStructureOk &&
-        snapshot.change1h <= TREND_CONFIRMATION_RULES.shortPullback.max1h &&
-        snapshot.change4h <= TREND_CONFIRMATION_RULES.shortPullback.max4h &&
-        inRange(snapshot.emaDistancePercent, TREND_CONFIRMATION_RULES.shortPullback);
+        snapshot.change1h <= rules.shortPullback.max1h &&
+        snapshot.change4h <= rules.shortPullback.max4h &&
+        inRange(snapshot.emaDistancePercent, rules.shortPullback);
 
     return {
         liquidityOk,

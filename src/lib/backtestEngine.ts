@@ -1,10 +1,10 @@
-import { KlineData } from '@/app/api/backtest/klines/route';
-import { TickerData } from './types';
-import { RiskManagement } from './risk/types';
-import { TechnicalIndicators } from './technicalIndicators';
-import { cooldownManager } from './cooldownManager';
-import { trendStateManager } from './trendStateManager';
-import { BacktestExecutionProvider } from './backtestExecutionProvider';
+import type { KlineData } from '../app/api/backtest/klines/route.ts';
+import type { TickerData } from './types.ts';
+import type { RiskManagement } from './risk/types.ts';
+import { TechnicalIndicators } from './technicalIndicators.ts';
+import { cooldownManager } from './cooldownManager.ts';
+import { trendStateManager } from './trendStateManager.ts';
+import { BacktestExecutionProvider } from './backtestExecutionProvider.ts';
 
 /**
  * 回测结果接口

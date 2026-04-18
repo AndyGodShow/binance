@@ -50,6 +50,7 @@ const MULTIFRAME_STRATEGIES = new Set([
     'trend-confirmation',
     'capital-inflow',
     'rsrs-trend',
+    'wei-shen-ledger',
 ]);
 
 const TREND_STRUCTURE_STRATEGIES = new Set(['strong-breakout', 'trend-confirmation']);
