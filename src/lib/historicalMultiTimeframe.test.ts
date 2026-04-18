@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import type { KlineData } from '@/app/api/backtest/klines/route';
-import { buildHistoricalTickerOverrides } from './historicalMultiTimeframe';
+import { buildHistoricalTickerOverrides } from './historicalMultiTimeframe.ts';
 
 function createKline(closeTime: number, close: number, high: number = close): KlineData {
     const openTime = closeTime - (60 * 60 * 1000) + 1;

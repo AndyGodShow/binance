@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { dataCollector } from '@/lib/services/dataCollector';
 import { fetchBinanceJson } from '@/lib/binanceApi';
+import { fetchBinanceKlines } from '@/lib/binanceKlineFetcher';
 import { fetchCoinalyzeOpenInterestHistory } from '@/lib/coinalyze';
 import { logger } from '@/lib/logger';
 
@@ -340,8 +341,15 @@ export async function GET(req: NextRequest) {
         if (endTime) klineParams.append('endTime', endTime);
 
         // 1. 发起 K 线请求 (始终从 API 获取最新的 K 线，因为 K 线 API 限制少且快)
-        const klinePromise = fetchBinanceJson<unknown>(`/fapi/v1/klines?${klineParams.toString()}`, {
-            revalidate: 60,
+        const parsedLimit = Number.parseInt(limit, 10);
+        const parsedStartTime = startTime ? Number.parseInt(startTime, 10) : undefined;
+        const parsedEndTime = endTime ? Number.parseInt(endTime, 10) : undefined;
+
+        const klinePromise = fetchBinanceKlines(`/fapi/v1/klines?${klineParams.toString()}`, {
+            interval,
+            startTime: parsedStartTime,
+            endTime: parsedEndTime,
+            limit: Number.isFinite(parsedLimit) ? parsedLimit : 500,
         }).then(data => {
             if (!Array.isArray(data)) throw new Error('KLine API returned invalid data');
             return data;

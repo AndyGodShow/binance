@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildFundingRateAlert } from './scheduledAlerts';
-import type { TickerData } from './types';
+import { buildFundingRateAlert } from './scheduledAlerts.ts';
+import type { TickerData } from './types.ts';
 
 function createTicker(symbol: string, fundingRate: string): TickerData {
     return {

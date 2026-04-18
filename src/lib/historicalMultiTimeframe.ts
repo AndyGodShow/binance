@@ -1,7 +1,7 @@
-import { KlineData } from '@/app/api/backtest/klines/route';
-import { calculateEMA } from '@/lib/indicators';
-import { logger } from '@/lib/logger';
-import { TickerData } from '@/lib/types';
+import type { KlineData } from '../app/api/backtest/klines/route.ts';
+import { calculateEMA } from './indicators.ts';
+import { logger } from './logger.ts';
+import type { TickerData } from './types.ts';
 
 type SupportedInterval = '5m' | '15m' | '1h' | '4h' | '1d';
 

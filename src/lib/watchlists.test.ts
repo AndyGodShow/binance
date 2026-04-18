@@ -1,14 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import type { TickerData } from './types';
+import type { TickerData } from './types.ts';
 import {
     addSymbolToWatchlist,
     createWatchlist,
     createWatchlistsState,
     filterTickersByWatchlist,
     removeSymbolFromWatchlist,
-} from './watchlists';
+} from './watchlists.ts';
 
 function createTicker(symbol: string): TickerData {
     return {

@@ -2,7 +2,7 @@
 
 import styles from './TabNavigation.module.css';
 
-type TabType = 'dashboard' | 'leaderboard' | 'macro' | 'watchlists' | 'longshort' | 'onchain' | 'strategies' | 'trading';
+type TabType = 'dashboard' | 'leaderboard' | 'macro' | 'news' | 'watchlists' | 'longshort' | 'onchain' | 'strategies' | 'trading';
 
 interface TabNavigationProps {
     activeTab: TabType;
@@ -29,6 +29,12 @@ export default function TabNavigation({ activeTab, onChange }: TabNavigationProp
                 onClick={() => onChange('macro')}
             >
                 🌐 宏观视角
+            </button>
+            <button
+                className={`${styles.tabBtn} ${activeTab === 'news' ? styles.active : ''}`}
+                onClick={() => onChange('news')}
+            >
+                🗞️ 每日新闻
             </button>
             <button
                 className={`${styles.tabBtn} ${activeTab === 'watchlists' ? styles.active : ''}`}

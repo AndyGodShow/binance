@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { dataCollector } from '@/lib/services/dataCollector';
+import {
+    authorizeDataDownloadRequest,
+    validateDataDownloadRequest,
+} from '@/lib/dataDownloadAccess';
 
 const isServerless = !!(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.SERVERLESS);
 
@@ -11,14 +15,32 @@ export async function POST(req: NextRequest) {
         }, { status: 400 });
     }
 
-    const { symbol, type, startDate, endDate } = await req.json();
+    const authResult = authorizeDataDownloadRequest(req.headers.get('authorization'), {
+        nodeEnv: process.env.NODE_ENV,
+        token: process.env.DATA_DOWNLOAD_TOKEN,
+    });
+    if (!authResult.ok) {
+        return NextResponse.json({ error: authResult.error }, { status: authResult.status });
+    }
 
-    if (!symbol || !type || !startDate || !endDate) {
-        return NextResponse.json({ error: 'Missing parameters' }, { status: 400 });
+    const payload = await req.json() as Record<string, unknown>;
+    const validation = validateDataDownloadRequest({
+        symbol: typeof payload.symbol === 'string' ? payload.symbol : null,
+        type: typeof payload.type === 'string' ? payload.type : null,
+        startDate: typeof payload.startDate === 'string' ? payload.startDate : null,
+        endDate: typeof payload.endDate === 'string' ? payload.endDate : null,
+    });
+    if (!validation.ok) {
+        return NextResponse.json({ error: validation.error }, { status: 400 });
     }
 
     // Start download in background
-    dataCollector.downloadData(symbol, type, startDate, endDate).catch(err => {
+    dataCollector.downloadData(
+        validation.value.symbol,
+        validation.value.type,
+        validation.value.startDate,
+        validation.value.endDate
+    ).catch(err => {
         console.error('Background download failed:', err);
     });
 
@@ -32,16 +54,30 @@ export async function POST(req: NextRequest) {
  * Check data coverage
  */
 export async function GET(req: NextRequest) {
-    const { searchParams } = new URL(req.url);
-    const symbol = searchParams.get('symbol');
-    const type = searchParams.get('type') as 'metrics' | 'fundingRate';
-    const startDate = searchParams.get('startDate');
-    const endDate = searchParams.get('endDate');
-
-    if (!symbol || !type || !startDate || !endDate) {
-        return NextResponse.json({ error: 'Missing parameters' }, { status: 400 });
+    const authResult = authorizeDataDownloadRequest(req.headers.get('authorization'), {
+        nodeEnv: process.env.NODE_ENV,
+        token: process.env.DATA_DOWNLOAD_TOKEN,
+    });
+    if (!authResult.ok) {
+        return NextResponse.json({ error: authResult.error }, { status: authResult.status });
     }
 
-    const coverage = dataCollector.checkDataCoverage(symbol, type, startDate, endDate);
+    const { searchParams } = new URL(req.url);
+    const validation = validateDataDownloadRequest({
+        symbol: searchParams.get('symbol'),
+        type: searchParams.get('type'),
+        startDate: searchParams.get('startDate'),
+        endDate: searchParams.get('endDate'),
+    });
+    if (!validation.ok) {
+        return NextResponse.json({ error: validation.error }, { status: 400 });
+    }
+
+    const coverage = dataCollector.checkDataCoverage(
+        validation.value.symbol,
+        validation.value.type,
+        validation.value.startDate,
+        validation.value.endDate
+    );
     return NextResponse.json(coverage);
 }

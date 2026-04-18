@@ -50,7 +50,6 @@ const VOLUME_FILTER_LABELS: Record<string, string> = {
 
 export default function Dashboard({
     processedData: externalData,
-    openInterestFrames = {},
     onSymbolClick,
     demoMode = false,
     watchlists = [],

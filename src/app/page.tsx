@@ -10,6 +10,7 @@ import SimulatedTrading from '@/components/SimulatedTrading';
 import LongShortPanel from '@/components/LongShortPanel';
 import OnchainTracker from '@/components/OnchainTracker';
 import MacroView from '@/components/MacroView';
+import DailyNewsView from '@/components/DailyNewsView';
 import TabNavigation from '@/components/TabNavigation';
 import ChartDrawer from '@/components/ChartDrawer';
 import WatchlistsPanel from '@/components/WatchlistsPanel';
@@ -19,9 +20,9 @@ import { useWatchlists } from '@/hooks/useWatchlists';
 import { formatPrice } from '@/lib/risk/priceUtils';
 import { StrategySignal } from '@/lib/strategyTypes';
 
-type AppTab = 'dashboard' | 'leaderboard' | 'macro' | 'watchlists' | 'longshort' | 'onchain' | 'strategies' | 'trading';
+type AppTab = 'dashboard' | 'leaderboard' | 'macro' | 'news' | 'watchlists' | 'longshort' | 'onchain' | 'strategies' | 'trading';
 
-const APP_TABS: AppTab[] = ['dashboard', 'leaderboard', 'macro', 'watchlists', 'longshort', 'onchain', 'strategies', 'trading'];
+const APP_TABS: AppTab[] = ['dashboard', 'leaderboard', 'macro', 'news', 'watchlists', 'longshort', 'onchain', 'strategies', 'trading'];
 
 function isAppTab(value: string | null): value is AppTab {
   return value !== null && APP_TABS.includes(value as AppTab);
@@ -267,7 +268,7 @@ export default function Home() {
   const heavyMarketRefreshInterval = isPageVisible ? 30000 : 300000;
   const multiframeRefreshInterval = isPageVisible ? 30000 : 300000;
   const oiMultiframeRefreshInterval = isPageVisible ? 60000 : 300000;
-  const shouldRunLiveMarketRequests = activeTab !== 'trading';
+  const shouldRunLiveMarketRequests = activeTab !== 'trading' && activeTab !== 'news';
   const shouldRunLeaderboardRequests = activeTab === 'dashboard' || activeTab === 'leaderboard';
 
   const { data: lightMarketData, error: marketError, isLoading: marketLoading } = usePersistentSWR<TickerData[]>(
@@ -744,7 +745,7 @@ export default function Home() {
   return (
     <main className="container">
       <TabNavigation activeTab={activeTab} onChange={setActiveTab} />
-      {(marketError || frameError || rsrsError || oiFrameError) && (
+      {shouldRunLiveMarketRequests && (marketError || frameError || rsrsError || oiFrameError) && (
         <div
           style={{
             marginBottom: 12,
@@ -759,7 +760,7 @@ export default function Home() {
           数据服务连接失败：请检查网络或代理是否可访问 Binance Futures（fapi.binance.com）。
         </div>
       )}
-      {!marketLoading && !marketError && processedData.length === 0 && (
+      {shouldRunLiveMarketRequests && !marketLoading && !marketError && processedData.length === 0 && (
         <div
           style={{
             marginBottom: 12,
@@ -795,6 +796,9 @@ export default function Home() {
       )}
       {activeTab === 'macro' && (
         <MacroView />
+      )}
+      {activeTab === 'news' && (
+        <DailyNewsView />
       )}
       {activeTab === 'watchlists' && (
         <WatchlistsPanel
