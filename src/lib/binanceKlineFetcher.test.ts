@@ -1,7 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildKlineFetchPlan, getKlineIntervalMs } from './binanceKlineFetcher.ts';
+import {
+    buildKlineFetchPlan,
+    createAsyncConcurrencyLimiter,
+    getKlineIntervalMs,
+} from './binanceKlineFetcher.ts';
 
 test('getKlineIntervalMs resolves common Binance intervals', () => {
     assert.equal(getKlineIntervalMs('15m'), 15 * 60 * 1000);
@@ -43,4 +47,24 @@ test('buildKlineFetchPlan keeps short requests as a single call', () => {
 
     assert.equal(plan.length, 1);
     assert.equal(plan[0].limit, 24);
+});
+
+test('createAsyncConcurrencyLimiter caps overlapping upstream tasks', async () => {
+    const limiter = createAsyncConcurrencyLimiter(2);
+    let activeCount = 0;
+    let maxActiveCount = 0;
+
+    await Promise.all(
+        Array.from({ length: 6 }, (_, index) => limiter(async () => {
+            activeCount += 1;
+            maxActiveCount = Math.max(maxActiveCount, activeCount);
+
+            await new Promise((resolve) => setTimeout(resolve, 5 + index));
+
+            activeCount -= 1;
+            return index;
+        }))
+    );
+
+    assert.equal(maxActiveCount, 2);
 });

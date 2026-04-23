@@ -1,21 +1,28 @@
-import type { TradingStrategy, StrategySignal, CompositeCondition } from '../lib/strategyTypes.ts';
+import type { TradingStrategy, StrategySignal, CompositeCondition, StrategyDetectionContext } from '../lib/strategyTypes.ts';
 import type { TickerData } from '../lib/types.ts';
-import { cooldownManager } from '../lib/cooldownManager.ts';
 import { logger } from '../lib/logger.ts';
 import { APP_CONFIG } from '../lib/config.ts';
-import { getTrendConfirmationRules, trendStateManager } from '../lib/trendStateManager.ts';
+import { getTrendConfirmationRules } from '../lib/trendStateManager.ts';
 import { getStrategyParameterConfig } from '../lib/strategyParameters.ts';
+import { getStrategyRuntimeState } from '../lib/strategyRuntimeState.ts';
 import { calculateRiskManagement } from '../lib/risk/riskCalculator.ts';
+import {
+    toCapitalInflowStrategyInput,
+    toStrongBreakoutStrategyInput,
+    toTrendConfirmationStrategyInput,
+} from '../lib/strategyInputs.ts';
 
 // 辅助函数：检查条件并创建条件对象
 function checkCondition(
     name: string,
     description: string,
     met: boolean,
-    value?: number,
-    threshold?: number
+    _value?: number,
+    _threshold?: number,
 ): CompositeCondition {
-    return { name, description, met, value, threshold };
+    void _value;
+    void _threshold;
+    return { name, description, met };
 }
 
 // ==================== 复合策略 1: 强势突破（机构级优化版）====================
@@ -26,21 +33,23 @@ export const strongBreakoutStrategy: TradingStrategy = {
     category: 'trend',
     enabled: true,
 
-    detect: (ticker: TickerData): StrategySignal | null => {
-        const params = getStrategyParameterConfig('strong-breakout');
-        if (cooldownManager.check(ticker.symbol, 'strong-breakout', params.cooldownPeriodMs)) {
+    detect: (ticker: TickerData, context?: StrategyDetectionContext): StrategySignal | null => {
+        const input = toStrongBreakoutStrategyInput(ticker);
+        const params = getStrategyParameterConfig('strong-breakout', context?.parameterOverrides?.['strong-breakout']);
+        const runtimeState = getStrategyRuntimeState(context);
+        if (runtimeState.cooldown.check(input.symbol, 'strong-breakout', params.cooldownPeriodMs)) {
             return null;
         }
 
         const conditions: CompositeCondition[] = [];
-        const currentPrice = parseFloat(ticker.lastPrice);
-        const change24h = parseFloat(ticker.priceChangePercent || '0');
-        const breakout21dHigh = ticker.breakout21dHigh;
-        const breakout21dPercent = ticker.breakout21dPercent;
-        const ema20 = ticker.ema5m20;
-        const ema60 = ticker.ema5m60;
-        const ema100 = ticker.ema5m100;
-        const emaDistancePercent = ticker.ema5mDistancePercent;
+        const currentPrice = parseFloat(input.lastPrice);
+        const change24h = parseFloat(input.priceChangePercent || '0');
+        const breakout21dHigh = input.breakout21dHigh;
+        const breakout21dPercent = input.breakout21dPercent;
+        const ema20 = input.ema5m20;
+        const ema60 = input.ema5m60;
+        const ema100 = input.ema5m100;
+        const emaDistancePercent = input.ema5mDistancePercent;
 
         // ========== 只做多：21根已完成日线高点突破 ==========
         const breakoutCondition =
@@ -65,9 +74,9 @@ export const strongBreakoutStrategy: TradingStrategy = {
         }
 
         // ========== 多周期动量：四个满足三个 ==========
-        const change15m = ticker.change15m || 0;
-        const change1h = ticker.change1h || 0;
-        const change4h = ticker.change4h || 0;
+        const change15m = input.change15m || 0;
+        const change1h = input.change1h || 0;
+        const change4h = input.change4h || 0;
 
         const momentumChecks = [
             change15m > params.momentumThresholds.change15m,
@@ -91,7 +100,7 @@ export const strongBreakoutStrategy: TradingStrategy = {
         }
 
         // ========== 24h 成交额条件 ==========
-        const volume = parseFloat(ticker.quoteVolume);
+        const volume = parseFloat(input.quoteVolume);
         const volumeCondition = volume > params.minVolume24h;
 
         conditions.push(checkCondition(
@@ -103,7 +112,7 @@ export const strongBreakoutStrategy: TradingStrategy = {
         ));
 
         // ========== 4小时持仓量正增长 > 15% ==========
-        const oiChangePercent = ticker.oiChangePercent || 0;
+        const oiChangePercent = input.oiChangePercent || 0;
         const oiCondition = oiChangePercent > params.minOiChange4h;
 
         conditions.push(checkCondition(
@@ -193,30 +202,30 @@ export const strongBreakoutStrategy: TradingStrategy = {
 
             const metConditions = conditions.filter(c => c.met).map(c => c.description);
 
-            cooldownManager.record(ticker.symbol, 'strong-breakout');
+            runtimeState.cooldown.record(input.symbol, 'strong-breakout');
 
             // 🔥 计算风险管理参数
             let riskManagement;
             try {
-                const atr = ticker.atr || 0;
+                const atr = input.atr || 0;
                     riskManagement = calculateRiskManagement('strong-breakout', {
-                        entryPrice: parseFloat(ticker.lastPrice),
+                        entryPrice: parseFloat(input.lastPrice),
                         direction: 'long',
                     confidence: Math.min(params.confidence.maxConfidence, confidence),
                     atr,
-                    keltnerLower: ticker.keltnerLower,
-                    keltnerUpper: ticker.keltnerUpper,
-                    oiChangePercent: ticker.oiChangePercent,
-                    volumeChangePercent: ticker.volumeChangePercent,
+                    keltnerLower: input.keltnerLower,
+                    keltnerUpper: input.keltnerUpper,
+                    oiChangePercent: input.oiChangePercent,
+                    volumeChangePercent: input.volumeChangePercent,
                     accountBalance: APP_CONFIG.RISK.DEFAULT_ACCOUNT_BALANCE, // TODO: 从用户设置获取
                     riskPercentage: APP_CONFIG.RISK.DEFAULT_RISK_PER_TRADE
                 });
             } catch (error) {
-                logger.error('Risk calculation failed for strong-breakout', error as Error, { symbol: ticker.symbol });
+                logger.error('Risk calculation failed for strong-breakout', error as Error, { symbol: input.symbol });
             }
 
             return {
-                symbol: ticker.symbol,
+                symbol: input.symbol,
                 strategyId: 'strong-breakout',
                 strategyName: '🎯 强势突破',
                 direction: 'long',
@@ -260,27 +269,29 @@ export const trendConfirmationStrategy: TradingStrategy = {
     category: 'trend',
     enabled: true,
 
-    detect: (ticker: TickerData): StrategySignal | null => {
-        const params = getStrategyParameterConfig('trend-confirmation');
+    detect: (ticker: TickerData, context?: StrategyDetectionContext): StrategySignal | null => {
+        const input = toTrendConfirmationStrategyInput(ticker);
+        const params = getStrategyParameterConfig('trend-confirmation', context?.parameterOverrides?.['trend-confirmation']);
         const trendRules = getTrendConfirmationRules();
-        if (cooldownManager.check(ticker.symbol, 'trend-confirmation', params.cooldownPeriodMs)) {
+        const runtimeState = getStrategyRuntimeState(context);
+        if (runtimeState.cooldown.check(input.symbol, 'trend-confirmation', params.cooldownPeriodMs)) {
             return null;
         }
 
         const conditions: CompositeCondition[] = [];
-        const change15m = ticker.change15m || 0;
-        const change1h = ticker.change1h || 0;
-        const change4h = ticker.change4h || 0;
-        const oiValue = parseFloat(ticker.openInterestValue || '0');
-        const quoteVolume = parseFloat(ticker.quoteVolume || '0');
-        const oiChangePercent = ticker.oiChangePercent || 0;
-        const emaDistancePercent = typeof ticker.ema5mDistancePercent === 'number' && Number.isFinite(ticker.ema5mDistancePercent)
-            ? ticker.ema5mDistancePercent
+        const change15m = input.change15m || 0;
+        const change1h = input.change1h || 0;
+        const change4h = input.change4h || 0;
+        const oiValue = parseFloat(input.openInterestValue || '0');
+        const quoteVolume = parseFloat(input.quoteVolume || '0');
+        const oiChangePercent = input.oiChangePercent || 0;
+        const emaDistancePercent = typeof input.ema5mDistancePercent === 'number' && Number.isFinite(input.ema5mDistancePercent)
+            ? input.ema5mDistancePercent
             : null;
-        const gmmaTrend = ticker.gmmaTrend || 'mixed';
-        const multiEmaTrend = ticker.multiEmaTrend || 'mixed';
+        const gmmaTrend = input.gmmaTrend || 'mixed';
+        const multiEmaTrend = input.multiEmaTrend || 'mixed';
 
-        const evaluation = trendStateManager.evaluate(ticker.symbol, {
+        const evaluation = runtimeState.trend.evaluate(input.symbol, {
             change15m,
             change1h,
             change4h,
@@ -346,7 +357,7 @@ export const trendConfirmationStrategy: TradingStrategy = {
             1
         ));
 
-        const multiEmaAlignmentScore = ticker.multiEmaAlignmentScore || 0;
+        const multiEmaAlignmentScore = input.multiEmaAlignmentScore || 0;
         const multiEmaCondition = direction === 'long'
             ? multiEmaTrend !== 'bearish'
             : multiEmaTrend !== 'bullish';
@@ -386,8 +397,8 @@ export const trendConfirmationStrategy: TradingStrategy = {
         ));
 
         // ========== Beta 系数过滤（独立性验证）==========
-        const beta = ticker.betaToBTC || 1.0;
-        const correlation = ticker.correlationToBTC || 0;
+        const beta = input.betaToBTC || 1.0;
+        const correlation = input.correlationToBTC || 0;
         const isBTCCorrelated = Math.abs(correlation) > params.betaFilter.correlationThreshold;
 
         let betaCondition = true;
@@ -463,7 +474,7 @@ export const trendConfirmationStrategy: TradingStrategy = {
 
         const metConditions = conditions.filter(c => c.met).map(c => c.description);
 
-        cooldownManager.record(ticker.symbol, 'trend-confirmation');
+        runtimeState.cooldown.record(input.symbol, 'trend-confirmation');
         const eventLabel = evaluation.event === 'reversal'
             ? '趋势反转确认'
             : evaluation.event === 'resume'
@@ -474,26 +485,26 @@ export const trendConfirmationStrategy: TradingStrategy = {
 
         let riskManagement;
         try {
-            riskManagement = calculateRiskManagement('trend-confirmation', {
-                entryPrice: parseFloat(ticker.lastPrice),
+                riskManagement = calculateRiskManagement('trend-confirmation', {
+                entryPrice: parseFloat(input.lastPrice),
                 direction,
                 confidence: Math.min(params.confidence.maxConfidence, confidence),
-                atr: ticker.atr,
-                keltnerMid: ticker.keltnerMid,
-                keltnerUpper: ticker.keltnerUpper,
-                keltnerLower: ticker.keltnerLower,
-                bandwidthPercentile: ticker.bandwidthPercentile,
+                atr: input.atr,
+                keltnerMid: input.keltnerMid,
+                keltnerUpper: input.keltnerUpper,
+                keltnerLower: input.keltnerLower,
+                bandwidthPercentile: input.bandwidthPercentile,
                 fundingRateTrend: 'stable',
                 betaToBTC: beta,
                 accountBalance: APP_CONFIG.RISK.DEFAULT_ACCOUNT_BALANCE, // TODO: 从用户设置获取
                 riskPercentage: APP_CONFIG.RISK.DEFAULT_RISK_PER_TRADE
             });
         } catch (error) {
-            logger.error('Risk calculation failed for trend-confirmation', error as Error, { symbol: ticker.symbol });
+            logger.error('Risk calculation failed for trend-confirmation', error as Error, { symbol: input.symbol });
         }
 
         return {
-            symbol: ticker.symbol,
+            symbol: input.symbol,
             strategyId: 'trend-confirmation',
             strategyName: '🎯 趋势确认',
             direction,
@@ -533,18 +544,20 @@ export const capitalInflowStrategy: TradingStrategy = {
     category: 'volume',
     enabled: true,
 
-    detect: (ticker: TickerData): StrategySignal | null => {
-        const params = getStrategyParameterConfig('capital-inflow');
-        if (cooldownManager.check(ticker.symbol, 'capital-inflow', params.cooldownPeriodMs)) {
+    detect: (ticker: TickerData, context?: StrategyDetectionContext): StrategySignal | null => {
+        const input = toCapitalInflowStrategyInput(ticker);
+        const params = getStrategyParameterConfig('capital-inflow', context?.parameterOverrides?.['capital-inflow']);
+        const runtimeState = getStrategyRuntimeState(context);
+        if (runtimeState.cooldown.check(input.symbol, 'capital-inflow', params.cooldownPeriodMs)) {
             return null;
         }
 
         const conditions: CompositeCondition[] = [];
 
         // 条件1: 价格快速增长
-        const change1h = ticker.change1h || 0;
-        const change4h = ticker.change4h || 0;
-        const change15m = ticker.change15m || 0;
+        const change1h = input.change1h || 0;
+        const change4h = input.change4h || 0;
+        const change15m = input.change15m || 0;
 
         const priceGrowthCondition =
             change1h > params.priceGrowth.minChange1h &&
@@ -559,9 +572,9 @@ export const capitalInflowStrategy: TradingStrategy = {
         ));
 
         // ========== CVD 质量验证 ==========
-        const volume = parseFloat(ticker.quoteVolume);
-        const cvd = ticker.cvd;
-        const cvdSlope = ticker.cvdSlope;
+        const volume = parseFloat(input.quoteVolume);
+        const cvd = input.cvd;
+        const cvdSlope = input.cvdSlope;
         const hasCvdData = typeof cvd === 'number' && typeof cvdSlope === 'number';
 
         const isActiveBuying =
@@ -585,12 +598,12 @@ export const capitalInflowStrategy: TradingStrategy = {
         ));
 
         // ========== Volume Profile VAH 突破 ==========
-        const change24h = parseFloat(ticker.priceChangePercent);
-        const volumeRatio = ticker.volumeMA ? volume / ticker.volumeMA : 1;
-        const currentPrice = parseFloat(ticker.lastPrice);
+        const change24h = parseFloat(input.priceChangePercent);
+        const volumeRatio = input.volumeMA ? volume / input.volumeMA : 1;
+        const currentPrice = parseFloat(input.lastPrice);
 
-        const vah = ticker.vah;
-        const poc = ticker.poc;
+        const vah = input.vah;
+        const poc = input.poc;
 
         let vpBreakout = false;
         let vpDesc = '';
@@ -643,30 +656,30 @@ export const capitalInflowStrategy: TradingStrategy = {
             }
 
             const metConditions = conditions.filter(c => c.met).map(c => c.description);
-            cooldownManager.record(ticker.symbol, 'capital-inflow');
+            runtimeState.cooldown.record(input.symbol, 'capital-inflow');
 
             // 🔥 计算风险管理参数
             let riskManagement;
             try {
                 riskManagement = calculateRiskManagement('capital-inflow', {
-                    entryPrice: parseFloat(ticker.lastPrice),
+                    entryPrice: parseFloat(input.lastPrice),
                     direction: 'long',
                     confidence: Math.min(params.confidence.maxConfidence, confidence),
-                    atr: ticker.atr,
-                    vah: ticker.vah,
-                    val: ticker.val,
-                    poc: ticker.poc,
-                    cvdSlope: ticker.cvdSlope,
+                    atr: input.atr,
+                    vah: input.vah,
+                    val: input.val,
+                    poc: input.poc,
+                    cvdSlope: input.cvdSlope,
                     // 从全局安全配置读取默认值
                     accountBalance: APP_CONFIG.RISK.DEFAULT_ACCOUNT_BALANCE, // TODO: 从用户设置获取
                     riskPercentage: APP_CONFIG.RISK.DEFAULT_RISK_PER_TRADE
                 });
             } catch (error) {
-                logger.error('Risk calculation failed for capital-inflow', error as Error, { symbol: ticker.symbol });
+                logger.error('Risk calculation failed for capital-inflow', error as Error, { symbol: input.symbol });
             }
 
             return {
-                symbol: ticker.symbol,
+                symbol: input.symbol,
                 strategyId: 'capital-inflow',
                 strategyName: '🎯 资金流入',
                 direction: 'long',

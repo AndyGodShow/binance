@@ -151,24 +151,24 @@ export const DEFAULT_RISK_CONFIGS: Record<string, StrategyRiskConfig> = {
         historicalAvgLoss: 1.7,
     },
 
-    // 魏神策略：账本反推偏空执行策略
+    // 魏神策略：BTC 主导的规则化趋势风控覆盖层（仅用于回测面板手动覆盖）
     'wei-shen-ledger': {
         stopLoss: {
             type: 'atr',
-            atrMultiplier: 2.2,
-            maxPercentage: 4,
+            atrMultiplier: 1.2,
+            maxPercentage: 6,
         },
         takeProfit: {
             targets: [
-                { stopMultiplier: 1.5, closePercentage: 50, moveStopToEntry: true },
-                { stopMultiplier: 2.8, closePercentage: 100, moveStopToEntry: false },
+                { stopMultiplier: 1.0, closePercentage: 0, moveStopToEntry: true },
+                { stopMultiplier: 2.0, closePercentage: 50, moveStopToEntry: true },
             ],
         },
-        timeStop: { maxBars: 36, profitThreshold: 0.6 },
-        maxLeverage: 3,
-        historicalWinRate: 0.24,
-        historicalAvgWin: 0.51,
-        historicalAvgLoss: 0.02,
+        timeStop: { maxBars: 72, profitThreshold: 0.2 },
+        maxLeverage: 2,
+        historicalWinRate: 0.42,
+        historicalAvgWin: 3.4,
+        historicalAvgLoss: 1.8,
     },
 };
 

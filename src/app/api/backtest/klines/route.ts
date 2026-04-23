@@ -1,11 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { dataCollector } from '@/lib/services/dataCollector';
+import { getLocalKlinesInRange, mergeKlineDatasets } from '@/lib/services/klineArchive';
 import { fetchBinanceJson } from '@/lib/binanceApi';
 import { fetchBinanceKlines } from '@/lib/binanceKlineFetcher';
 import { fetchCoinalyzeOpenInterestHistory } from '@/lib/coinalyze';
 import { logger } from '@/lib/logger';
 
 export const dynamic = 'force-dynamic';
+
+function buildRouteErrorResponse(error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    const upstreamRateLimited = /http (418|429)\b/i.test(message);
+    const upstreamUnavailable = /all binance json endpoints failed/i.test(message);
+
+    return NextResponse.json(
+        {
+            error: upstreamRateLimited || upstreamUnavailable
+                ? '上游 K 线源暂时限流，请稍后重试'
+                : '获取历史数据失败',
+            details: message,
+            retryable: upstreamRateLimited || upstreamUnavailable,
+        },
+        { status: upstreamRateLimited || upstreamUnavailable ? 503 : 500 }
+    );
+}
 
 // K线数据接口
 export interface KlineData {
@@ -89,6 +107,15 @@ interface FundingDiagnostics extends AuxiliaryMergeStats {
     points: number;
 }
 
+interface KlineArchiveDiagnostics {
+    source: 'api' | 'local' | 'local+api';
+    usedLocalArchive: boolean;
+    fullyCoveredByLocalArchive: boolean;
+    archiveReadiness: 'ready' | 'exploratory-only' | 'not-ready' | 'unavailable';
+    localBars: number;
+    apiBars: number;
+}
+
 interface OpenInterestMergeResult {
     entries: NormalizedOpenInterestPoint[];
     diagnostics: OpenInterestDiagnostics;
@@ -124,6 +151,17 @@ function buildEmptyAuxiliaryDiagnostics(startTs: number, endTs: number): EmptyAu
             forwardFilledMatches: 0,
             missingMatches: 0,
         },
+    };
+}
+
+function buildKlineArchiveDiagnostics(input?: Partial<KlineArchiveDiagnostics>): KlineArchiveDiagnostics {
+    return {
+        source: input?.source ?? 'api',
+        usedLocalArchive: input?.usedLocalArchive ?? false,
+        fullyCoveredByLocalArchive: input?.fullyCoveredByLocalArchive ?? false,
+        archiveReadiness: input?.archiveReadiness ?? 'unavailable',
+        localBars: input?.localBars ?? 0,
+        apiBars: input?.apiBars ?? 0,
     };
 }
 
@@ -330,48 +368,93 @@ export async function GET(req: NextRequest) {
     }
 
     try {
-        // 构建请求URL
-        const klineParams = new URLSearchParams({
-            symbol: symbol.toUpperCase(),
-            interval,
-            limit,
-        });
-
-        if (startTime) klineParams.append('startTime', startTime);
-        if (endTime) klineParams.append('endTime', endTime);
-
-        // 1. 发起 K 线请求 (始终从 API 获取最新的 K 线，因为 K 线 API 限制少且快)
         const parsedLimit = Number.parseInt(limit, 10);
         const parsedStartTime = startTime ? Number.parseInt(startTime, 10) : undefined;
         const parsedEndTime = endTime ? Number.parseInt(endTime, 10) : undefined;
+        const normalizedSymbol = symbol.toUpperCase();
+        const normalizedLimit = Number.isFinite(parsedLimit) ? parsedLimit : 500;
 
-        const klinePromise = fetchBinanceKlines(`/fapi/v1/klines?${klineParams.toString()}`, {
-            interval,
-            startTime: parsedStartTime,
-            endTime: parsedEndTime,
-            limit: Number.isFinite(parsedLimit) ? parsedLimit : 500,
-        }).then(data => {
-            if (!Array.isArray(data)) throw new Error('KLine API returned invalid data');
-            return data;
+        const localRange = Number.isFinite(parsedStartTime) && Number.isFinite(parsedEndTime)
+            ? getLocalKlinesInRange({
+                symbol: normalizedSymbol,
+                interval,
+                startTime: parsedStartTime!,
+                endTime: parsedEndTime!,
+                limit: normalizedLimit,
+            })
+            : {
+                klines: [] as KlineData[],
+                audit: null,
+                fullyCovered: false,
+            };
+        let klineArchiveDiagnostics = buildKlineArchiveDiagnostics({
+            archiveReadiness: localRange.audit?.readiness ?? 'unavailable',
+            localBars: localRange.klines.length,
         });
 
-        const klineData = await klinePromise;
+        let klines: KlineData[];
+        if (localRange.fullyCovered && localRange.audit?.readiness === 'ready') {
+            klines = localRange.klines;
+            klineArchiveDiagnostics = buildKlineArchiveDiagnostics({
+                source: 'local',
+                usedLocalArchive: true,
+                fullyCoveredByLocalArchive: true,
+                archiveReadiness: localRange.audit.readiness,
+                localBars: localRange.klines.length,
+                apiBars: 0,
+            });
+        } else {
+            const klineParams = new URLSearchParams({
+                symbol: normalizedSymbol,
+                interval,
+                limit,
+            });
 
-        const klines: KlineData[] = klineData
-            .filter(isBinanceKlineRow)
-            .map((k) => ({
-                openTime: k[0],
-                open: k[1],
-                high: k[2],
-                low: k[3],
-                close: k[4],
-                volume: k[5],
-                closeTime: k[6],
-                quoteVolume: k[7],
-                trades: k[8],
-                takerBuyVolume: k[9],
-                takerBuyQuoteVolume: k[10],
-            }));
+            if (startTime) klineParams.append('startTime', startTime);
+            if (endTime) klineParams.append('endTime', endTime);
+
+            const klineData = await fetchBinanceKlines(`/fapi/v1/klines?${klineParams.toString()}`, {
+                interval,
+                startTime: parsedStartTime,
+                endTime: parsedEndTime,
+                limit: normalizedLimit,
+            }).then(data => {
+                if (!Array.isArray(data)) throw new Error('KLine API returned invalid data');
+                return data;
+            });
+
+            const apiKlines = klineData
+                .filter(isBinanceKlineRow)
+                .map((k) => ({
+                    openTime: k[0],
+                    open: k[1],
+                    high: k[2],
+                    low: k[3],
+                    close: k[4],
+                    volume: k[5],
+                    closeTime: k[6],
+                    quoteVolume: k[7],
+                    trades: k[8],
+                    takerBuyVolume: k[9],
+                    takerBuyQuoteVolume: k[10],
+                }));
+
+            klines = mergeKlineDatasets(localRange.klines, apiKlines)
+                .filter((kline) =>
+                    (!Number.isFinite(parsedStartTime) || kline.openTime >= parsedStartTime!)
+                    && (!Number.isFinite(parsedEndTime) || kline.closeTime <= parsedEndTime!)
+                )
+                .slice(0, normalizedLimit);
+
+            klineArchiveDiagnostics = buildKlineArchiveDiagnostics({
+                source: localRange.klines.length > 0 ? 'local+api' : 'api',
+                usedLocalArchive: localRange.klines.length > 0,
+                fullyCoveredByLocalArchive: false,
+                archiveReadiness: localRange.audit?.readiness ?? 'unavailable',
+                localBars: localRange.klines.length,
+                apiBars: apiKlines.length,
+            });
+        }
 
         if (!includeAuxiliary) {
             const diagnostics = buildEmptyAuxiliaryDiagnostics(
@@ -384,7 +467,10 @@ export async function GET(req: NextRequest) {
                 interval,
                 count: klines.length,
                 data: klines,
-                diagnostics,
+                diagnostics: {
+                    ...diagnostics,
+                    klineArchive: klineArchiveDiagnostics,
+                },
             });
         }
 
@@ -521,6 +607,7 @@ export async function GET(req: NextRequest) {
                 count: klines.length,
                 data: klines,
                 diagnostics: {
+                    klineArchive: klineArchiveDiagnostics,
                     openInterest: oiDiagnostics,
                     fundingRate: fundingMerge.diagnostics,
                 },
@@ -537,16 +624,16 @@ export async function GET(req: NextRequest) {
                 interval,
                 count: klines.length,
                 data: klines,
-                diagnostics: buildEmptyAuxiliaryDiagnostics(startTs, endTs),
+                diagnostics: {
+                    ...buildEmptyAuxiliaryDiagnostics(startTs, endTs),
+                    klineArchive: klineArchiveDiagnostics,
+                },
             });
         }
 
     } catch (error) {
         console.error('获取K线数据失败:', error);
-        return NextResponse.json(
-            { error: '获取历史数据失败' },
-            { status: 500 }
-        );
+        return buildRouteErrorResponse(error);
     }
 }
 

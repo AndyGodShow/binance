@@ -2,9 +2,8 @@ import type { KlineData } from '../app/api/backtest/klines/route.ts';
 import type { TickerData } from './types.ts';
 import type { RiskManagement } from './risk/types.ts';
 import { TechnicalIndicators } from './technicalIndicators.ts';
-import { cooldownManager } from './cooldownManager.ts';
-import { trendStateManager } from './trendStateManager.ts';
 import { BacktestExecutionProvider } from './backtestExecutionProvider.ts';
+import { calculateEMA } from './indicators.ts';
 
 /**
  * 回测结果接口
@@ -75,6 +74,9 @@ export interface Trade {
     profitUSDT: number; // 盈亏 (USDT)
     holdingTime: number; // 持仓时间(毫秒)
     exitReason: 'stop_loss' | 'take_profit' | 'signal' | 'end_of_data' | 'time_stop';
+    strategyRiskPct?: number;
+    plannedPositionPct?: number;
+    stopLossPct?: number;
 }
 
 /**
@@ -123,6 +125,7 @@ interface BacktestPosition {
     initialSize: number;
     remainingSize: number;
     hitTargetIndices: number[];
+    executionHistory: KlineData[];
 }
 
 interface PendingBacktestEntry {
@@ -139,6 +142,66 @@ function isMoreProtectiveStop(
     return direction === 'long'
         ? candidateStop > currentStop
         : candidateStop < currentStop;
+}
+
+function toExecutionHistoryOHLC(bars: KlineData[]) {
+    return bars.map((bar) => ({
+        time: bar.closeTime,
+        open: Number.parseFloat(bar.open),
+        high: Number.parseFloat(bar.high),
+        low: Number.parseFloat(bar.low),
+        close: Number.parseFloat(bar.close),
+        volume: Number.parseFloat(bar.volume),
+        quoteVolume: Number.parseFloat(bar.quoteVolume),
+        takerBuyQuoteVolume: Number.parseFloat(bar.takerBuyQuoteVolume),
+    }));
+}
+
+function computeDonchianMid(bars: KlineData[], lookback: number): number | null {
+    if (lookback <= 0 || bars.length < lookback) {
+        return null;
+    }
+
+    const window = bars.slice(Math.max(0, bars.length - lookback));
+    if (window.length === 0) {
+        return null;
+    }
+
+    const highestHigh = Math.max(...window.map((bar) => Number.parseFloat(bar.high)));
+    const lowestLow = Math.min(...window.map((bar) => Number.parseFloat(bar.low)));
+    if (!Number.isFinite(highestHigh) || !Number.isFinite(lowestLow)) {
+        return null;
+    }
+
+    return (highestHigh + lowestLow) / 2;
+}
+
+function computeDynamicTrailStop(
+    direction: 'long' | 'short',
+    history: KlineData[],
+    risk: RiskManagement,
+): number | null {
+    const dynamicExit = risk.dynamicExit;
+    if (!dynamicExit?.enabled) {
+        return null;
+    }
+
+    const ohlcHistory = toExecutionHistoryOHLC(history);
+    const emaSeries = calculateEMA(
+        ohlcHistory.map((bar) => bar.close),
+        dynamicExit.emaPeriod,
+    );
+    const emaValue = emaSeries.length > 0 ? emaSeries[emaSeries.length - 1] : null;
+    const donchianMid = computeDonchianMid(history, dynamicExit.donchianLookback);
+    const candidates = [emaValue, donchianMid].filter((value): value is number => Number.isFinite(value));
+
+    if (candidates.length === 0) {
+        return null;
+    }
+
+    return direction === 'long'
+        ? Math.max(...candidates)
+        : Math.min(...candidates);
 }
 
 export interface BacktestRunInput {
@@ -248,6 +311,15 @@ export class BacktestEngine {
             };
         });
 
+        if (
+            cloned.dynamicExit &&
+            cloned.dynamicExit.invalidationPrice &&
+            risk.metrics.entryPrice > 0
+        ) {
+            const invalidationRatio = cloned.dynamicExit.invalidationPrice / risk.metrics.entryPrice;
+            cloned.dynamicExit.invalidationPrice = entryPrice * invalidationRatio;
+        }
+
         return cloned;
     }
 
@@ -281,6 +353,11 @@ export class BacktestEngine {
             profitUSDT,
             holdingTime: exitTime - position.entryTime,
             exitReason,
+            strategyRiskPct: position.risk?.metrics.riskAmount && position.entryCapital > 0
+                ? (position.risk.metrics.riskAmount / position.entryCapital) * 100
+                : undefined,
+            plannedPositionPct: position.initialSize * 100,
+            stopLossPct: position.risk?.stopLoss.percentage,
         });
 
         return {
@@ -359,6 +436,9 @@ export class BacktestEngine {
                     profitUSDT: totalProfitUsdt,
                     holdingTime: lastLeg.exitTime - firstLeg.entryTime,
                     exitReason: lastLeg.exitReason,
+                    strategyRiskPct: firstLeg.strategyRiskPct,
+                    plannedPositionPct: firstLeg.plannedPositionPct,
+                    stopLossPct: firstLeg.stopLossPct,
                 };
             })
             .sort((a, b) => a.entryTime - b.entryTime);
@@ -432,21 +512,33 @@ export class BacktestEngine {
             pendingExitReason = null;
 
             if (pendingEntry && !currentPosition && Number.isFinite(currentOpen) && cash > 0) {
+                const desiredPositionSize = Math.max(
+                    0,
+                    Math.min(1, (pendingEntry.risk?.positionSizing.percentage ?? 100) / 100)
+                );
+
+                if (desiredPositionSize <= 0.0001) {
+                    pendingEntry = null;
+                    continue;
+                }
+
+                const entryCapital = cash;
                 currentPosition = {
                     direction: pendingEntry.direction,
                     entryPrice: currentOpen,
                     entryTime: kline.openTime,
-                    entryCapital: cash,
+                    entryCapital,
                     signalEntryTime: pendingEntry.signalTime,
                     entryIndex: index,
                     risk: this.cloneRiskForEntry(pendingEntry.risk, currentOpen, pendingEntry.direction),
                     highestPrice: currentOpen,
                     lowestPrice: currentOpen,
-                    initialSize: 1.0,
-                    remainingSize: 1.0,
+                    initialSize: desiredPositionSize,
+                    remainingSize: desiredPositionSize,
                     hitTargetIndices: [],
+                    executionHistory: [],
                 };
-                cash = 0;
+                cash = entryCapital * (1 - desiredPositionSize);
             }
             pendingEntry = null;
 
@@ -489,14 +581,56 @@ export class BacktestEngine {
                         }
                     }
 
-                    const stopLossPrice = activeStopLossPrice;
-                    if (direction === 'long') {
+                    const dynamicExit = strategyRisk.dynamicExit;
+                    const dynamicExitActive = Boolean(
+                        dynamicExit?.enabled
+                        && currentPosition.hitTargetIndices.includes(dynamicExit.activateAfterTargetIndex),
+                    );
+                    if (dynamicExitActive) {
+                        const dynamicTrailStop = computeDynamicTrailStop(
+                            direction,
+                            currentPosition.executionHistory,
+                            strategyRisk,
+                        );
+                        if (
+                            dynamicTrailStop !== null &&
+                            isMoreProtectiveStop(direction, dynamicTrailStop, deferredStopLossPrice ?? activeStopLossPrice)
+                        ) {
+                            deferredStopLossPrice = dynamicTrailStop;
+                            deferredStopLossReason = dynamicExit?.reason ?? '动态趋势退出';
+                        }
+                    }
+
+                    const effectiveStopLossPrice = deferredStopLossPrice !== null
+                        && isMoreProtectiveStop(direction, deferredStopLossPrice, activeStopLossPrice)
+                        ? deferredStopLossPrice
+                        : activeStopLossPrice;
+                    const invalidationPrice = dynamicExit?.invalidationPrice;
+                    const invalidationIsMoreProtective = Number.isFinite(invalidationPrice)
+                        && isMoreProtectiveStop(direction, invalidationPrice!, effectiveStopLossPrice);
+
+                    if (invalidationIsMoreProtective) {
+                        if (direction === 'long') {
+                            if (currentLow <= invalidationPrice!) {
+                                shouldExit = true;
+                                exitReason = 'signal';
+                                exitPrice = invalidationPrice!;
+                            }
+                        } else if (currentHigh >= invalidationPrice!) {
+                            shouldExit = true;
+                            exitReason = 'signal';
+                            exitPrice = invalidationPrice!;
+                        }
+                    }
+
+                    const stopLossPrice = effectiveStopLossPrice;
+                    if (!shouldExit && direction === 'long') {
                         if (currentLow <= stopLossPrice) {
                             shouldExit = true;
                             exitReason = 'stop_loss';
                             exitPrice = stopLossPrice;
                         }
-                    } else if (currentHigh >= stopLossPrice) {
+                    } else if (!shouldExit && currentHigh >= stopLossPrice) {
                         shouldExit = true;
                         exitReason = 'stop_loss';
                         exitPrice = stopLossPrice;
@@ -618,6 +752,8 @@ export class BacktestEngine {
                     currentPosition = null;
                 } else if (currentPosition && currentPosition.remainingSize <= 0.0001) {
                     currentPosition = null;
+                } else if (currentPosition) {
+                    currentPosition.executionHistory.push(kline);
                 }
             }
 
@@ -704,14 +840,8 @@ export class BacktestEngine {
             throw new Error('缺少细粒度执行数据源');
         }
 
-        const cooldownSnapshot = cooldownManager.snapshot();
-        const trendStateSnapshot = trendStateManager.snapshot();
-        cooldownManager.clear();
-        trendStateManager.clear();
-
-        try {
-            const tradeLegs: Trade[] = [];
-            const equityCurve: EquityPoint[] = [];
+        const tradeLegs: Trade[] = [];
+        const equityCurve: EquityPoint[] = [];
 
             let currentPosition: BacktestPosition | null = null;
             let pendingEntry: PendingBacktestEntry | null = null;
@@ -862,27 +992,23 @@ export class BacktestEngine {
                 }
             }
 
-            const trades = this.aggregateTradeLegs(tradeLegs);
+        const trades = this.aggregateTradeLegs(tradeLegs);
 
-            // 计算统计指标
-            return this.calculateMetrics(
-                trades,
-                tradeLegs,
-                equityCurve,
-                maxDrawdown,
-                symbol,
-                signalInterval,
-                executionInterval,
-                strategyName,
-                signalKlines[startIndex].openTime,
-                Math.max(signalKlines[signalKlines.length - 1].closeTime, finalEvaluationTime),
-                signalKlines.length - startIndex,
-                executionBarsProcessed
-            );
-        } finally {
-            cooldownManager.restore(cooldownSnapshot);
-            trendStateManager.restore(trendStateSnapshot);
-        }
+        // 计算统计指标
+        return this.calculateMetrics(
+            trades,
+            tradeLegs,
+            equityCurve,
+            maxDrawdown,
+            symbol,
+            signalInterval,
+            executionInterval,
+            strategyName,
+            signalKlines[startIndex].openTime,
+            Math.max(signalKlines[signalKlines.length - 1].closeTime, finalEvaluationTime),
+            signalKlines.length - startIndex,
+            executionBarsProcessed
+        );
     }
 
     /**

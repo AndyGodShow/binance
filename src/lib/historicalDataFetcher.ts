@@ -1,4 +1,34 @@
 import type { KlineData } from '../app/api/backtest/klines/route.ts';
+import { detectKlineGaps } from './klineRangeUtils.ts';
+
+export type HistoricalRangeReadiness = 'ready' | 'exploratory-only' | 'not-ready';
+
+export interface HistoricalRangeAudit {
+    symbol: string;
+    interval: string;
+    requestedStartTime: number;
+    requestedEndTime: number;
+    expectedStartTime: number | null;
+    expectedEndTime: number | null;
+    actualStartTime: number | null;
+    actualEndTime: number | null;
+    actualBars: number;
+    expectedBars: number;
+    coverageRatio: number;
+    coveragePercent: number;
+    gapCount: number;
+    missingBars: number;
+    maxGapBars: number;
+    hasGaps: boolean;
+    readiness: HistoricalRangeReadiness;
+    backtestReady: boolean;
+    reasons: string[];
+}
+
+export interface HistoricalRangeFetchResult {
+    klines: KlineData[];
+    audit: HistoricalRangeAudit;
+}
 
 function parseUtcDateString(date: string): number {
     const match = date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -54,6 +84,117 @@ export class HistoricalDataFetcher {
         });
 
         return Array.from(deduped.values()).sort((a, b) => a.closeTime - b.closeTime);
+    }
+
+    static getIntervalMilliseconds(interval: string): number {
+        const unit = interval.slice(-1);
+        const value = parseInt(interval.slice(0, -1));
+
+        const unitMs: Record<string, number> = {
+            'm': 60 * 1000,
+            'h': 60 * 60 * 1000,
+            'd': 24 * 60 * 60 * 1000,
+            'w': 7 * 24 * 60 * 60 * 1000,
+            'M': 30 * 24 * 60 * 60 * 1000,
+        };
+
+        return value * (unitMs[unit] || unitMs['h']);
+    }
+
+    static alignRangeToFullBars(
+        startTime: number,
+        endTime: number,
+        interval: string,
+    ): { startTime: number; endTime: number } | null {
+        const intervalMs = HistoricalDataFetcher.getIntervalMilliseconds(interval);
+        if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
+            return null;
+        }
+
+        const normalizedStart = Math.ceil(startTime / intervalMs) * intervalMs;
+        const normalizedEnd = (Math.floor((endTime + 1) / intervalMs) * intervalMs) - 1;
+
+        if (!Number.isFinite(normalizedStart) || !Number.isFinite(normalizedEnd) || normalizedStart > normalizedEnd) {
+            return null;
+        }
+
+        return {
+            startTime: normalizedStart,
+            endTime: normalizedEnd,
+        };
+    }
+
+    static auditKlines(params: {
+        symbol: string;
+        interval: string;
+        requestedStartTime: number;
+        requestedEndTime: number;
+        klines: KlineData[];
+    }): HistoricalRangeAudit {
+        const { symbol, interval, requestedStartTime, requestedEndTime, klines } = params;
+        const intervalMs = HistoricalDataFetcher.getIntervalMilliseconds(interval);
+        const alignedRange = HistoricalDataFetcher.alignRangeToFullBars(requestedStartTime, requestedEndTime, interval);
+        const actualBars = klines.length;
+        const actualStartTime = actualBars > 0 ? klines[0].openTime : null;
+        const actualEndTime = actualBars > 0 ? klines[actualBars - 1].closeTime : null;
+        const expectedBars = alignedRange
+            ? Math.max(0, Math.floor(((alignedRange.endTime + 1) - alignedRange.startTime) / intervalMs))
+            : 0;
+        const gapStats = detectKlineGaps(klines, intervalMs);
+        const coverageRatio = expectedBars > 0 ? actualBars / expectedBars : 0;
+        const coveragePercent = coverageRatio * 100;
+        const backtestReady = expectedBars > 0
+            && coveragePercent >= 98
+            && gapStats.gapCount === 0
+            && actualStartTime === alignedRange?.startTime
+            && actualEndTime === alignedRange?.endTime;
+        const readiness: HistoricalRangeReadiness = backtestReady
+            ? 'ready'
+            : actualBars > 0
+                ? 'exploratory-only'
+                : 'not-ready';
+        const reasons: string[] = [];
+
+        if (!alignedRange || expectedBars === 0) {
+            reasons.push('请求区间内没有完整可用 bar。');
+        }
+        if (coveragePercent < 98) {
+            reasons.push(`覆盖率仅 ${coveragePercent.toFixed(2)}%，低于正式回测阈值 98%。`);
+        }
+        if (gapStats.gapCount > 0) {
+            reasons.push(`存在 ${gapStats.gapCount} 个缺口，共缺失 ${gapStats.missingBars} 根 bar。`);
+        }
+        if (alignedRange && actualStartTime !== null && actualStartTime > alignedRange.startTime) {
+            reasons.push(`实际起点晚于请求起点：${new Date(actualStartTime).toISOString()} > ${new Date(alignedRange.startTime).toISOString()}`);
+        }
+        if (alignedRange && actualEndTime !== null && actualEndTime < alignedRange.endTime) {
+            reasons.push(`实际终点早于请求终点：${new Date(actualEndTime).toISOString()} < ${new Date(alignedRange.endTime).toISOString()}`);
+        }
+        if (actualBars === 0) {
+            reasons.push('没有返回任何历史 K 线。');
+        }
+
+        return {
+            symbol: symbol.toUpperCase(),
+            interval,
+            requestedStartTime,
+            requestedEndTime,
+            expectedStartTime: alignedRange?.startTime ?? null,
+            expectedEndTime: alignedRange?.endTime ?? null,
+            actualStartTime,
+            actualEndTime,
+            actualBars,
+            expectedBars,
+            coverageRatio,
+            coveragePercent,
+            gapCount: gapStats.gapCount,
+            missingBars: gapStats.missingBars,
+            maxGapBars: gapStats.maxGapBars,
+            hasGaps: gapStats.gapCount > 0,
+            readiness,
+            backtestReady,
+            reasons,
+        };
     }
 
     private async withRequestSlot<T>(task: () => Promise<T>): Promise<T> {
@@ -145,7 +286,12 @@ export class HistoricalDataFetcher {
         } = {}
     ): Promise<KlineData[]> {
         const includeAuxiliary = options.includeAuxiliary !== false;
-        const cacheKey = this.buildCacheKey(symbol, interval, startTime, endTime, includeAuxiliary);
+        const alignedRange = HistoricalDataFetcher.alignRangeToFullBars(startTime, endTime, interval);
+        if (!alignedRange) {
+            return [];
+        }
+
+        const cacheKey = this.buildCacheKey(symbol, interval, alignedRange.startTime, alignedRange.endTime, includeAuxiliary);
         const cachedRequest = this.rangeCache.get(cacheKey);
         if (cachedRequest) {
             return cachedRequest;
@@ -153,13 +299,13 @@ export class HistoricalDataFetcher {
 
         const request = (async () => {
             const allKlines: KlineData[] = [];
-            let currentStart = startTime;
+            let currentStart = alignedRange.startTime;
             const limit = this.maxLimit;
-            const intervalMs = this.getIntervalMilliseconds(interval);
+            const intervalMs = HistoricalDataFetcher.getIntervalMilliseconds(interval);
 
-            while (currentStart < endTime) {
+            while (currentStart <= alignedRange.endTime) {
                 try {
-                    const currentEnd = Math.min(endTime, currentStart + (intervalMs * limit) - 1);
+                    const currentEnd = Math.min(alignedRange.endTime, currentStart + (intervalMs * limit) - 1);
                     const params = new URLSearchParams({
                         symbol,
                         interval,
@@ -193,9 +339,13 @@ export class HistoricalDataFetcher {
                     allKlines.push(...normalizedChunk);
 
                     const lastKline = normalizedChunk[normalizedChunk.length - 1];
-                    currentStart = Math.max(currentStart + 1, lastKline.closeTime + 1);
+                    const nextStart = lastKline.closeTime + 1;
+                    if (!Number.isFinite(nextStart) || nextStart <= currentStart) {
+                        throw new Error(`历史分页未向前推进: ${symbol} ${interval} @ ${currentStart}`);
+                    }
+                    currentStart = nextStart;
 
-                    if (normalizedChunk.length < limit || currentEnd >= endTime) {
+                    if (currentEnd >= alignedRange.endTime) {
                         break;
                     }
 
@@ -217,6 +367,28 @@ export class HistoricalDataFetcher {
             this.rangeCache.delete(cacheKey);
             throw error;
         }
+    }
+
+    async fetchRangeDataWithAudit(
+        symbol: string,
+        interval: string,
+        startTime: number,
+        endTime: number,
+        options: {
+            includeAuxiliary?: boolean;
+        } = {}
+    ): Promise<HistoricalRangeFetchResult> {
+        const klines = await this.fetchRangeData(symbol, interval, startTime, endTime, options);
+        return {
+            klines,
+            audit: HistoricalDataFetcher.auditKlines({
+                symbol,
+                interval,
+                requestedStartTime: startTime,
+                requestedEndTime: endTime,
+                klines,
+            }),
+        };
     }
 
     /**
@@ -244,18 +416,7 @@ export class HistoricalDataFetcher {
      * 将时间周期转换为毫秒数
      */
     private getIntervalMilliseconds(interval: string): number {
-        const unit = interval.slice(-1);
-        const value = parseInt(interval.slice(0, -1));
-
-        const unitMs: Record<string, number> = {
-            'm': 60 * 1000,           // 分钟
-            'h': 60 * 60 * 1000,      // 小时
-            'd': 24 * 60 * 60 * 1000, // 天
-            'w': 7 * 24 * 60 * 60 * 1000,  // 周
-            'M': 30 * 24 * 60 * 60 * 1000, // 月（近似）
-        };
-
-        return value * (unitMs[unit] || unitMs['h']);
+        return HistoricalDataFetcher.getIntervalMilliseconds(interval);
     }
 
     /**

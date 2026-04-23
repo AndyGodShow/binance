@@ -3,14 +3,28 @@
  * 用于管理策略信号冷却期，自动清理过期记录，防止内存泄漏
  */
 
-class CooldownManager {
+export interface CooldownStateStore {
+    check(symbol: string, strategyId: string, period: number): boolean;
+    record(symbol: string, strategyId: string): void;
+    snapshot(): Map<string, number>;
+    clear(): void;
+    restore(snapshot: Map<string, number>): void;
+}
+
+interface CooldownManagerOptions {
+    enableAutoCleanup?: boolean;
+}
+
+export class CooldownManager implements CooldownStateStore {
     private cooldowns = new Map<string, number>();
     private cleanupInterval: NodeJS.Timeout | null = null;
     private readonly cleanupIntervalMs = 10 * 60 * 1000; // 10分钟清理一次
 
-    constructor() {
+    constructor(options: CooldownManagerOptions = {}) {
         // 启动自动清理
-        this.startAutoCleanup();
+        if (options.enableAutoCleanup ?? true) {
+            this.startAutoCleanup();
+        }
     }
 
     /**

@@ -5,6 +5,13 @@ import { TickerData } from '@/lib/types';
 import { StrategySignal, StrategySignalStatus } from '@/lib/strategyTypes';
 import { APP_CONFIG } from '@/lib/config';
 import { strategyRegistry } from '@/strategies/registry';
+import { isStrategySignalVisible } from '@/lib/strategySignalVisibility';
+import {
+    buildStrategyScannerTickerDigest,
+    selectScannerSignalForSymbol,
+} from '@/lib/strategyScannerSnapshot';
+import { singletonStrategyRuntimeState } from '@/lib/strategyRuntimeState';
+import { isWeiShenUniverseSymbol } from '@/lib/weiShenUniverse';
 
 const MAX_SIGNAL_COUNT = APP_CONFIG.UI.MAX_ACTIVE_SIGNALS;
 const DISMISSED_SIGNALS_STORAGE_KEY = 'dismissedSignals';
@@ -187,77 +194,19 @@ export function useStrategyScanner(data: TickerData[]) {
             const now = Date.now();
             lastScanTime.current.time = now;
             const enabledStrategies = strategyRegistry.getEnabled();
-        const forceRescan = prevStrategyVersion.current !== strategyVersion;
-        const isInitialScan = !hasCompletedInitialScan.current;
+            const forceRescan = prevStrategyVersion.current !== strategyVersion;
+            const isInitialScan = !hasCompletedInitialScan.current;
 
-        const existingSignalsMap = new Map<string, StrategySignal>();
-        signalsRef.current.forEach((sig) => {
-            existingSignalsMap.set(sig.symbol, sig);
-        });
-
-        const currentDataDigest = new Map<string, string>();
-        const scanResults = new Map<string, StrategySignal | null>();
-
-        data.forEach(ticker => {
-            const digest = JSON.stringify({
-                lastPrice: ticker.lastPrice,
-                priceChangePercent: ticker.priceChangePercent,
-                change15m: ticker.change15m,
-                change1h: ticker.change1h,
-                change4h: ticker.change4h,
-                breakout21dHigh: ticker.breakout21dHigh,
-                breakout21dPercent: ticker.breakout21dPercent,
-                ema5m20: ticker.ema5m20,
-                ema5m60: ticker.ema5m60,
-                ema5m100: ticker.ema5m100,
-                ema5mDistancePercent: ticker.ema5mDistancePercent,
-                gmmaTrend: ticker.gmmaTrend,
-                gmmaShortScore: ticker.gmmaShortScore,
-                gmmaLongScore: ticker.gmmaLongScore,
-                gmmaSeparationPercent: ticker.gmmaSeparationPercent,
-                multiEmaTrend: ticker.multiEmaTrend,
-                multiEmaAlignmentScore: ticker.multiEmaAlignmentScore,
-                quoteVolume: ticker.quoteVolume,
-                openInterest: ticker.openInterest,
-                openInterestValue: ticker.openInterestValue,
-                oiChangePercent: ticker.oiChangePercent,
-                fundingRate: ticker.fundingRate,
-                rsrs: ticker.rsrs,
-                rsrsZScore: ticker.rsrsZScore,
-                rsrsFinal: ticker.rsrsFinal,
-                rsrsR2: ticker.rsrsR2,
-                rsrsROC: ticker.rsrsROC,
-                rsrsAcceleration: ticker.rsrsAcceleration,
-                rsrsDynamicLongThreshold: ticker.rsrsDynamicLongThreshold,
-                rsrsDynamicShortThreshold: ticker.rsrsDynamicShortThreshold,
-                atr: ticker.atr,
-                volumeMA: ticker.volumeMA,
-                volumeRatio: ticker.volumeRatio,
-                betaToBTC: ticker.betaToBTC,
-                correlationToBTC: ticker.correlationToBTC,
-                cvd: ticker.cvd,
-                cvdSlope: ticker.cvdSlope,
-                vah: ticker.vah,
-                val: ticker.val,
-                poc: ticker.poc,
-                bollingerUpper: ticker.bollingerUpper,
-                bollingerLower: ticker.bollingerLower,
-                keltnerUpper: ticker.keltnerUpper,
-                keltnerMid: ticker.keltnerMid,
-                keltnerLower: ticker.keltnerLower,
-                squeezeStatus: ticker.squeezeStatus,
-                prevSqueezeStatus: ticker.prevSqueezeStatus,
-                squeezeDuration: ticker.squeezeDuration,
-                lastSqueezeDuration: ticker.lastSqueezeDuration,
-                squeezeStrength: ticker.squeezeStrength,
-                releaseBarsAgo: ticker.releaseBarsAgo,
-                squeezeBoxHigh: ticker.squeezeBoxHigh,
-                squeezeBoxLow: ticker.squeezeBoxLow,
-                momentumValue: ticker.momentumValue,
-                momentumColor: ticker.momentumColor,
-                adx: ticker.adx,
-                bandwidthPercentile: ticker.bandwidthPercentile,
+            const existingSignalsMap = new Map<string, StrategySignal>();
+            signalsRef.current.forEach((sig) => {
+                existingSignalsMap.set(sig.symbol, sig);
             });
+
+            const currentDataDigest = new Map<string, string>();
+            const scanResults = new Map<string, StrategySignal | null>();
+
+            data.forEach(ticker => {
+                const digest = buildStrategyScannerTickerDigest(ticker);
 
             currentDataDigest.set(ticker.symbol, digest);
 
@@ -268,9 +217,16 @@ export function useStrategyScanner(data: TickerData[]) {
 
             const symbolSignals: StrategySignal[] = [];
             enabledStrategies.forEach(strategy => {
-                const signal = strategy.detect(ticker);
+                if (strategy.id === 'wei-shen-ledger' && !isWeiShenUniverseSymbol(ticker.symbol)) {
+                    return;
+                }
+
+                const signal = strategy.detect(ticker, {
+                    now,
+                    runtimeState: singletonStrategyRuntimeState,
+                });
                 if (signal) {
-                    if (signal.confidence < APP_CONFIG.STRATEGY.MIN_CONFIDENCE) return;
+                    if (!isStrategySignalVisible(signal, APP_CONFIG.STRATEGY.MIN_CONFIDENCE)) return;
                     signal.price = parseFloat(ticker.lastPrice);
                     symbolSignals.push({
                         ...signal,
@@ -280,30 +236,7 @@ export function useStrategyScanner(data: TickerData[]) {
                 }
             });
 
-            if (symbolSignals.length > 0) {
-                const stackCount = symbolSignals.length;
-                let comboBonus = 0;
-
-                if (stackCount >= 3) {
-                    comboBonus = 20;
-                } else if (stackCount >= 2) {
-                    comboBonus = 10;
-                }
-
-                const mainSignal = symbolSignals.reduce((max, signal) =>
-                    signal.confidence > max.confidence ? signal : max
-                );
-
-                scanResults.set(ticker.symbol, {
-                    ...mainSignal,
-                    confidence: mainSignal.confidence + comboBonus,
-                    stackCount,
-                    stackedStrategies: symbolSignals.map(signal => signal.strategyName),
-                    comboBonus,
-                });
-            } else {
-                scanResults.set(ticker.symbol, null);
-            }
+            scanResults.set(ticker.symbol, selectScannerSignalForSymbol(symbolSignals));
         });
 
         prevDataDigest.current = currentDataDigest;

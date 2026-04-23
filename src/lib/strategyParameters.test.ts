@@ -50,3 +50,15 @@ test('withStrategyParameterOverrides keeps overrides active for async tasks', as
     assert.equal(activeValue, true);
     assert.equal(getStrategyParameterConfig('trend-confirmation').betaFilter.enabled, false);
 });
+
+test('getStrategyParameterConfig supports explicit per-call overrides without mutating global defaults', () => {
+    const baseline = getStrategyParameterConfig('rsrs-trend');
+    assert.equal(baseline.rejectExtremeDecelerating, false);
+
+    const overridden = getStrategyParameterConfig('rsrs-trend', {
+        rejectExtremeDecelerating: true,
+    });
+
+    assert.equal(overridden.rejectExtremeDecelerating, true);
+    assert.equal(getStrategyParameterConfig('rsrs-trend').rejectExtremeDecelerating, false);
+});

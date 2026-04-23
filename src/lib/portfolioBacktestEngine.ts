@@ -1,9 +1,17 @@
 import type { BacktestResult, EquityPoint, Trade } from './backtestEngine.ts';
+import {
+    WEI_SHEN_CORE_CLUSTER,
+    WEI_SHEN_SPEC_CLUSTER,
+} from './weiShenUniverse.ts';
+import type { DeepPartial, StrategyParameterConfigMap } from './strategyParameters.ts';
+import { getWeiShenParameters, isWeiShenStrategy } from './weiShenStrategy.ts';
 
 export interface PortfolioBacktestConfig {
     initialCapital: number;
     maxConcurrentPositions: number;
     positionSizePercent: number;
+    strategyId?: string;
+    parameterOverrides?: DeepPartial<StrategyParameterConfigMap>;
 }
 
 export interface PortfolioBacktestResult {
@@ -49,6 +57,34 @@ interface CandidateTrade extends Trade {
 interface ActivePosition {
     trade: CandidateTrade;
     allocatedCapital: number;
+    riskPct?: number;
+}
+
+interface WeiShenPortfolioState {
+    consecutiveLosses: number;
+    cooldownUntil: number;
+    dayKey: string | null;
+    dayPeakEquity: number;
+    dayTradingLocked: boolean;
+}
+
+function intervalToMs(interval: string): number {
+    const match = interval.match(/^(\d+)(m|h|d)$/);
+    if (!match) {
+        return 60 * 60 * 1000;
+    }
+
+    const value = Number.parseInt(match[1], 10);
+    switch (match[2]) {
+        case 'm':
+            return value * 60 * 1000;
+        case 'h':
+            return value * 60 * 60 * 1000;
+        case 'd':
+            return value * 24 * 60 * 60 * 1000;
+        default:
+            return 60 * 60 * 1000;
+    }
 }
 
 function findEquityAtOrBefore(curve: EquityPoint[], timestamp: number): number | null {
@@ -269,6 +305,13 @@ export function runPortfolioBacktest(
     runs: Array<{ symbol: string; result: BacktestResult }>,
     config: PortfolioBacktestConfig
 ): PortfolioBacktestResult {
+    const isWeiShen = isWeiShenStrategy(config.strategyId ?? '');
+    const weiShenParams = isWeiShen
+        ? getWeiShenParameters(config.parameterOverrides)
+        : null;
+    const weiShenCooldownMs = isWeiShen
+        ? weiShenParams!.risk.cooldownBars * intervalToMs(weiShenParams!.timeframes.signalInterval)
+        : 0;
     const candidateTrades: CandidateTrade[] = runs
         .flatMap((run) =>
             run.result.trades.map((trade) => ({
@@ -289,6 +332,13 @@ export function runPortfolioBacktest(
     let maxDrawdown = 0;
     let skippedTrades = 0;
     let maxConcurrentPositionsUsed = 0;
+    const weiShenState: WeiShenPortfolioState = {
+        consecutiveLosses: 0,
+        cooldownUntil: 0,
+        dayKey: null,
+        dayPeakEquity: config.initialCapital,
+        dayTradingLocked: false,
+    };
 
     const activePositions: ActivePosition[] = [];
     const executedTrades: Trade[] = [];
@@ -300,6 +350,23 @@ export function runPortfolioBacktest(
         peakEquity = Math.max(peakEquity, equity);
         const drawdown = peakEquity > 0 ? ((peakEquity - equity) / peakEquity) * 100 : 0;
         maxDrawdown = Math.max(maxDrawdown, drawdown);
+
+        if (isWeiShen) {
+            const dayKey = new Date(time).toISOString().slice(0, 10);
+            if (weiShenState.dayKey !== dayKey) {
+                weiShenState.dayKey = dayKey;
+                weiShenState.dayPeakEquity = equity;
+                weiShenState.dayTradingLocked = false;
+            } else {
+                weiShenState.dayPeakEquity = Math.max(weiShenState.dayPeakEquity, equity);
+                const dayDrawdownPct = weiShenState.dayPeakEquity > 0
+                    ? ((weiShenState.dayPeakEquity - equity) / weiShenState.dayPeakEquity) * 100
+                    : 0;
+                if (dayDrawdownPct >= weiShenParams!.risk.maxDailyDrawdownPct) {
+                    weiShenState.dayTradingLocked = true;
+                }
+            }
+        }
 
         equityCurve.push({
             time,
@@ -327,6 +394,20 @@ export function runPortfolioBacktest(
                 profitUSDT: realizedProfitUSDT,
                 size: position.allocatedCapital / config.initialCapital,
             });
+
+            if (isWeiShen) {
+                if (position.trade.profit < 0) {
+                    weiShenState.consecutiveLosses += 1;
+                    if (weiShenState.consecutiveLosses >= weiShenParams!.risk.maxConsecutiveLossesBeforeCooldown) {
+                        weiShenState.cooldownUntil = Math.max(
+                            weiShenState.cooldownUntil,
+                            position.trade.exitTime + weiShenCooldownMs,
+                        );
+                    }
+                } else if (position.trade.profit > 0) {
+                    weiShenState.consecutiveLosses = 0;
+                }
+            }
             pushEquityPoint(position.trade.exitTime);
         }
     };
@@ -335,13 +416,69 @@ export function runPortfolioBacktest(
         settlePositionsUpTo(trade.entryTime);
 
         const hasOpenSymbol = activePositions.some((position) => position.trade.symbol === trade.symbol);
-        if (hasOpenSymbol || activePositions.length >= config.maxConcurrentPositions) {
+        const maxConcurrentPositions = isWeiShen
+            ? Math.min(config.maxConcurrentPositions, weiShenParams!.risk.maxConcurrentPositions)
+            : config.maxConcurrentPositions;
+        if (hasOpenSymbol || activePositions.length >= maxConcurrentPositions) {
             skippedTrades += 1;
             return;
         }
 
-        const totalEquity = cash + activePositions.reduce((sum, position) => sum + position.allocatedCapital, 0);
-        const targetAllocation = totalEquity * (config.positionSizePercent / 100);
+        const totalEquity = cash + activePositions.reduce((sum, position) => sum + getMarkedPositionValue(position, trade.entryTime), 0);
+
+        if (isWeiShen) {
+            const dayKey = new Date(trade.entryTime).toISOString().slice(0, 10);
+            if (weiShenState.dayKey !== dayKey) {
+                weiShenState.dayKey = dayKey;
+                weiShenState.dayPeakEquity = totalEquity;
+                weiShenState.dayTradingLocked = false;
+            } else {
+                weiShenState.dayPeakEquity = Math.max(weiShenState.dayPeakEquity, totalEquity);
+            }
+
+            if (trade.entryTime < weiShenState.cooldownUntil || weiShenState.dayTradingLocked) {
+                skippedTrades += 1;
+                return;
+            }
+        }
+
+        let targetAllocationPct = trade.size > 0 ? trade.size * 100 : config.positionSizePercent;
+        let entryRiskPct: number | undefined;
+        if (isWeiShen) {
+            const btcActive = activePositions.some((position) => position.trade.symbol === 'BTCUSDT');
+            if (btcActive && (trade.symbol === 'ETHUSDT' || trade.symbol === 'SOLUSDT')) {
+                targetAllocationPct *= weiShenParams!.risk.btcLeadAltRiskMultiplier;
+            }
+
+            const tradeRiskPct = trade.strategyRiskPct ?? (
+                trade.stopLossPct && targetAllocationPct
+                    ? (targetAllocationPct * trade.stopLossPct) / 100
+                    : 0
+            );
+            const adjustedRiskPct = btcActive && (trade.symbol === 'ETHUSDT' || trade.symbol === 'SOLUSDT')
+                ? tradeRiskPct * weiShenParams!.risk.btcLeadAltRiskMultiplier
+                : tradeRiskPct;
+            entryRiskPct = adjustedRiskPct;
+            const activeCoreRisk = activePositions
+                .filter((position) => WEI_SHEN_CORE_CLUSTER.includes(position.trade.symbol as (typeof WEI_SHEN_CORE_CLUSTER)[number]))
+                .reduce((sum, position) => sum + (position.riskPct ?? 0), 0);
+            const activeSpecRisk = activePositions
+                .filter((position) => WEI_SHEN_SPEC_CLUSTER.includes(position.trade.symbol as (typeof WEI_SHEN_SPEC_CLUSTER)[number]))
+                .reduce((sum, position) => sum + (position.riskPct ?? 0), 0);
+            const nextClusterRisk = WEI_SHEN_CORE_CLUSTER.includes(trade.symbol as (typeof WEI_SHEN_CORE_CLUSTER)[number])
+                ? activeCoreRisk + adjustedRiskPct
+                : activeSpecRisk + adjustedRiskPct;
+            const clusterCap = WEI_SHEN_CORE_CLUSTER.includes(trade.symbol as (typeof WEI_SHEN_CORE_CLUSTER)[number])
+                ? weiShenParams!.risk.coreClusterRiskCap
+                : weiShenParams!.risk.specClusterRiskCap;
+
+            if (nextClusterRisk > clusterCap) {
+                skippedTrades += 1;
+                return;
+            }
+        }
+
+        const targetAllocation = totalEquity * (targetAllocationPct / 100);
         const allocatedCapital = Math.min(cash, targetAllocation);
 
         if (allocatedCapital <= 0) {
@@ -353,6 +490,7 @@ export function runPortfolioBacktest(
         activePositions.push({
             trade,
             allocatedCapital,
+            riskPct: entryRiskPct,
         });
         maxConcurrentPositionsUsed = Math.max(maxConcurrentPositionsUsed, activePositions.length);
         tradedSymbols.add(trade.symbol);

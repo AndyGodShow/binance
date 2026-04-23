@@ -1,9 +1,9 @@
-export interface BinanceOpenInterestHistEntry {
-    symbol: string;
-    sumOpenInterest: string;
-    sumOpenInterestValue: string;
-    timestamp: number;
-}
+import {
+    calculateChangePercent,
+    findClosestAtOrBefore,
+    normalizeOpenInterestHistEntries,
+    type BinanceOpenInterestHistEntry,
+} from './openInterestShared.ts';
 
 export interface OpenInterestWindowChangeSnapshot {
     percent: number;
@@ -20,31 +20,9 @@ export interface OpenInterestFrameSnapshotShape {
     change24h?: OpenInterestWindowChangeSnapshot;
 }
 
-function isBinanceOpenInterestHistEntry(value: unknown): value is BinanceOpenInterestHistEntry {
-    return typeof value === 'object' &&
-        value !== null &&
-        typeof (value as BinanceOpenInterestHistEntry).symbol === 'string' &&
-        typeof (value as BinanceOpenInterestHistEntry).sumOpenInterest === 'string' &&
-        typeof (value as BinanceOpenInterestHistEntry).sumOpenInterestValue === 'string' &&
-        typeof (value as BinanceOpenInterestHistEntry).timestamp === 'number';
-}
-
 function toNumericValue(value: string): number | null {
     const numeric = Number(value);
     return Number.isFinite(numeric) ? numeric : null;
-}
-
-function findClosestAtOrBefore(
-    entries: BinanceOpenInterestHistEntry[],
-    targetTimestamp: number
-): BinanceOpenInterestHistEntry | null {
-    for (let index = entries.length - 1; index >= 0; index -= 1) {
-        if (entries[index].timestamp <= targetTimestamp) {
-            return entries[index];
-        }
-    }
-
-    return entries[0] || null;
 }
 
 function buildWindowChange(
@@ -67,7 +45,7 @@ function buildWindowChange(
     }
 
     return {
-        percent: ((latestValue - previousValue) / previousValue) * 100,
+        percent: calculateChangePercent(latestEntry.sumOpenInterestValue, previousEntry.sumOpenInterestValue) ?? 0,
         value: latestValue - previousValue,
     };
 }
@@ -76,9 +54,7 @@ export function buildOpenInterestFrameSnapshot(
     symbol: string,
     entries: BinanceOpenInterestHistEntry[]
 ): OpenInterestFrameSnapshotShape {
-    const normalizedEntries = [...entries]
-        .filter(isBinanceOpenInterestHistEntry)
-        .sort((a, b) => a.timestamp - b.timestamp);
+    const normalizedEntries = normalizeOpenInterestHistEntries(entries);
 
     if (normalizedEntries.length === 0) {
         return {

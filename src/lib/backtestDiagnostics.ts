@@ -34,6 +34,7 @@ const STRATEGY_DEPENDENCIES: Record<string, StrategyDependencyProfile> = {
     'capital-inflow': { multiTimeframe: true, openInterest: false },
     'rsrs-trend': { multiTimeframe: true, openInterest: false },
     'volatility-squeeze': { multiTimeframe: false, openInterest: false },
+    'wei-shen-ledger': { multiTimeframe: true, openInterest: false },
 };
 
 function getDependencyProfile(strategyId: string): StrategyDependencyProfile {

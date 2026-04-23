@@ -1,7 +1,18 @@
 import type { KlineData } from '../app/api/backtest/klines/route.ts';
 import { calculateEMA } from './indicators.ts';
 import { logger } from './logger.ts';
-import type { TickerData } from './types.ts';
+import type { OHLC, TickerData } from './types.ts';
+import type { DeepPartial, StrategyParameterConfigMap } from './strategyParameters.ts';
+import {
+    calculateBreakoutMetrics,
+    calculatePercentageChange,
+    deriveTrendStructure,
+} from './marketStructure.ts';
+import {
+    buildWeiShenContext,
+    getWeiShenTimeframes,
+    isWeiShenStrategy,
+} from './weiShenStrategy.ts';
 
 type SupportedInterval = '5m' | '15m' | '1h' | '4h' | '1d';
 
@@ -23,6 +34,7 @@ type HistoricalOverrideFields = Pick<
     | 'multiEmaAlignmentScore'
     | 'breakout21dHigh'
     | 'breakout21dPercent'
+    | 'strategyContexts'
 >;
 
 export type HistoricalTickerOverrides = Partial<HistoricalOverrideFields>;
@@ -34,6 +46,7 @@ interface HistoricalMultiTimeframeOptions {
     endTime: number;
     baseInterval: string;
     baseKlines: KlineData[];
+    parameterOverrides?: DeepPartial<StrategyParameterConfigMap>;
     fetchRangeData: (symbol: string, interval: string, startTime: number, endTime: number) => Promise<KlineData[]>;
 }
 
@@ -59,6 +72,10 @@ const GMMA_SHORT_PERIODS = [3, 5, 8, 10, 12, 15] as const;
 const GMMA_LONG_PERIODS = [30, 35, 40, 45, 50, 60] as const;
 const MULTI_EMA_PERIODS = [20, 60, 100, 120] as const;
 
+function toSupportedInterval(interval: string): SupportedInterval {
+    return interval as SupportedInterval;
+}
+
 function parseClose(kline: KlineData): number {
     return Number.parseFloat(kline.close);
 }
@@ -77,44 +94,6 @@ function buildAlignedEmaSeries(klines: KlineData[], period: number): Array<numbe
     }
 
     return alignedSeries;
-}
-
-function determineOrderedTrend(values: Array<number | null>): 'bullish' | 'bearish' | 'mixed' {
-    if (values.some((value) => value === null)) {
-        return 'mixed';
-    }
-
-    const definedValues = values as number[];
-    const bullish = definedValues.every((value, index) => index === 0 || definedValues[index - 1] > value);
-    if (bullish) {
-        return 'bullish';
-    }
-
-    const bearish = definedValues.every((value, index) => index === 0 || definedValues[index - 1] < value);
-    if (bearish) {
-        return 'bearish';
-    }
-
-    return 'mixed';
-}
-
-function calculateDirectionalAlignmentScore(values: Array<number | null>, direction: 'bullish' | 'bearish'): number {
-    if (values.some((value) => value === null)) {
-        return 0;
-    }
-
-    const definedValues = values as number[];
-    let score = 0;
-    for (let index = 1; index < definedValues.length; index++) {
-        const prev = definedValues[index - 1];
-        const current = definedValues[index];
-        const aligned = direction === 'bullish' ? prev > current : prev < current;
-        if (aligned) {
-            score += 1;
-        }
-    }
-
-    return score;
 }
 
 function findLatestIndexAtOrBefore(klines: KlineData[], timestamp: number): number {
@@ -154,10 +133,13 @@ function calculateTimeAlignedChange(klines: KlineData[], timestamp: number, look
         return 0;
     }
 
-    return ((currentClose - pastClose) / pastClose) * 100;
+    return calculatePercentageChange(currentClose, pastClose);
 }
 
-export function getRequiredHistoricalIntervals(strategyId: string): SupportedInterval[] {
+export function getRequiredHistoricalIntervals(
+    strategyId: string,
+    parameterOverrides?: DeepPartial<StrategyParameterConfigMap>,
+): SupportedInterval[] {
     if (!MULTIFRAME_STRATEGIES.has(strategyId)) {
         return [];
     }
@@ -170,19 +152,58 @@ export function getRequiredHistoricalIntervals(strategyId: string): SupportedInt
         return ['5m', '15m', '1h', '4h'];
     }
 
+    if (isWeiShenStrategy(strategyId)) {
+        const timeframes = getWeiShenTimeframes(parameterOverrides);
+        return [
+            toSupportedInterval(timeframes.signalInterval),
+            toSupportedInterval(timeframes.confirmInterval),
+            toSupportedInterval(timeframes.dailyFilterInterval),
+        ];
+    }
+
     return ['15m', '1h', '4h'];
+}
+
+function toOHLCSeries(klines: KlineData[]): OHLC[] {
+    return klines.map((kline) => ({
+        time: kline.closeTime,
+        open: Number.parseFloat(kline.open),
+        high: Number.parseFloat(kline.high),
+        low: Number.parseFloat(kline.low),
+        close: Number.parseFloat(kline.close),
+        volume: Number.parseFloat(kline.volume),
+        quoteVolume: Number.parseFloat(kline.quoteVolume),
+        takerBuyQuoteVolume: Number.parseFloat(kline.takerBuyQuoteVolume),
+    }));
+}
+
+function sliceSeriesUpTo(
+    sourceKlines: KlineData[],
+    sourceSeries: OHLC[],
+    timestamp: number,
+): OHLC[] {
+    const index = findLatestIndexAtOrBefore(sourceKlines, timestamp);
+    if (index < 0) {
+        return [];
+    }
+
+    return sourceSeries.slice(0, index + 1);
 }
 
 export async function buildHistoricalTickerOverrides(
     options: HistoricalMultiTimeframeOptions
 ): Promise<Map<number, HistoricalTickerOverrides>> {
-    const requiredIntervals = getRequiredHistoricalIntervals(options.strategyId);
+    const requiredIntervals = getRequiredHistoricalIntervals(options.strategyId, options.parameterOverrides);
     if (requiredIntervals.length === 0 || options.baseKlines.length === 0) {
         return new Map();
     }
 
     const fetchStartTime = Math.max(0, options.startTime - HISTORICAL_LOOKBACK_BUFFER_MS);
     const intervalData = new Map<SupportedInterval, KlineData[]>();
+    const isWeiShen = isWeiShenStrategy(options.strategyId);
+    const weiShenTimeframes = isWeiShen
+        ? getWeiShenTimeframes(options.parameterOverrides)
+        : null;
 
     for (const interval of requiredIntervals) {
         if (interval === options.baseInterval) {
@@ -209,6 +230,44 @@ export async function buildHistoricalTickerOverrides(
         }
     }
 
+    const btcIntervalData = new Map<SupportedInterval, KlineData[]>();
+    if (isWeiShen) {
+        const btcIntervals: SupportedInterval[] = [
+            toSupportedInterval(weiShenTimeframes!.signalInterval),
+            toSupportedInterval(weiShenTimeframes!.confirmInterval),
+            toSupportedInterval(weiShenTimeframes!.dailyFilterInterval),
+        ];
+        for (const interval of btcIntervals) {
+            if (options.symbol === 'BTCUSDT' && interval === options.baseInterval) {
+                btcIntervalData.set(interval, options.baseKlines);
+                continue;
+            }
+
+            if (options.symbol === 'BTCUSDT' && intervalData.has(interval)) {
+                btcIntervalData.set(interval, intervalData.get(interval) || []);
+                continue;
+            }
+
+            try {
+                const klines = await options.fetchRangeData(
+                    'BTCUSDT',
+                    interval,
+                    fetchStartTime,
+                    options.endTime,
+                );
+                btcIntervalData.set(interval, klines);
+            } catch (error) {
+                logger.warn('Historical wei-shen BTC context fetch failed', {
+                    symbol: options.symbol,
+                    strategyId: options.strategyId,
+                    interval,
+                    error: error instanceof Error ? error.message : String(error),
+                });
+                btcIntervalData.set(interval, []);
+            }
+        }
+    }
+
     const overrides = new Map<number, HistoricalTickerOverrides>();
     const trend5mKlines = intervalData.get('5m') || [];
     const dailyKlines = intervalData.get('1d') || [];
@@ -223,6 +282,12 @@ export async function buildHistoricalTickerOverrides(
     );
     const multiEmaSeries = MULTI_EMA_PERIODS.map((period) =>
         trend5mKlines.length >= period ? buildAlignedEmaSeries(trend5mKlines, period) : []
+    );
+    const ohlcIntervalData = new Map<SupportedInterval, OHLC[]>(
+        Array.from(intervalData.entries()).map(([interval, klines]) => [interval, toOHLCSeries(klines)]),
+    );
+    const btcOhlcIntervalData = new Map<SupportedInterval, OHLC[]>(
+        Array.from(btcIntervalData.entries()).map(([interval, klines]) => [interval, toOHLCSeries(klines)]),
     );
 
     options.baseKlines.forEach((baseKline) => {
@@ -258,69 +323,22 @@ export async function buildHistoricalTickerOverrides(
                 const ema60 = ema60Series[trendIndex];
                 const ema100 = ema100Series[trendIndex];
 
-                if (typeof ema20 === 'number' && Number.isFinite(ema20)) {
-                    currentOverrides.ema5m20 = ema20;
-                    currentOverrides.ema5mDistancePercent = ema20 > 0
-                        ? ((currentPrice - ema20) / ema20) * 100
-                        : undefined;
-                }
-                if (typeof ema60 === 'number' && Number.isFinite(ema60)) {
-                    currentOverrides.ema5m60 = ema60;
-                }
-                if (typeof ema100 === 'number' && Number.isFinite(ema100)) {
-                    currentOverrides.ema5m100 = ema100;
-                }
-
                 const gmmaShortValues = gmmaShortSeries.map((series) => series[trendIndex] ?? null);
                 const gmmaLongValues = gmmaLongSeries.map((series) => series[trendIndex] ?? null);
                 const multiValues = multiEmaSeries.map((series) => series[trendIndex] ?? null);
 
-                const gmmaShortTrend = determineOrderedTrend(gmmaShortValues);
-                const gmmaLongTrend = determineOrderedTrend(gmmaLongValues);
-                if (!gmmaShortValues.some((value) => value === null) && !gmmaLongValues.some((value) => value === null)) {
-                    const shortDefined = gmmaShortValues as number[];
-                    const longDefined = gmmaLongValues as number[];
-                    const shortAvg = shortDefined.reduce((sum, value) => sum + value, 0) / shortDefined.length;
-                    const longAvg = longDefined.reduce((sum, value) => sum + value, 0) / longDefined.length;
-
-                    currentOverrides.gmmaShortScore = gmmaShortTrend === 'bullish'
-                        ? calculateDirectionalAlignmentScore(gmmaShortValues, 'bullish')
-                        : gmmaShortTrend === 'bearish'
-                        ? calculateDirectionalAlignmentScore(gmmaShortValues, 'bearish')
-                        : 0;
-                    currentOverrides.gmmaLongScore = gmmaLongTrend === 'bullish'
-                        ? calculateDirectionalAlignmentScore(gmmaLongValues, 'bullish')
-                        : gmmaLongTrend === 'bearish'
-                        ? calculateDirectionalAlignmentScore(gmmaLongValues, 'bearish')
-                        : 0;
-                    currentOverrides.gmmaSeparationPercent = longAvg > 0
-                        ? ((shortAvg - longAvg) / longAvg) * 100
-                        : undefined;
-
-                    if (
-                        gmmaShortTrend === 'bullish' &&
-                        gmmaLongTrend === 'bullish' &&
-                        Math.min(...shortDefined) > Math.max(...longDefined)
-                    ) {
-                        currentOverrides.gmmaTrend = 'bullish';
-                    } else if (
-                        gmmaShortTrend === 'bearish' &&
-                        gmmaLongTrend === 'bearish' &&
-                        Math.max(...shortDefined) < Math.min(...longDefined)
-                    ) {
-                        currentOverrides.gmmaTrend = 'bearish';
-                    } else {
-                        currentOverrides.gmmaTrend = 'mixed';
-                    }
-                }
-
-                const multiTrend = determineOrderedTrend(multiValues);
-                currentOverrides.multiEmaTrend = multiTrend;
-                currentOverrides.multiEmaAlignmentScore = multiTrend === 'bullish'
-                    ? calculateDirectionalAlignmentScore(multiValues, 'bullish')
-                    : multiTrend === 'bearish'
-                    ? calculateDirectionalAlignmentScore(multiValues, 'bearish')
-                    : 0;
+                Object.assign(
+                    currentOverrides,
+                    deriveTrendStructure({
+                        currentPrice,
+                        ema20,
+                        ema60,
+                        ema100,
+                        gmmaShortValues,
+                        gmmaLongValues,
+                        multiEmaValues: multiValues,
+                    }),
+                );
             }
         }
 
@@ -329,11 +347,45 @@ export async function buildHistoricalTickerOverrides(
             if (completedDailyIndex >= 20) {
                 const breakoutWindow = dailyKlines.slice(completedDailyIndex - 20, completedDailyIndex + 1);
                 const breakoutHigh = Math.max(...breakoutWindow.map(parseHigh));
-
-                if (Number.isFinite(breakoutHigh) && breakoutHigh > 0) {
-                    currentOverrides.breakout21dHigh = breakoutHigh;
-                    currentOverrides.breakout21dPercent = ((currentPrice - breakoutHigh) / breakoutHigh) * 100;
+                const breakoutMetrics = calculateBreakoutMetrics(currentPrice, breakoutHigh);
+                if (breakoutMetrics) {
+                    Object.assign(currentOverrides, breakoutMetrics);
                 }
+            }
+        }
+
+        if (isWeiShen) {
+            const signalInterval = toSupportedInterval(weiShenTimeframes!.signalInterval);
+            const confirmInterval = toSupportedInterval(weiShenTimeframes!.confirmInterval);
+            const dailyInterval = toSupportedInterval(weiShenTimeframes!.dailyFilterInterval);
+            const symbol1hKlines = intervalData.get(signalInterval) || options.baseKlines;
+            const symbol4hKlines = intervalData.get(confirmInterval) || [];
+            const symbol1dKlines = intervalData.get(dailyInterval) || [];
+            const btc1hKlines = btcIntervalData.get(signalInterval) || [];
+            const btc4hKlines = btcIntervalData.get(confirmInterval) || [];
+            const btc1dKlines = btcIntervalData.get(dailyInterval) || [];
+            const symbol1hSeries = ohlcIntervalData.get(signalInterval) || toOHLCSeries(symbol1hKlines);
+            const symbol4hSeries = ohlcIntervalData.get(confirmInterval) || toOHLCSeries(symbol4hKlines);
+            const symbol1dSeries = ohlcIntervalData.get(dailyInterval) || toOHLCSeries(symbol1dKlines);
+            const btc1hSeries = btcOhlcIntervalData.get(signalInterval) || toOHLCSeries(btc1hKlines);
+            const btc4hSeries = btcOhlcIntervalData.get(confirmInterval) || toOHLCSeries(btc4hKlines);
+            const btc1dSeries = btcOhlcIntervalData.get(dailyInterval) || toOHLCSeries(btc1dKlines);
+            const weiShenContext = buildWeiShenContext({
+                symbol: options.symbol,
+                signal1h: sliceSeriesUpTo(symbol1hKlines, symbol1hSeries, timestamp),
+                confirm4h: sliceSeriesUpTo(symbol4hKlines, symbol4hSeries, timestamp),
+                daily1d: sliceSeriesUpTo(symbol1dKlines, symbol1dSeries, timestamp),
+                btc1h: sliceSeriesUpTo(btc1hKlines, btc1hSeries, timestamp),
+                btc4h: sliceSeriesUpTo(btc4hKlines, btc4hSeries, timestamp),
+                btc1d: sliceSeriesUpTo(btc1dKlines, btc1dSeries, timestamp),
+                fallbackQuoteVolume24hUsd: Number.parseFloat(baseKline.quoteVolume),
+                parameterOverrides: options.parameterOverrides,
+            });
+
+            if (weiShenContext) {
+                currentOverrides.strategyContexts = {
+                    weiShen: weiShenContext,
+                };
             }
         }
 

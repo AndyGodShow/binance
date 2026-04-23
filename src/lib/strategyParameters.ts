@@ -236,54 +236,93 @@ export interface VolatilitySqueezeParameters {
 }
 
 export interface WeiShenLedgerParameters {
-    cooldownPeriodMs: number;
-    shortEntryHoursUtc: readonly number[];
-    longEntryHoursUtc: readonly number[];
-    minConditions: number;
-    minQuoteVolume: number;
-    minVolumeRatio: number;
-    minOiExpansion: number;
-    minFundingRate: number;
-    maxLongFundingRate: number;
-    maxBandwidthPercentile: number;
-    maxAtrPercent: number;
-    minAdx: number;
-    minDistanceAboveBollingerLowerPercent: number;
-    minDistanceBelowBollingerUpperPercent: number;
-    riskPercentage: number;
-    shortMomentum: {
-        maxChange15m: number;
-        maxChange1h: number;
-        maxChange4h: number;
+    timeframes: {
+        signalInterval: '1h';
+        executionInterval: '15m';
+        confirmInterval: '4h';
+        dailyFilterInterval: '1d';
     };
-    longMomentum: {
-        minChange15m: number;
-        minChange1h: number;
-        minChange4h: number;
+    marketRegime: {
+        emaPeriods: {
+            fast: number;
+            mid: number;
+            slow: number;
+        };
+        dailyEmaPeriod: number;
+        dailySlopeLookback: number;
+        dailySlopeMinPct: number;
+        rangeAdxMax: number;
+        rangeCompressionPct: number;
+        shock24hPct: number;
+        weakCloseLocationMax: number;
     };
-    confidence: {
-        base: number;
-        timeWindowBonus: number;
-        oiExpansionBonus: number;
-        positiveFundingBonus: number;
-        favorableFundingBonus: number;
-        strongVolumeRatio: number;
-        strongVolumeBonus: number;
-        structureBonus: number;
-        dailyWeaknessThreshold: number;
-        dailyWeaknessBonus: number;
-        dailyStrengthThreshold: number;
-        dailyStrengthBonus: number;
-        minConfidence: number;
-        maxConfidence: number;
+    relativeStrength: {
+        rsWindow1h: number;
+        rsWindow4h: number;
+        relativeVolumeMa: number;
+        minVolume24hUsd: Record<string, number>;
+        excessReturn4hMin: Record<string, number>;
+    };
+    entry: {
+        atrPeriod: number;
+        atrExpansionMin: number;
+        atrExpansionMaxMultiplier: number;
+        donchianLookback: Record<string, number>;
+        overheatThresholdPct: Record<string, number>;
+        breakoutVolumeRatioMin: Record<string, number>;
+        breakoutStrongVolumeRatioMultiplier: number;
+        breakoutSwingLookback: number;
+        breakoutStopAtrMultiplier: number;
+        breakoutStrongExcessReturnBonusPct: Record<string, number>;
+        pullbackEmaPeriods: readonly [number, number];
+        trendLegLookback: number;
+        trendLegMinReturnPct: Record<string, number>;
+        pullbackRecentBars: number;
+        pullbackZoneBufferPct: number;
+        pullbackStructureBufferPct: number;
+        pullbackVolumeCompressionMax: number;
+        reclaimConfirmBars: number;
+        reclaimVolumeRatioMin: number;
+        pullbackStopAtrMultiplier: Record<string, number>;
+        pullbackStrongExcessReturnBonusPct: Record<string, number>;
+        allowPullbackSymbols: readonly string[];
+    };
+    grading: {
+        tradableGrades: readonly ('A' | 'B')[];
+        baseConfidence: {
+            A: number;
+            B: number;
+            C: number;
+        };
+    };
+    risk: {
+        baseRiskPct: {
+            A: number;
+            B: number;
+            C: number;
+        };
+        symbolRiskMultiplier: Record<string, number>;
+        maxConcurrentPositions: number;
+        coreClusterRiskCap: number;
+        specClusterRiskCap: number;
+        btcLeadAltRiskMultiplier: number;
+        maxConsecutiveLossesBeforeCooldown: number;
+        cooldownBars: number;
+        maxDailyDrawdownPct: number;
+        moveStopToEntryAtR: number;
+        partialTakeProfitAtR: number;
+        partialTakeProfitClosePct: number;
+        breakoutTimeStopBars: number;
+        pullbackTimeStopBars: number;
+        trailingEmaPeriod: number;
+        trailingDonchianLookback: number;
     };
     candidateRanges: {
-        minQuoteVolume: readonly number[];
-        minOiExpansion: readonly number[];
-        minVolumeRatio: readonly number[];
-        maxBandwidthPercentile: readonly number[];
-        minConditions: readonly number[];
-        shortMomentum: ReadonlyArray<WeiShenLedgerParameters['shortMomentum']>;
+        rangeAdxMax: readonly number[];
+        rangeCompressionPct: readonly number[];
+        atrExpansionMin: readonly number[];
+        btcBreakoutVolumeRatioMin: readonly number[];
+        ethExcessReturn4hMin: readonly number[];
     };
 }
 
@@ -300,6 +339,13 @@ export interface StrategyParameterCandidate {
     id: string;
     label: string;
     overrides: DeepPartial<StrategyParameterConfigMap>;
+}
+
+export function getScopedStrategyParameterOverride<K extends StrategyId>(
+    strategyId: K,
+    overrides?: DeepPartial<StrategyParameterConfigMap>,
+): DeepPartial<StrategyParameterConfigMap[K]> | undefined {
+    return overrides?.[strategyId] as DeepPartial<StrategyParameterConfigMap[K]> | undefined;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -574,58 +620,153 @@ export const BASELINE_STRATEGY_PARAMETER_CONFIGS: StrategyParameterConfigMap = {
         },
     },
     'wei-shen-ledger': {
-        cooldownPeriodMs: 90 * 60 * 1000,
-        shortEntryHoursUtc: [1, 2, 4, 19],
-        longEntryHoursUtc: [18, 22],
-        minConditions: 6,
-        minQuoteVolume: 20_000_000,
-        minVolumeRatio: 1.2,
-        minOiExpansion: 2,
-        minFundingRate: -0.0002,
-        maxLongFundingRate: 0.00025,
-        maxBandwidthPercentile: 85,
-        maxAtrPercent: 6,
-        minAdx: 22,
-        minDistanceAboveBollingerLowerPercent: 0.2,
-        minDistanceBelowBollingerUpperPercent: 0.2,
-        riskPercentage: 0.6,
-        shortMomentum: {
-            maxChange15m: 0.2,
-            maxChange1h: -0.35,
-            maxChange4h: -1.3,
+        timeframes: {
+            signalInterval: '1h',
+            executionInterval: '15m',
+            confirmInterval: '4h',
+            dailyFilterInterval: '1d',
         },
-        longMomentum: {
-            minChange15m: 0.2,
-            minChange1h: 0.8,
-            minChange4h: 2.0,
+        marketRegime: {
+            emaPeriods: {
+                fast: 20,
+                mid: 60,
+                slow: 120,
+            },
+            dailyEmaPeriod: 20,
+            dailySlopeLookback: 3,
+            dailySlopeMinPct: 0.15,
+            rangeAdxMax: 18,
+            rangeCompressionPct: 1.8,
+            shock24hPct: 8.5,
+            weakCloseLocationMax: 0.45,
         },
-        confidence: {
-            base: 70,
-            timeWindowBonus: 5,
-            oiExpansionBonus: 4,
-            positiveFundingBonus: 4,
-            favorableFundingBonus: 4,
-            strongVolumeRatio: 1.5,
-            strongVolumeBonus: 4,
-            structureBonus: 4,
-            dailyWeaknessThreshold: -2,
-            dailyWeaknessBonus: 3,
-            dailyStrengthThreshold: 2,
-            dailyStrengthBonus: 3,
-            minConfidence: 80,
-            maxConfidence: 92,
+        relativeStrength: {
+            rsWindow1h: 8,
+            rsWindow4h: 6,
+            relativeVolumeMa: 20,
+            minVolume24hUsd: {
+                BTCUSDT: 5_000_000_000,
+                ETHUSDT: 2_000_000_000,
+                SOLUSDT: 800_000_000,
+                XRPUSDT: 600_000_000,
+                DOGEUSDT: 900_000_000,
+            },
+            excessReturn4hMin: {
+                BTCUSDT: 0,
+                ETHUSDT: 0.3,
+                SOLUSDT: 0.5,
+                XRPUSDT: 0.8,
+                DOGEUSDT: 1.2,
+            },
+        },
+        entry: {
+            atrPeriod: 14,
+            atrExpansionMin: 1.05,
+            atrExpansionMaxMultiplier: 2.2,
+            donchianLookback: {
+                BTCUSDT: 20,
+                ETHUSDT: 24,
+                SOLUSDT: 20,
+                XRPUSDT: 30,
+                DOGEUSDT: 36,
+            },
+            overheatThresholdPct: {
+                BTCUSDT: 3.0,
+                ETHUSDT: 2.8,
+                SOLUSDT: 3.5,
+                XRPUSDT: 1.8,
+                DOGEUSDT: 1.6,
+            },
+            breakoutVolumeRatioMin: {
+                BTCUSDT: 1.15,
+                ETHUSDT: 1.2,
+                SOLUSDT: 1.35,
+                XRPUSDT: 1.55,
+                DOGEUSDT: 1.8,
+            },
+            breakoutStrongVolumeRatioMultiplier: 1.12,
+            breakoutSwingLookback: 5,
+            breakoutStopAtrMultiplier: 1.2,
+            breakoutStrongExcessReturnBonusPct: {
+                BTCUSDT: 0,
+                ETHUSDT: 0.2,
+                SOLUSDT: 0.2,
+                XRPUSDT: 0.2,
+                DOGEUSDT: 0.6,
+            },
+            pullbackEmaPeriods: [20, 30],
+            trendLegLookback: 8,
+            trendLegMinReturnPct: {
+                BTCUSDT: 1.2,
+                ETHUSDT: 1.2,
+                SOLUSDT: 1.4,
+                XRPUSDT: 1.6,
+                DOGEUSDT: 2.0,
+            },
+            pullbackRecentBars: 4,
+            pullbackZoneBufferPct: 0.3,
+            pullbackStructureBufferPct: 1.0,
+            pullbackVolumeCompressionMax: 0.85,
+            reclaimConfirmBars: 1,
+            reclaimVolumeRatioMin: 1.05,
+            pullbackStopAtrMultiplier: {
+                BTCUSDT: 0.8,
+                ETHUSDT: 0.8,
+                SOLUSDT: 1.0,
+                XRPUSDT: 0.8,
+                DOGEUSDT: 1.0,
+            },
+            pullbackStrongExcessReturnBonusPct: {
+                BTCUSDT: 0,
+                ETHUSDT: 0.15,
+                SOLUSDT: 0.2,
+                XRPUSDT: 0.5,
+                DOGEUSDT: 0.6,
+            },
+            allowPullbackSymbols: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT'],
+        },
+        grading: {
+            tradableGrades: ['A', 'B'],
+            baseConfidence: {
+                A: 92,
+                B: 84,
+                C: 70,
+            },
+        },
+        risk: {
+            baseRiskPct: {
+                A: 0.75,
+                B: 0.5,
+                C: 0,
+            },
+            symbolRiskMultiplier: {
+                BTCUSDT: 1,
+                ETHUSDT: 0.9,
+                SOLUSDT: 0.75,
+                XRPUSDT: 0.55,
+                DOGEUSDT: 0.4,
+            },
+            maxConcurrentPositions: 3,
+            coreClusterRiskCap: 1.25,
+            specClusterRiskCap: 0.6,
+            btcLeadAltRiskMultiplier: 0.7,
+            maxConsecutiveLossesBeforeCooldown: 3,
+            cooldownBars: 24,
+            maxDailyDrawdownPct: 1.8,
+            moveStopToEntryAtR: 1,
+            partialTakeProfitAtR: 2,
+            partialTakeProfitClosePct: 50,
+            breakoutTimeStopBars: 72,
+            pullbackTimeStopBars: 96,
+            trailingEmaPeriod: 20,
+            trailingDonchianLookback: 20,
         },
         candidateRanges: {
-            minQuoteVolume: [20_000_000, 30_000_000, 50_000_000],
-            minOiExpansion: [2, 3, 5],
-            minVolumeRatio: [1.2, 1.5, 1.8],
-            maxBandwidthPercentile: [85, 75, 65],
-            minConditions: [6, 7, 8],
-            shortMomentum: [
-                { maxChange15m: 0.2, maxChange1h: -0.35, maxChange4h: -1.3 },
-                { maxChange15m: 0, maxChange1h: -0.6, maxChange4h: -1.8 },
-                { maxChange15m: -0.2, maxChange1h: -0.9, maxChange4h: -2.4 },
-            ],
+            rangeAdxMax: [18, 16, 14],
+            rangeCompressionPct: [1.8, 1.5, 1.2],
+            atrExpansionMin: [1.05, 1.1, 1.15],
+            btcBreakoutVolumeRatioMin: [1.15, 1.2, 1.3],
+            ethExcessReturn4hMin: [0.3, 0.45, 0.6],
         },
     },
 };
@@ -638,11 +779,16 @@ function pickRangeValue<T>(values: readonly T[], index: number): T {
     return values[Math.min(index, values.length - 1)];
 }
 
-export function getStrategyParameterConfig<K extends StrategyId>(strategyId: K): StrategyParameterConfigMap[K] {
-    return overrideStack.reduce(
-        (config, override) => deepMerge(config, override[strategyId] as DeepPartial<StrategyParameterConfigMap[K]> | undefined),
+export function getStrategyParameterConfig<K extends StrategyId>(
+    strategyId: K,
+    explicitOverride?: DeepPartial<StrategyParameterConfigMap[K]>,
+): StrategyParameterConfigMap[K] {
+    const mergedFromStack = overrideStack.reduce(
+        (config, override) => deepMerge(config, getScopedStrategyParameterOverride(strategyId, override)),
         structuredClone(DEFAULT_STRATEGY_PARAMETER_CONFIGS[strategyId]),
     );
+
+    return deepMerge(mergedFromStack, explicitOverride);
 }
 
 export function getAllStrategyParameterConfigs(): StrategyParameterConfigMap {
@@ -787,12 +933,23 @@ export function buildStrategyParameterCandidates(strategyId: StrategyId): Strate
                 label: tierIndex === 1 ? '中等保守' : '严格保守',
                 overrides: {
                     'wei-shen-ledger': {
-                        minQuoteVolume: pickRangeValue(baseline.candidateRanges.minQuoteVolume, tierIndex),
-                        minOiExpansion: pickRangeValue(baseline.candidateRanges.minOiExpansion, tierIndex),
-                        minVolumeRatio: pickRangeValue(baseline.candidateRanges.minVolumeRatio, tierIndex),
-                        maxBandwidthPercentile: pickRangeValue(baseline.candidateRanges.maxBandwidthPercentile, tierIndex),
-                        minConditions: pickRangeValue(baseline.candidateRanges.minConditions, tierIndex),
-                        shortMomentum: pickRangeValue(baseline.candidateRanges.shortMomentum, tierIndex),
+                        marketRegime: {
+                            rangeAdxMax: pickRangeValue(baseline.candidateRanges.rangeAdxMax, tierIndex),
+                            rangeCompressionPct: pickRangeValue(baseline.candidateRanges.rangeCompressionPct, tierIndex),
+                        },
+                        entry: {
+                            atrExpansionMin: pickRangeValue(baseline.candidateRanges.atrExpansionMin, tierIndex),
+                            breakoutVolumeRatioMin: {
+                                ...baseline.entry.breakoutVolumeRatioMin,
+                                BTCUSDT: pickRangeValue(baseline.candidateRanges.btcBreakoutVolumeRatioMin, tierIndex),
+                            },
+                        },
+                        relativeStrength: {
+                            excessReturn4hMin: {
+                                ...baseline.relativeStrength.excessReturn4hMin,
+                                ETHUSDT: pickRangeValue(baseline.candidateRanges.ethExcessReturn4hMin, tierIndex),
+                            },
+                        },
                     },
                 },
             }));

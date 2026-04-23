@@ -3,8 +3,11 @@ import assert from 'node:assert/strict';
 
 import {
     buildApiSmokeEndpoints,
+    compareEndpointToBaseline,
     createRunSummary,
+    createEndpointBaseline,
     validatePayload,
+    validateCrossEndpointConsistency,
 } from './verification-helpers.mjs';
 
 test('buildApiSmokeEndpoints creates conservative route coverage with deterministic query params', () => {
@@ -63,4 +66,88 @@ test('createRunSummary reports pass counts and latency stats', () => {
     assert.equal(summary.failed, 1);
     assert.equal(summary.averageDurationMs, 200);
     assert.equal(summary.maxDurationMs, 300);
+});
+
+test('createEndpointBaseline and compareEndpointToBaseline keep endpoint key signatures stable', () => {
+    const endpoint = { name: 'market-light', expect: 'array' };
+    const payload = [
+        { symbol: 'BTCUSDT', lastPrice: '100', markPrice: '100', fundingRate: '0.01' },
+        { symbol: 'ETHUSDT', lastPrice: '200', markPrice: '199', fundingRate: '0.02' },
+    ];
+
+    const baseline = createEndpointBaseline(endpoint, payload, { symbol: 'BTCUSDT' });
+    const stableIssues = compareEndpointToBaseline(endpoint, baseline, payload, { symbol: 'BTCUSDT' });
+    const driftIssues = compareEndpointToBaseline(
+        endpoint,
+        baseline,
+        [{ symbol: 'BTCUSDT', lastPrice: '100', fundingRate: '0.01' }],
+        { symbol: 'BTCUSDT' },
+    );
+
+    assert.deepEqual(stableIssues, []);
+    assert.match(driftIssues[0], /sample keys changed/);
+});
+
+test('validateCrossEndpointConsistency verifies shared symbol contracts', () => {
+    const issues = validateCrossEndpointConsistency({
+        market: [{ symbol: 'BTCUSDT', lastPrice: '100', markPrice: '101', fundingRate: '0.01' }],
+        'market-light': [{ symbol: 'BTCUSDT', lastPrice: '100', markPrice: '101', fundingRate: '0.01' }],
+        'market-multiframe': {
+            BTCUSDT: { o15m: 100, o1h: 99, o4h: 95 },
+        },
+        'oi-multiframe': {
+            BTCUSDT: { currentValue: 12345 },
+        },
+        rsrs: {
+            BTCUSDT: {
+                beta: 1.1,
+                r2: 0.8,
+                rsrsFinal: 0.7,
+                dynamicLongThreshold: 0.9,
+                dynamicShortThreshold: -0.9,
+                method: 'shared-core',
+            },
+        },
+        'backtest-klines': {
+            data: [
+                { openTime: 1 },
+                { openTime: 2 },
+                { openTime: 3 },
+            ],
+        },
+    }, { symbol: 'BTCUSDT' });
+
+    assert.deepEqual(issues, []);
+});
+
+test('validateCrossEndpointConsistency reports missing symbols and malformed numeric fields', () => {
+    const issues = validateCrossEndpointConsistency({
+        market: [],
+        'market-light': [{ symbol: 'BTCUSDT', lastPrice: '100', markPrice: '101', fundingRate: 1 }],
+        'market-multiframe': {
+            BTCUSDT: { o15m: 100, o1h: 'oops', o4h: 95 },
+        },
+        rsrs: {
+            BTCUSDT: {
+                beta: 'oops',
+                r2: 0.8,
+                rsrsFinal: 0.7,
+                dynamicLongThreshold: 0.9,
+                dynamicShortThreshold: -0.9,
+                method: '',
+            },
+        },
+        'backtest-klines': {
+            data: [
+                { openTime: 2 },
+                { openTime: 1 },
+            ],
+        },
+    }, { symbol: 'BTCUSDT' });
+
+    assert.ok(issues.some((issue) => issue.includes('market payload missing BTCUSDT')));
+    assert.ok(issues.some((issue) => issue.includes('market-light.BTCUSDT.fundingRate is not a string')));
+    assert.ok(issues.some((issue) => issue.includes('market-multiframe.BTCUSDT is missing required open anchors')));
+    assert.ok(issues.some((issue) => issue.includes('rsrs.BTCUSDT.beta is not numeric')));
+    assert.ok(issues.some((issue) => issue.includes('backtest-klines data is not strictly increasing')));
 });

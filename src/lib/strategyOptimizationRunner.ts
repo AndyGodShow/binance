@@ -6,15 +6,18 @@ import { calculateDataQuality } from './dataQuality.ts';
 import type { DataQualityMetrics } from './dataQuality.ts';
 import { HistoricalDataFetcher } from './historicalDataFetcher.ts';
 import { buildHistoricalTickerOverrides } from './historicalMultiTimeframe.ts';
+import { runBacktestHistoryPreflight, type BacktestHistoryPreflightReport } from './backtestHistoryPreflight.ts';
 import { runPortfolioBacktest } from './portfolioBacktestEngine.ts';
 import type { PortfolioBacktestResult } from './portfolioBacktestEngine.ts';
 import { calculateRiskManagement } from './risk/riskCalculator.ts';
 import {
     buildStrategyParameterCandidates,
-    withStrategyParameterOverrides,
 } from './strategyParameters.ts';
+import { createStrategyRuntimeState } from './strategyRuntimeState.ts';
 import type {
+    DeepPartial,
     StrategyId,
+    StrategyParameterConfigMap,
     StrategyParameterCandidate,
 } from './strategyParameters.ts';
 import {
@@ -29,6 +32,11 @@ import type {
     StrategyWindowMetrics,
 } from './strategyOptimization.ts';
 import type { TickerData } from './types.ts';
+import {
+    WEI_SHEN_UNIVERSE,
+    filterWeiShenUniverseSymbols,
+} from './weiShenUniverse.ts';
+import { resolveStrategyIntervalsWithOverrides } from './weiShenStrategy.ts';
 import { strategyRegistry } from '../strategies/registry.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -99,6 +107,7 @@ interface SingleBacktestRun {
     result: BacktestResult;
     diagnostics: BacktestDiagnostics;
     dataQuality: DataQualityMetrics;
+    preflight: BacktestHistoryPreflightReport;
 }
 
 function average(values: number[]): number {
@@ -184,6 +193,20 @@ async function fetchTopSymbols(baseUrl: string, limit: number): Promise<string[]
         .map((ticker) => ticker.symbol);
 }
 
+function resolveOptimizationIntervals(
+    strategyId: StrategyId,
+    signalInterval: string,
+    executionInterval: string,
+    parameterOverrides?: DeepPartial<StrategyParameterConfigMap>,
+) {
+    return resolveStrategyIntervalsWithOverrides({
+        strategyId,
+        signalInterval,
+        executionInterval,
+        parameterOverrides,
+    });
+}
+
 async function runSingleBacktest(params: {
     dataFetcher: HistoricalDataFetcher;
     strategyId: StrategyId;
@@ -193,20 +216,42 @@ async function runSingleBacktest(params: {
     executionInterval: string;
     initialCapital: number;
     commission: number;
+    parameterOverrides?: DeepPartial<StrategyParameterConfigMap>;
 }): Promise<SingleBacktestRun> {
     const strategy = strategyRegistry.getById(params.strategyId);
     if (!strategy) {
         throw new Error(`策略不存在: ${params.strategyId}`);
     }
 
+    const resolvedIntervals = resolveOptimizationIntervals(
+        params.strategyId,
+        params.signalInterval,
+        params.executionInterval,
+        params.parameterOverrides,
+    );
     const { startTime, endTime } = HistoricalDataFetcher.getPresetRange(windowToPreset(params.window));
     const normalizedSymbol = params.symbol.trim().toUpperCase();
     const signalKlines = await params.dataFetcher.fetchRangeData(
         normalizedSymbol,
-        params.signalInterval,
+        resolvedIntervals.signalInterval,
         startTime,
         endTime,
     );
+
+    const preflight = await runBacktestHistoryPreflight({
+        dataFetcher: params.dataFetcher,
+        strategyId: params.strategyId,
+        symbol: normalizedSymbol,
+        startTime,
+        endTime,
+        signalInterval: resolvedIntervals.signalInterval,
+        executionInterval: resolvedIntervals.executionInterval,
+        parameterOverrides: params.parameterOverrides,
+    });
+
+    if (!preflight.passed) {
+        throw new Error(preflight.reasons[0] || `${normalizedSymbol} 历史数据 preflight 未通过`);
+    }
 
     if (signalKlines.length === 0) {
         throw new Error(`未获取到 ${normalizedSymbol} 的历史数据`);
@@ -217,8 +262,9 @@ async function runSingleBacktest(params: {
         symbol: normalizedSymbol,
         startTime,
         endTime,
-        baseInterval: params.signalInterval,
+        baseInterval: resolvedIntervals.signalInterval,
         baseKlines: signalKlines,
+        parameterOverrides: params.parameterOverrides,
         fetchRangeData: (nextSymbol, nextInterval, nextStartTime, nextEndTime) =>
             params.dataFetcher.fetchRangeData(nextSymbol, nextInterval, nextStartTime, nextEndTime, {
                 includeAuxiliary: false,
@@ -231,6 +277,7 @@ async function runSingleBacktest(params: {
         slippage: 0.05,
         useStrategyRiskManagement: true,
     });
+    const runtimeState = createStrategyRuntimeState();
 
     const result = await engine.run({
         signalKlines,
@@ -239,8 +286,16 @@ async function runSingleBacktest(params: {
                 ? { ...ticker, ...historicalTickerOverrides.get(ticker.closeTime) }
                 : ticker;
 
-            const signal = strategy.detect(enrichedTicker);
-            if (!signal) {
+            const signal = strategy.detect(enrichedTicker, {
+                now: ticker.closeTime,
+                parameterOverrides: params.parameterOverrides,
+                runtimeState,
+            });
+            if (!signal || signal.executionMode === 'observe') {
+                return null;
+            }
+
+            if (params.strategyId === 'wei-shen-ledger' && !signal.risk) {
                 return null;
             }
 
@@ -255,14 +310,14 @@ async function runSingleBacktest(params: {
         },
         strategyName: strategy.name,
         symbol: normalizedSymbol,
-        signalInterval: params.signalInterval,
-        executionInterval: params.executionInterval,
+        signalInterval: resolvedIntervals.signalInterval,
+        executionInterval: resolvedIntervals.executionInterval,
         simulationEndTime: endTime,
-        fetchExecutionKlines: params.executionInterval === params.signalInterval
+        fetchExecutionKlines: resolvedIntervals.executionInterval === resolvedIntervals.signalInterval
             ? undefined
             : (nextStartTime, nextEndTime) => params.dataFetcher.fetchRangeData(
                 normalizedSymbol,
-                params.executionInterval,
+                resolvedIntervals.executionInterval,
                 nextStartTime,
                 nextEndTime,
                 { includeAuxiliary: false },
@@ -272,8 +327,8 @@ async function runSingleBacktest(params: {
     const dataQuality = calculateDataQuality(signalKlines);
     const diagnostics = buildBacktestDiagnostics({
         strategyId: strategy.id,
-        interval: params.signalInterval,
-        executionInterval: params.executionInterval,
+        interval: resolvedIntervals.signalInterval,
+        executionInterval: resolvedIntervals.executionInterval,
         requestedDays: (endTime - startTime) / DAY_MS,
         dataQuality,
         hasHistoricalMultiTimeframe: historicalTickerOverrides.size > 0,
@@ -284,6 +339,7 @@ async function runSingleBacktest(params: {
         result,
         diagnostics,
         dataQuality,
+        preflight,
     };
 }
 
@@ -324,6 +380,7 @@ async function runWindowEvaluation(params: {
     maxConcurrentPositions: number;
     positionSizePercent: number;
     onProgress?: (message: string) => void;
+    parameterOverrides?: DeepPartial<StrategyParameterConfigMap>;
 }): Promise<StrategyWindowEvaluation> {
     const completedRuns: SingleBacktestRun[] = [];
     const failedSymbols: string[] = [];
@@ -343,6 +400,7 @@ async function runWindowEvaluation(params: {
                 executionInterval: params.executionInterval,
                 initialCapital: params.initialCapital,
                 commission: params.commission,
+                parameterOverrides: params.parameterOverrides,
             }));
         } catch {
             failedSymbols.push(symbol);
@@ -372,6 +430,8 @@ async function runWindowEvaluation(params: {
                 initialCapital: params.initialCapital,
                 maxConcurrentPositions: params.maxConcurrentPositions,
                 positionSizePercent: params.positionSizePercent,
+                strategyId: params.strategyId,
+                parameterOverrides: params.parameterOverrides,
             },
         )
         : null;
@@ -440,23 +500,22 @@ async function runCandidateEvaluation(params: {
 }): Promise<StrategyCandidateEvaluation> {
     const windowResults: Partial<Record<OptimizationWindow, StrategyWindowEvaluation>> = {};
 
-    await withStrategyParameterOverrides(params.candidate.overrides, async () => {
-        for (const window of params.windows) {
-            windowResults[window] = await runWindowEvaluation({
-                dataFetcher: params.dataFetcher,
-                strategyId: params.strategyId,
-                symbols: params.symbols,
-                window,
-                signalInterval: params.signalInterval,
-                executionInterval: params.executionInterval,
-                initialCapital: params.initialCapital,
-                commission: params.commission,
-                maxConcurrentPositions: params.maxConcurrentPositions,
-                positionSizePercent: params.positionSizePercent,
-                onProgress: params.onProgress,
-            });
-        }
-    });
+    for (const window of params.windows) {
+        windowResults[window] = await runWindowEvaluation({
+            dataFetcher: params.dataFetcher,
+            strategyId: params.strategyId,
+            symbols: params.symbols,
+            window,
+            signalInterval: params.signalInterval,
+            executionInterval: params.executionInterval,
+            initialCapital: params.initialCapital,
+            commission: params.commission,
+            maxConcurrentPositions: params.maxConcurrentPositions,
+            positionSizePercent: params.positionSizePercent,
+            onProgress: params.onProgress,
+            parameterOverrides: params.candidate.overrides,
+        });
+    }
 
     const metrics = createBaselineWindowMap(
         Object.fromEntries(
@@ -485,7 +544,7 @@ export async function runStrategyOptimization(options: StrategyOptimizationRunne
         'volatility-squeeze',
     ];
     const windows = options.windows ?? ['30d', '90d', '180d'];
-    const symbols = options.symbols ?? await fetchTopSymbols(options.baseUrl, options.symbolLimit ?? 30);
+    const baseSymbols = options.symbols ?? await fetchTopSymbols(options.baseUrl, options.symbolLimit ?? 30);
     const signalInterval = options.signalInterval ?? '1h';
     const executionInterval = options.executionInterval ?? '1m';
     const initialCapital = options.initialCapital ?? 10_000;
@@ -499,6 +558,9 @@ export async function runStrategyOptimization(options: StrategyOptimizationRunne
     const results: StrategyOptimizationExecutionResult[] = [];
 
     for (const strategyId of strategyIds) {
+        const symbols = strategyId === 'wei-shen-ledger'
+            ? (options.symbols ? filterWeiShenUniverseSymbols(baseSymbols) : [...WEI_SHEN_UNIVERSE])
+            : baseSymbols;
         options.onProgress?.(`开始冻结 ${strategyId} baseline`);
 
         const baselineWindows: Partial<Record<OptimizationWindow, StrategyWindowEvaluation>> = {};

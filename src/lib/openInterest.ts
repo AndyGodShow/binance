@@ -2,21 +2,12 @@ import { LRUCache } from '@/lib/cache';
 import { fetchBinanceJson } from '@/lib/binanceApi';
 import { fetchCoinalyzeOpenInterestHistory } from '@/lib/coinalyze';
 import { logger } from '@/lib/logger';
-
-
-
-interface BinanceOpenInterestHistEntry {
-    symbol: string;
-    sumOpenInterest: string;
-    sumOpenInterestValue: string;
-    timestamp: number;
-}
-
-interface HistoricalOpenInterestEntry {
-    timestamp: number;
-    openInterest: string;
-    openInterestValue?: string;
-}
+import {
+    buildOpenInterestHistoryPath,
+    calculateChangePercent,
+    findClosestAtOrBefore,
+    normalizeOpenInterestHistEntries,
+} from '@/lib/openInterestShared';
 
 export interface OpenInterestMarketSnapshot {
     symbol: string;
@@ -33,55 +24,7 @@ const OI_CACHE_TTL = 5 * 60 * 1000;
 
 const marketSnapshotCache = new LRUCache<OpenInterestMarketSnapshot>(1000, OI_CACHE_TTL);
 
-
 const inflightMarketRequests = new Map<string, Promise<OpenInterestMarketSnapshot | null>>();
-
-
-function isBinanceOpenInterestHistEntry(value: unknown): value is BinanceOpenInterestHistEntry {
-    return typeof value === 'object' &&
-        value !== null &&
-        typeof (value as BinanceOpenInterestHistEntry).symbol === 'string' &&
-        typeof (value as BinanceOpenInterestHistEntry).sumOpenInterest === 'string' &&
-        typeof (value as BinanceOpenInterestHistEntry).sumOpenInterestValue === 'string' &&
-        typeof (value as BinanceOpenInterestHistEntry).timestamp === 'number';
-}
-
-function buildHistoryPath(symbol: string, period: string, limit: number): string {
-    const params = new URLSearchParams({
-        symbol: symbol.toUpperCase(),
-        period,
-        limit: String(limit),
-    });
-
-    return `/futures/data/openInterestHist?${params.toString()}`;
-}
-
-function parseHistEntries(data: unknown): BinanceOpenInterestHistEntry[] {
-    if (!Array.isArray(data)) {
-        return [];
-    }
-
-    return data
-        .filter(isBinanceOpenInterestHistEntry)
-        .sort((a, b) => a.timestamp - b.timestamp);
-}
-
-
-
-function findClosestAtOrBefore(
-    entries: HistoricalOpenInterestEntry[],
-    targetTimestamp: number
-): HistoricalOpenInterestEntry | null {
-    for (let index = entries.length - 1; index >= 0; index -= 1) {
-        if (entries[index].timestamp <= targetTimestamp) {
-            return entries[index];
-        }
-    }
-
-    return entries[0] || null;
-}
-
-
 
 function formatOpenInterestValue(openInterest: string | undefined, price: string | undefined, fallbackValue?: string): string | undefined {
     if (openInterest && price) {
@@ -94,21 +37,6 @@ function formatOpenInterestValue(openInterest: string | undefined, price: string
 
     return fallbackValue;
 }
-
-function calculateChangePercent(currentValue: string, previousValue: string): number | undefined {
-    const current = Number(currentValue);
-    const previous = Number(previousValue);
-
-    if (!Number.isFinite(current) || !Number.isFinite(previous) || previous <= 0) {
-        return undefined;
-    }
-
-    return ((current - previous) / previous) * 100;
-}
-
-
-
-
 
 export async function fetchOpenInterestMarketSnapshot(
     symbol: string,
@@ -136,11 +64,11 @@ export async function fetchOpenInterestMarketSnapshot(
     const request = (async () => {
         try {
             const historyResponse = await fetchBinanceJson<unknown>(
-                buildHistoryPath(normalizedSymbol, OI_MARKET_PERIOD, OI_MARKET_LIMIT),
+                buildOpenInterestHistoryPath(normalizedSymbol, OI_MARKET_PERIOD, OI_MARKET_LIMIT),
                 { revalidate: 300 }
             );
 
-            const entries = parseHistEntries(historyResponse);
+            const entries = normalizeOpenInterestHistEntries(historyResponse);
             if (entries.length === 0) {
                 throw new Error(`No official market open interest history available for ${normalizedSymbol}`);
             }

@@ -181,6 +181,24 @@
     color: rgba(255, 255, 255, 0.55);
 }
 
+.metaBadge {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    color: rgba(255, 255, 255, 0.82);
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.observeBadge {
+    color: rgb(253, 224, 71);
+    background: rgba(245, 158, 11, 0.14);
+    border-color: rgba(245, 158, 11, 0.25);
+}
+
 .closeBtn {
     background: transparent;
     border: none;
@@ -248,6 +266,33 @@
     color: var(--text-secondary);
     line-height: 1.6;
     margin-bottom: 8px;
+}
+
+.explainBox {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 12px;
+}
+
+.explainRow {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 5px 0;
+    font-size: 12px;
+}
+
+.explainLabel {
+    color: rgba(255, 255, 255, 0.55);
+    min-width: 72px;
+}
+
+.explainValue {
+    color: rgba(255, 255, 255, 0.88);
+    text-align: right;
+    flex: 1;
 }
 
 /* 叠加策略列表 */

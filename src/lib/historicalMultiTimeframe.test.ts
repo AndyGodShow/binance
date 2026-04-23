@@ -50,3 +50,53 @@ test('buildHistoricalTickerOverrides skips failed auxiliary interval fetches', a
     assert.ok(sample);
     assert.equal(typeof sample?.change15m, 'number');
 });
+
+test('buildHistoricalTickerOverrides attaches wei-shen strategy context using BTC multi-timeframe data', async () => {
+    const startTime = Date.UTC(2025, 0, 1);
+    const baseKlines = Array.from({ length: 120 }, (_, index) =>
+        createKline(startTime + ((index + 1) * 60 * 60 * 1000), 100 + index)
+    );
+    const btc1h = Array.from({ length: 120 }, (_, index) =>
+        createKline(startTime + ((index + 1) * 60 * 60 * 1000), 200 + index)
+    );
+    const btc4h = Array.from({ length: 120 }, (_, index) =>
+        createKline(startTime + ((index + 1) * 4 * 60 * 60 * 1000), 300 + index)
+    );
+    const btc1d = Array.from({ length: 40 }, (_, index) =>
+        createKline(startTime + ((index + 1) * 24 * 60 * 60 * 1000), 400 + index)
+    );
+
+    const calls: Array<{ symbol: string; interval: string }> = [];
+    const overrides = await buildHistoricalTickerOverrides({
+        strategyId: 'wei-shen-ledger',
+        symbol: 'ETHUSDT',
+        startTime,
+        endTime: baseKlines[baseKlines.length - 1].closeTime,
+        baseInterval: '1h',
+        baseKlines,
+        fetchRangeData: async (symbol, interval) => {
+            calls.push({ symbol, interval });
+
+            if (symbol === 'BTCUSDT' && interval === '1h') {
+                return btc1h;
+            }
+
+            if (symbol === 'BTCUSDT' && interval === '4h') {
+                return btc4h;
+            }
+
+            if (symbol === 'BTCUSDT' && interval === '1d') {
+                return btc1d;
+            }
+
+            return baseKlines;
+        },
+    });
+
+    const sample = overrides.get(baseKlines[baseKlines.length - 1].closeTime) as Record<string, unknown> | undefined;
+    assert.ok(sample);
+    assert.ok(calls.some((call) => call.symbol === 'BTCUSDT' && call.interval === '1h'));
+    assert.ok(calls.some((call) => call.symbol === 'BTCUSDT' && call.interval === '4h'));
+    assert.ok(calls.some((call) => call.symbol === 'BTCUSDT' && call.interval === '1d'));
+    assert.ok('strategyContexts' in sample);
+});

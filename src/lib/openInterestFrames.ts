@@ -5,6 +5,7 @@ import type { OpenInterestFrameSnapshot } from './types';
 import {
     buildOpenInterestFrameSnapshot,
 } from './openInterestFrameMath';
+import { buildOpenInterestHistoryPath } from './openInterestShared.ts';
 
 const OI_FRAME_CACHE_TTL = 5 * 60 * 1000;
 const OI_FRAME_HISTORY_LIMIT = 97;
@@ -12,16 +13,6 @@ const OI_FRAME_PERIOD = '15m';
 
 const oiFrameSnapshotCache = new LRUCache<OpenInterestFrameSnapshot>(1000, OI_FRAME_CACHE_TTL);
 const inflightFrameRequests = new Map<string, Promise<OpenInterestFrameSnapshot | null>>();
-
-function buildHistoryPath(symbol: string): string {
-    const params = new URLSearchParams({
-        symbol: symbol.toUpperCase(),
-        period: OI_FRAME_PERIOD,
-        limit: String(OI_FRAME_HISTORY_LIMIT),
-    });
-
-    return `/futures/data/openInterestHist?${params.toString()}`;
-}
 
 export async function fetchOpenInterestFrameSnapshot(symbol: string): Promise<OpenInterestFrameSnapshot | null> {
     const normalizedSymbol = symbol.toUpperCase();
@@ -39,7 +30,7 @@ export async function fetchOpenInterestFrameSnapshot(symbol: string): Promise<Op
     const request = (async () => {
         try {
             const response = await fetchBinanceJson<unknown>(
-                buildHistoryPath(normalizedSymbol),
+                buildOpenInterestHistoryPath(normalizedSymbol, OI_FRAME_PERIOD, OI_FRAME_HISTORY_LIMIT),
                 { revalidate: 300 }
             );
 

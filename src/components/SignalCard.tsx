@@ -18,6 +18,13 @@ export default function SignalCard({ signal, onDismiss, onSymbolClick }: SignalC
     const isCooling = signal.status === 'cooling';
     const isSnapshot = signal.status === 'snapshot';
     const risk = signal.risk;
+    const isObserve = signal.executionMode === 'observe';
+    const gradeLabel = signal.grade ? `${signal.grade}级` : null;
+    const entryTypeLabel = signal.entryType === 'breakout'
+        ? '趋势突破'
+        : signal.entryType === 'pullback'
+            ? '强势回踩'
+            : null;
     const formatDateTime = (value: number) => new Date(value).toLocaleString('zh-CN', {
         year: 'numeric',
         month: '2-digit',
@@ -92,6 +99,9 @@ export default function SignalCard({ signal, onDismiss, onSymbolClick }: SignalC
                 <span className={`${styles.statusBadge} ${statusClassName}`}>
                     {statusLabel}
                 </span>
+                {gradeLabel && <span className={styles.metaBadge}>{gradeLabel}</span>}
+                {entryTypeLabel && <span className={styles.metaBadge}>{entryTypeLabel}</span>}
+                {isObserve && <span className={`${styles.metaBadge} ${styles.observeBadge}`}>观察，不交易</span>}
                 {statusHint && (
                     <span className={styles.statusHint}>
                         {statusHint}
@@ -112,6 +122,31 @@ export default function SignalCard({ signal, onDismiss, onSymbolClick }: SignalC
             <div className={styles.strategy}>{signal.strategyName}</div>
             <div className={styles.direction}>建议方向：{directionText}</div>
             <div className={styles.reason}>{signal.reason}</div>
+
+            {signal.explain && (
+                <div className={styles.explainBox}>
+                    <div className={styles.explainRow}>
+                        <span className={styles.explainLabel}>市场状态</span>
+                        <span className={styles.explainValue}>{signal.explain.marketRegime.summary}</span>
+                    </div>
+                    <div className={styles.explainRow}>
+                        <span className={styles.explainLabel}>相对强弱</span>
+                        <span className={styles.explainValue}>{signal.explain.relativeStrength.summary}</span>
+                    </div>
+                    <div className={styles.explainRow}>
+                        <span className={styles.explainLabel}>建议风险</span>
+                        <span className={styles.explainValue}>{signal.explain.suggestedRiskPct}%</span>
+                    </div>
+                    <div className={styles.explainRow}>
+                        <span className={styles.explainLabel}>止损价</span>
+                        <span className={styles.explainValue}>${formatPrice(signal.explain.stopLossPrice, signal.price ?? signal.explain.stopLossPrice, 1)}</span>
+                    </div>
+                    <div className={styles.explainRow}>
+                        <span className={styles.explainLabel}>失效价</span>
+                        <span className={styles.explainValue}>${formatPrice(signal.explain.invalidationPrice, signal.price ?? signal.explain.invalidationPrice, 1)}</span>
+                    </div>
+                </div>
+            )}
 
             {/* 复合策略条件显示 */}
             {signal.isComposite && signal.conditions && (

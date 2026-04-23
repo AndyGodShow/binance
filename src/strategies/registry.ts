@@ -89,10 +89,6 @@ class StrategyRegistry {
             this.notify(); // 触发更新通知
         }
     }
-
-    getByCategory(category: TradingStrategy['category']): TradingStrategy[] {
-        return this.getAll().filter(s => s.category === category);
-    }
 }
 
 // 单例导出

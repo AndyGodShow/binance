@@ -23,6 +23,10 @@ import { logger } from '@/lib/logger';
 import { klineCache } from '@/lib/cache';
 import { APP_CONFIG } from '@/lib/config';
 import { fetchBinanceJson } from '@/lib/binanceApi';
+import {
+    calculateBreakoutMetrics,
+    deriveTrendStructure,
+} from '@/lib/marketStructure';
 
 type BinanceKline = [
     number,
@@ -146,42 +150,6 @@ function calculateCvdMetrics(klines: OHLC[]): { cvd?: number; cvdSlope?: number 
         cvd: cvdHistory[cvdHistory.length - 1],
         cvdSlope: denominator !== 0 ? numerator / denominator : 0,
     };
-}
-
-function determineOrderedTrend(values: number[]): 'bullish' | 'bearish' | 'mixed' {
-    if (values.length < 2) {
-        return 'mixed';
-    }
-
-    const bullish = values.every((value, index) => index === 0 || values[index - 1] > value);
-    if (bullish) {
-        return 'bullish';
-    }
-
-    const bearish = values.every((value, index) => index === 0 || values[index - 1] < value);
-    if (bearish) {
-        return 'bearish';
-    }
-
-    return 'mixed';
-}
-
-function calculateDirectionalAlignmentScore(values: number[], direction: 'bullish' | 'bearish'): number {
-    if (values.length < 2) {
-        return 0;
-    }
-
-    let score = 0;
-    for (let index = 1; index < values.length; index++) {
-        const prev = values[index - 1];
-        const current = values[index];
-        const aligned = direction === 'bullish' ? prev > current : prev < current;
-        if (aligned) {
-            score += 1;
-        }
-    }
-
-    return score;
 }
 
 /**
@@ -311,67 +279,24 @@ export function enhanceTickerData(
             .map((period) => getLatestEMAState(closes, period))
             .filter((state): state is NonNullable<typeof state> => state !== null);
 
-        if (ema20 && ema60 && ema100) {
-            enhanced.ema5m20 = ema20.value;
-            enhanced.ema5m60 = ema60.value;
-            enhanced.ema5m100 = ema100.value;
-
-            const currentPrice = parseFloat(ticker.lastPrice);
-            if (Number.isFinite(currentPrice) && ema20.value > 0) {
-                enhanced.ema5mDistancePercent = ((currentPrice - ema20.value) / ema20.value) * 100;
-            }
-        }
-
-        if (gmmaShortStates.length === GMMA_SHORT_PERIODS.length && gmmaLongStates.length === GMMA_LONG_PERIODS.length) {
-            const shortValues = gmmaShortStates.map((state) => state.value);
-            const longValues = gmmaLongStates.map((state) => state.value);
-            const shortAvg = shortValues.reduce((sum, value) => sum + value, 0) / shortValues.length;
-            const longAvg = longValues.reduce((sum, value) => sum + value, 0) / longValues.length;
-            const shortTrend = determineOrderedTrend(shortValues);
-            const longTrend = determineOrderedTrend(longValues);
-
-            enhanced.gmmaShortScore = shortTrend === 'bullish'
-                ? calculateDirectionalAlignmentScore(shortValues, 'bullish')
-                : shortTrend === 'bearish'
-                ? calculateDirectionalAlignmentScore(shortValues, 'bearish')
-                : 0;
-            enhanced.gmmaLongScore = longTrend === 'bullish'
-                ? calculateDirectionalAlignmentScore(longValues, 'bullish')
-                : longTrend === 'bearish'
-                ? calculateDirectionalAlignmentScore(longValues, 'bearish')
-                : 0;
-
-            if (longAvg > 0) {
-                enhanced.gmmaSeparationPercent = ((shortAvg - longAvg) / longAvg) * 100;
-            }
-
-            if (
-                shortTrend === 'bullish' &&
-                longTrend === 'bullish' &&
-                Math.min(...shortValues) > Math.max(...longValues)
-            ) {
-                enhanced.gmmaTrend = 'bullish';
-            } else if (
-                shortTrend === 'bearish' &&
-                longTrend === 'bearish' &&
-                Math.max(...shortValues) < Math.min(...longValues)
-            ) {
-                enhanced.gmmaTrend = 'bearish';
-            } else {
-                enhanced.gmmaTrend = 'mixed';
-            }
-        }
-
-        if (multiEmaStates.length === MULTI_EMA_PERIODS.length) {
-            const multiValues = multiEmaStates.map((state) => state.value);
-            const multiTrend = determineOrderedTrend(multiValues);
-            enhanced.multiEmaTrend = multiTrend;
-            enhanced.multiEmaAlignmentScore = multiTrend === 'bullish'
-                ? calculateDirectionalAlignmentScore(multiValues, 'bullish')
-                : multiTrend === 'bearish'
-                ? calculateDirectionalAlignmentScore(multiValues, 'bearish')
-                : 0;
-        }
+        Object.assign(
+            enhanced,
+            deriveTrendStructure({
+                currentPrice: parseFloat(ticker.lastPrice),
+                ema20: ema20?.value,
+                ema60: ema60?.value,
+                ema100: ema100?.value,
+                gmmaShortValues: gmmaShortStates.length === GMMA_SHORT_PERIODS.length
+                    ? gmmaShortStates.map((state) => state.value)
+                    : [],
+                gmmaLongValues: gmmaLongStates.length === GMMA_LONG_PERIODS.length
+                    ? gmmaLongStates.map((state) => state.value)
+                    : [],
+                multiEmaValues: multiEmaStates.length === MULTI_EMA_PERIODS.length
+                    ? multiEmaStates.map((state) => state.value)
+                    : [],
+            }),
+        );
     }
 
     const dailyKlines = extraKlines?.daily1d || [];
@@ -381,13 +306,9 @@ export function enhanceTickerData(
 
         if (breakoutWindow.length === 21) {
             const breakoutHigh = Math.max(...breakoutWindow.map((kline) => kline.high));
-            if (Number.isFinite(breakoutHigh) && breakoutHigh > 0) {
-                enhanced.breakout21dHigh = breakoutHigh;
-
-                const currentPrice = parseFloat(ticker.lastPrice);
-                if (Number.isFinite(currentPrice)) {
-                    enhanced.breakout21dPercent = ((currentPrice - breakoutHigh) / breakoutHigh) * 100;
-                }
+            const breakoutMetrics = calculateBreakoutMetrics(parseFloat(ticker.lastPrice), breakoutHigh);
+            if (breakoutMetrics) {
+                Object.assign(enhanced, breakoutMetrics);
             }
         }
     }

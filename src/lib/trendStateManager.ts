@@ -1,4 +1,4 @@
-import { DEFAULT_STRATEGY_PARAMETER_CONFIGS, getStrategyParameterConfig } from './strategyParameters.ts';
+import { getStrategyParameterConfig } from './strategyParameters.ts';
 import type { TrendConfirmationRules } from './strategyParameters.ts';
 
 export type TrendDirection = 'long' | 'short';
@@ -44,7 +44,12 @@ export interface TrendStateEvaluation {
     flags: TrendFlags;
 }
 
-export const TREND_CONFIRMATION_RULES = DEFAULT_STRATEGY_PARAMETER_CONFIGS['trend-confirmation'].rules;
+export interface TrendStateStore {
+    evaluate(symbol: string, snapshot: TrendSnapshot): TrendStateEvaluation;
+    clear(): void;
+    snapshot(): Map<string, TrendPhase>;
+    restore(snapshot: Map<string, TrendPhase>): void;
+}
 
 export function getTrendConfirmationRules(): TrendConfirmationRules {
     return getStrategyParameterConfig('trend-confirmation').rules;
@@ -139,7 +144,7 @@ export function buildTrendFlags(snapshot: TrendSnapshot): TrendFlags {
     };
 }
 
-class TrendStateManager {
+export class TrendStateManager implements TrendStateStore {
     private phases = new Map<string, TrendPhase>();
 
     evaluate(symbol: string, snapshot: TrendSnapshot): TrendStateEvaluation {

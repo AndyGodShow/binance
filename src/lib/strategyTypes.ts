@@ -1,7 +1,54 @@
 import type { TickerData } from './types.ts';
 import type { RiskManagement } from './risk/types.ts';
+import type {
+    WeiShenEntryType,
+    WeiShenExecutionMode,
+    WeiShenSignalGrade,
+} from './weiShenTypes.ts';
+import type { DeepPartial, StrategyParameterConfigMap } from './strategyParameters.ts';
+import type { StrategyRuntimeState } from './strategyRuntimeState.ts';
 
 export type StrategySignalStatus = 'active' | 'snapshot' | 'cooling';
+
+export interface StrategyPortfolioState {
+    activeSymbols?: string[];
+    activePositionsBySymbol?: Record<string, {
+        symbol: string;
+        direction: 'long' | 'short';
+        riskPct?: number;
+    }>;
+    consecutiveLosses?: number;
+    dailyDrawdownPct?: number;
+}
+
+export interface StrategyDetectionContext {
+    now?: number;
+    portfolioState?: StrategyPortfolioState;
+    parameterOverrides?: DeepPartial<StrategyParameterConfigMap>;
+    runtimeState?: StrategyRuntimeState;
+}
+
+export interface StrategySignalExplainLayer {
+    passed: boolean;
+    summary: string;
+    reasons: string[];
+    failedReasons: string[];
+}
+
+export interface StrategySignalExplain {
+    marketRegime: StrategySignalExplainLayer;
+    relativeStrength: StrategySignalExplainLayer;
+    entryCheck: StrategySignalExplainLayer;
+    riskPlan: StrategySignalExplainLayer;
+    passed: string[];
+    failed: string[];
+    blockedReasons: string[];
+    suggestedRiskPct: number;
+    stopLossPrice: number;
+    invalidationPrice: number;
+    entryType: WeiShenEntryType;
+    grade: WeiShenSignalGrade;
+}
 
 // 策略接口
 export interface TradingStrategy {
@@ -10,15 +57,13 @@ export interface TradingStrategy {
     description: string;
     category: 'trend' | 'volume' | 'funding' | 'special';
     enabled: boolean;
-    detect: (ticker: TickerData) => StrategySignal | null;
+    detect: (ticker: TickerData, context?: StrategyDetectionContext) => StrategySignal | null;
 }
 
 // 复合策略的子条件
 export interface CompositeCondition {
     name: string;           // 条件名称
     met: boolean;           // 是否满足
-    value?: number;         // 实际值
-    threshold?: number;     // 阈值
     description: string;    // 条件描述
 }
 
@@ -49,9 +94,8 @@ export interface StrategySignal {
 
     // 🔥 风险管理相关
     risk?: RiskManagement;
-}
-
-// 策略配置（预留）
-export interface StrategyConfig {
-    [key: string]: number | boolean | string;
+    grade?: WeiShenSignalGrade;
+    executionMode?: WeiShenExecutionMode;
+    entryType?: WeiShenEntryType;
+    explain?: StrategySignalExplain;
 }

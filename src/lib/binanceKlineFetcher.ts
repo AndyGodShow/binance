@@ -14,6 +14,34 @@ export interface KlineFetchPlanEntry {
 }
 
 const MAX_KLINE_CHUNK_LIMIT = 250;
+const DEFAULT_KLINE_UPSTREAM_CONCURRENCY = 1;
+
+export function createAsyncConcurrencyLimiter(limit: number) {
+    let activeCount = 0;
+    const waitingResolvers: Array<() => void> = [];
+
+    return async function withConcurrencyLimit<T>(task: () => Promise<T>): Promise<T> {
+        if (activeCount >= limit) {
+            await new Promise<void>((resolve) => {
+                waitingResolvers.push(resolve);
+            });
+        }
+
+        activeCount += 1;
+
+        try {
+            return await task();
+        } finally {
+            activeCount -= 1;
+            const next = waitingResolvers.shift();
+            if (next) {
+                next();
+            }
+        }
+    };
+}
+
+const withKlineUpstreamLimit = createAsyncConcurrencyLimiter(DEFAULT_KLINE_UPSTREAM_CONCURRENCY);
 
 export function getKlineIntervalMs(interval: string): number | null {
     const match = interval.match(/^(\d+)([mhdwM])$/);
@@ -97,7 +125,7 @@ export async function fetchBinanceKlines(path: string, options: KlineFetchPlanIn
     const plan = buildKlineFetchPlan(options);
 
     if (plan.length === 1) {
-        const data = await fetchBinanceJson<unknown>(path, { revalidate: 60 });
+        const data = await withKlineUpstreamLimit(() => fetchBinanceJson<unknown>(path, { revalidate: 60 }));
         return Array.isArray(data) ? data : [];
     }
 
@@ -118,9 +146,9 @@ export async function fetchBinanceKlines(path: string, options: KlineFetchPlanIn
         }
 
         const basePath = path.split('?')[0] || path;
-        const data = await fetchBinanceJson<unknown>(`${basePath}?${params.toString()}`, {
+        const data = await withKlineUpstreamLimit(() => fetchBinanceJson<unknown>(`${basePath}?${params.toString()}`, {
             revalidate: 60,
-        });
+        }));
 
         if (Array.isArray(data)) {
             merged.push(...data);

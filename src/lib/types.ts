@@ -1,3 +1,5 @@
+import type { StrategyTickerContexts } from './weiShenTypes.ts';
+
 export interface TickerData {
     symbol: string;
     lastPrice: string;
@@ -107,6 +109,9 @@ export interface TickerData {
 
     // K线数据（用于 ATR/VSA 计算）
     ohlc?: OHLC[];
+
+    // 策略上下文（按策略懒加载，避免把大量临时字段平铺到 ticker 顶层）
+    strategyContexts?: StrategyTickerContexts;
 }
 
 // 🔧 Sortable keys type for table sorting (includes computed fields)

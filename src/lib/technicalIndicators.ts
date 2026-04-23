@@ -10,6 +10,7 @@ import {
 } from './indicators.ts';
 import type { OHLC } from './indicators.ts';
 import { calculateVolumeProfile } from './volumeProfile.ts';
+import { calculateRsrsMetrics } from './rsrs.ts';
 
 /**
  * 从K线数据计算技术指标
@@ -103,97 +104,30 @@ export class TechnicalIndicators {
     }
 
     static calculateRSRS(klines: KlineData[]): Partial<TickerData> | null {
-        if (klines.length < 40) {
+        const metrics = calculateRsrsMetrics(
+            klines.map((kline) => ({
+                high: parseFloat(kline.high),
+                low: parseFloat(kline.low),
+                close: parseFloat(kline.close),
+                volume: parseFloat(kline.volume),
+            })),
+        );
+
+        if (!metrics) {
             return null;
         }
-
-        const highs = klines.map((kline) => parseFloat(kline.high));
-        const lows = klines.map((kline) => parseFloat(kline.low));
-        const closes = klines.map((kline) => parseFloat(kline.close));
-        const volumes = klines.map((kline) => parseFloat(kline.volume));
-
-        const efficiencyRatio = this.calculateEfficiencyRatio(closes, 10);
-        const fastWindow = 12;
-        const slowWindow = 30;
-        const adaptiveWindow = Math.round(slowWindow - (slowWindow - fastWindow) * Math.pow(efficiencyRatio, 2));
-        const windowSize = Math.max(fastWindow, Math.min(slowWindow, adaptiveWindow));
-
-        if (highs.length < windowSize) {
-            return null;
-        }
-
-        const betas: number[] = [];
-        const r2s: number[] = [];
-        const rsrsFinalValues: number[] = [];
-
-        for (let index = windowSize; index < highs.length; index++) {
-            const windowHighs = highs.slice(index - windowSize, index);
-            const windowLows = lows.slice(index - windowSize, index);
-            const windowVolumes = volumes.slice(index - windowSize, index);
-
-            const tlsResult = this.getTLSData(windowLows, windowHighs);
-            const wlsResult = this.getWLSData(windowLows, windowHighs, windowVolumes);
-
-            const hybridBeta = 0.7 * wlsResult.beta + 0.3 * tlsResult.beta;
-            const hybridR2 = Math.max(wlsResult.r2, tlsResult.r2);
-
-            betas.push(hybridBeta);
-            r2s.push(hybridR2);
-        }
-
-        if (betas.length === 0) {
-            return null;
-        }
-
-        const currentBeta = betas[betas.length - 1];
-        const currentR2 = r2s[r2s.length - 1];
-        const historyWindow = 100;
-        const historyBetas = betas.slice(Math.max(0, betas.length - historyWindow - 1), betas.length - 1);
-
-        if (historyBetas.length < 10) {
-            return null;
-        }
-
-        const median = this.calculateMedian(historyBetas);
-        const mad = this.calculateMAD(historyBetas);
-        const robustZScore = mad === 0 ? 0 : 0.6745 * (currentBeta - median) / mad;
-        const correctedZScore = robustZScore * currentR2;
-        const rsrsFinal = correctedZScore * currentBeta;
-
-        for (let index = 0; index < betas.length - 1; index++) {
-            const historicalZScore = mad === 0 ? 0 : 0.6745 * (betas[index] - median) / mad;
-            const historicalCorrectedZScore = historicalZScore * r2s[index];
-            rsrsFinalValues.push(historicalCorrectedZScore * betas[index]);
-        }
-        rsrsFinalValues.push(rsrsFinal);
-
-        let rsrsROC = 0;
-        let rsrsAcceleration = 0;
-        if (rsrsFinalValues.length >= 3) {
-            const current = rsrsFinalValues[rsrsFinalValues.length - 1];
-            const prev = rsrsFinalValues[rsrsFinalValues.length - 2];
-            const prevPrev = rsrsFinalValues[rsrsFinalValues.length - 3];
-
-            rsrsROC = prev !== 0 ? ((current - prev) / Math.abs(prev)) * 100 : 0;
-            const prevROC = prevPrev !== 0 ? ((prev - prevPrev) / Math.abs(prevPrev)) * 100 : 0;
-            rsrsAcceleration = rsrsROC - prevROC;
-        }
-
-        const sortedRsrsFinal = [...rsrsFinalValues].sort((a, b) => a - b);
-        const dynamicLongThreshold = sortedRsrsFinal[Math.floor(sortedRsrsFinal.length * 0.9)] || 0;
-        const dynamicShortThreshold = sortedRsrsFinal[Math.floor(sortedRsrsFinal.length * 0.1)] || 0;
 
         return {
-            rsrs: currentBeta,
-            rsrsZScore: correctedZScore,
-            rsrsFinal,
-            rsrsR2: currentR2,
-            rsrsDynamicLongThreshold: dynamicLongThreshold,
-            rsrsDynamicShortThreshold: dynamicShortThreshold,
-            rsrsROC,
-            rsrsAcceleration,
-            rsrsAdaptiveWindow: windowSize,
-            rsrsMethod: 'VW-TLS + Median/MAD',
+            rsrs: metrics.beta,
+            rsrsZScore: metrics.zScore,
+            rsrsFinal: metrics.rsrsFinal,
+            rsrsR2: metrics.r2,
+            rsrsDynamicLongThreshold: metrics.dynamicLongThreshold,
+            rsrsDynamicShortThreshold: metrics.dynamicShortThreshold,
+            rsrsROC: metrics.rsrsROC,
+            rsrsAcceleration: metrics.rsrsAcceleration,
+            rsrsAdaptiveWindow: metrics.adaptiveWindow,
+            rsrsMethod: metrics.method,
         };
     }
 
@@ -473,110 +407,5 @@ export class TechnicalIndicators {
         const past = parseFloat(klines[currentIndex - periodsBack].close);
 
         return ((current - past) / past) * 100;
-    }
-
-    private static getTLSData(xValues: number[], yValues: number[]): { beta: number; r2: number } {
-        const n = xValues.length;
-        if (n === 0) return { beta: 0, r2: 0 };
-
-        const xMean = xValues.reduce((a, b) => a + b, 0) / n;
-        const yMean = yValues.reduce((a, b) => a + b, 0) / n;
-        const xCentered = xValues.map((x) => x - xMean);
-        const yCentered = yValues.map((y) => y - yMean);
-
-        let sxx = 0;
-        let syy = 0;
-        let sxy = 0;
-
-        for (let index = 0; index < n; index++) {
-            sxx += xCentered[index] * xCentered[index];
-            syy += yCentered[index] * yCentered[index];
-            sxy += xCentered[index] * yCentered[index];
-        }
-
-        const delta = syy - sxx;
-        const discriminant = delta * delta + 4 * sxy * sxy;
-        const beta = sxy === 0 ? 0 : (delta + Math.sqrt(discriminant)) / (2 * sxy);
-        const alpha = yMean - beta * xMean;
-
-        let ssTotal = 0;
-        let ssResidual = 0;
-        for (let index = 0; index < n; index++) {
-            const predicted = alpha + beta * xValues[index];
-            ssResidual += Math.pow(yValues[index] - predicted, 2);
-            ssTotal += Math.pow(yValues[index] - yMean, 2);
-        }
-
-        return {
-            beta,
-            r2: ssTotal === 0 ? 0 : Math.max(0, 1 - (ssResidual / ssTotal)),
-        };
-    }
-
-    private static getWLSData(xValues: number[], yValues: number[], weights: number[]): { beta: number; r2: number } {
-        const n = xValues.length;
-        if (n === 0 || weights.length !== n) return { beta: 0, r2: 0 };
-
-        const totalWeight = weights.reduce((a, b) => a + b, 0);
-        if (totalWeight === 0) return { beta: 0, r2: 0 };
-        const normalizedWeights = weights.map((weight) => weight / totalWeight);
-
-        const xMean = xValues.reduce((sum, value, index) => sum + value * normalizedWeights[index], 0);
-        const yMean = yValues.reduce((sum, value, index) => sum + value * normalizedWeights[index], 0);
-
-        let numerator = 0;
-        let denominator = 0;
-        let ssTotal = 0;
-        let ssResidual = 0;
-
-        for (let index = 0; index < n; index++) {
-            const weight = normalizedWeights[index];
-            numerator += weight * (xValues[index] - xMean) * (yValues[index] - yMean);
-            denominator += weight * Math.pow(xValues[index] - xMean, 2);
-            ssTotal += weight * Math.pow(yValues[index] - yMean, 2);
-        }
-
-        const beta = denominator === 0 ? 0 : numerator / denominator;
-        const alpha = yMean - beta * xMean;
-
-        for (let index = 0; index < n; index++) {
-            const predicted = alpha + beta * xValues[index];
-            ssResidual += normalizedWeights[index] * Math.pow(yValues[index] - predicted, 2);
-        }
-
-        return {
-            beta,
-            r2: ssTotal === 0 ? 0 : Math.max(0, 1 - (ssResidual / ssTotal)),
-        };
-    }
-
-    private static calculateMedian(values: number[]): number {
-        if (values.length === 0) return 0;
-        const sorted = [...values].sort((a, b) => a - b);
-        const mid = Math.floor(sorted.length / 2);
-        return sorted.length % 2 === 0
-            ? (sorted[mid - 1] + sorted[mid]) / 2
-            : sorted[mid];
-    }
-
-    private static calculateMAD(values: number[]): number {
-        if (values.length === 0) return 0;
-        const median = this.calculateMedian(values);
-        const deviations = values.map((value) => Math.abs(value - median));
-        return this.calculateMedian(deviations);
-    }
-
-    private static calculateEfficiencyRatio(closes: number[], period: number = 10): number {
-        if (closes.length < period + 1) return 0.5;
-
-        const recent = closes.slice(-period - 1);
-        const direction = Math.abs(recent[recent.length - 1] - recent[0]);
-        let volatility = 0;
-
-        for (let index = 1; index < recent.length; index++) {
-            volatility += Math.abs(recent[index] - recent[index - 1]);
-        }
-
-        return volatility === 0 ? 1 : direction / volatility;
     }
 }

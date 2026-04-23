@@ -1,20 +1,23 @@
-import type { TradingStrategy, StrategySignal, CompositeCondition } from '../lib/strategyTypes.ts';
+import type { TradingStrategy, StrategySignal, CompositeCondition, StrategyDetectionContext } from '../lib/strategyTypes.ts';
 import type { TickerData } from '../lib/types.ts';
-import { cooldownManager } from '../lib/cooldownManager.ts';
 import { logger } from '../lib/logger.ts';
 import { calculateRiskManagement } from '../lib/risk/riskCalculator.ts';
 import { APP_CONFIG } from '../lib/config.ts';
 import { getStrategyParameterConfig } from '../lib/strategyParameters.ts';
+import { getStrategyRuntimeState } from '../lib/strategyRuntimeState.ts';
+import { toRsrsStrategyInput } from '../lib/strategyInputs.ts';
 
 // 策略参数配置：检查条件并创建条件对象
 function checkCondition(
     name: string,
     description: string,
     met: boolean,
-    value?: number,
-    threshold?: number
+    _value?: number,
+    _threshold?: number,
 ): CompositeCondition {
-    return { name, description, met, value, threshold };
+    void _value;
+    void _threshold;
+    return { name, description, met };
 }
 
 // 🔥 机构级 RSRS 策略：VW-TLS 回归 + 鲁棒统计 + 自适应窗口 + 减速预警
@@ -25,28 +28,30 @@ export const rsrsStrategy: TradingStrategy = {
     category: 'trend',
     enabled: true,
 
-    detect: (ticker: TickerData): StrategySignal | null => {
-        const params = getStrategyParameterConfig('rsrs-trend');
+    detect: (ticker: TickerData, context?: StrategyDetectionContext): StrategySignal | null => {
+        const input = toRsrsStrategyInput(ticker);
+        const params = getStrategyParameterConfig('rsrs-trend', context?.parameterOverrides?.['rsrs-trend']);
+        const runtimeState = getStrategyRuntimeState(context);
         // 冷却期检查
-        if (cooldownManager.check(ticker.symbol, 'rsrs-trend', params.cooldownPeriodMs)) {
+        if (runtimeState.cooldown.check(input.symbol, 'rsrs-trend', params.cooldownPeriodMs)) {
             return null;
         }
 
         // 基础数据检查
-        if (ticker.rsrsFinal === undefined || ticker.rsrs === undefined || ticker.rsrsZScore === undefined) {
+        if (input.rsrsFinal === undefined || input.rsrs === undefined || input.rsrsZScore === undefined) {
             return null;
         }
 
-        const rsrsFinal = ticker.rsrsFinal;
-        const beta = ticker.rsrs;
-        const zScore = ticker.rsrsZScore;
-        const r2 = ticker.rsrsR2 || 0;
-        const rsrsROC = ticker.rsrsROC || 0;
-        const rsrsAcceleration = ticker.rsrsAcceleration || 0;
+        const rsrsFinal = input.rsrsFinal;
+        const beta = input.rsrs;
+        const zScore = input.rsrsZScore;
+        const r2 = input.rsrsR2 || 0;
+        const rsrsROC = input.rsrsROC || 0;
+        const rsrsAcceleration = input.rsrsAcceleration || 0;
 
         // 🔥 使用自适应动态阈值（替代固定阈值）
-        const longThreshold = ticker.rsrsDynamicLongThreshold || 0;
-        const shortThreshold = ticker.rsrsDynamicShortThreshold || 0;
+        const longThreshold = input.rsrsDynamicLongThreshold || 0;
+        const shortThreshold = input.rsrsDynamicShortThreshold || 0;
 
         // 检测多头或空头信号
         const isLongSignal = rsrsFinal > longThreshold;
@@ -82,9 +87,9 @@ export const rsrsStrategy: TradingStrategy = {
         ));
 
         // ========== 条件2: 加权共振验证 ==========
-        const change15m = ticker.change15m || 0;
-        const change1h = ticker.change1h || 0;
-        const change4h = ticker.change4h || 0;
+        const change15m = input.change15m || 0;
+        const change1h = input.change1h || 0;
+        const change4h = input.change4h || 0;
 
         // 加权评分制: 4h(40分) > 1h(30分) > 15m(15分)
         let trendScore = 0;
@@ -113,8 +118,8 @@ export const rsrsStrategy: TradingStrategy = {
         ));
 
         // ========== 条件3: 成交量共振验证 ==========
-        const currentVolume = parseFloat(ticker.volume || '0');
-        const avgVolume = ticker.volumeMA || currentVolume;
+        const currentVolume = parseFloat(input.volume || '0');
+        const avgVolume = input.volumeMA || currentVolume;
         const volumeRatio = avgVolume > 0 ? currentVolume / avgVolume : 1;
 
         const VOLUME_THRESHOLD = params.volumeRatioThreshold;
@@ -129,8 +134,8 @@ export const rsrsStrategy: TradingStrategy = {
         ));
 
         // ========== 条件4: 布林带价格位置过滤 ==========
-        const currentPrice = parseFloat(ticker.lastPrice);
-        const { bollingerUpper, bollingerMid, bollingerLower } = ticker;
+        const currentPrice = parseFloat(input.lastPrice);
+        const { bollingerUpper, bollingerMid, bollingerLower } = input;
 
         let pricePositionCondition = false;
         let pricePositionDesc = '';
@@ -166,13 +171,6 @@ export const rsrsStrategy: TradingStrategy = {
         // 🔥 严格模式: 必须满足全部4个条件
         const REQUIRED_CONDITIONS = 4;
 
-        // The original `conditions` array is already populated above.
-        // The following lines from the instruction seem to be a redefinition or
-        // an attempt to filter/re-evaluate conditions, but without the context
-        // of `resonanceCondition`, `rSquaredCondition`, `rocCondition`, `accelerationCondition`
-        // being defined, they would cause a reference error.
-        // Assuming the intent is to use the `conditions` array already built.
-        // const conditions = [resonanceCondition, rSquaredCondition, rocCondition, accelerationCondition];
         const conditionsMet = conditions.filter(c => c.met).length;
 
         if (params.rejectExtremeDecelerating && decelerationWarning) {
@@ -207,11 +205,11 @@ export const rsrsStrategy: TradingStrategy = {
             }
 
             // 记录信号，启动冷却期
-            cooldownManager.record(ticker.symbol, 'rsrs-trend');
+            runtimeState.cooldown.record(input.symbol, 'rsrs-trend');
             const metConditions = conditions.filter(c => c.met).map(c => c.description);
 
             return {
-                symbol: ticker.symbol,
+                symbol: input.symbol,
                 strategyId: 'rsrs-trend',
                 strategyName: '🎯 RSRS 量化增强',
                 direction,
@@ -241,11 +239,11 @@ export const rsrsStrategy: TradingStrategy = {
                 risk: (() => {
                     try {
                         return calculateRiskManagement('rsrs', {
-                            entryPrice: parseFloat(ticker.lastPrice),
+                            entryPrice: parseFloat(input.lastPrice),
                             direction,
                             confidence: Math.min(params.confidence.maxConfidence, Math.max(0, confidence)),
-                            bollingerLower: ticker.bollingerLower,
-                            bollingerUpper: ticker.bollingerUpper,
+                            bollingerLower: input.bollingerLower,
+                            bollingerUpper: input.bollingerUpper,
                             rsrsZScore: zScore,
                             rsrsR2: r2,
                              // 从全局配置读取风控设置
@@ -253,7 +251,7 @@ export const rsrsStrategy: TradingStrategy = {
                     riskPercentage: APP_CONFIG.RISK.DEFAULT_RISK_PER_TRADE,
                         });
                     } catch (error) {
-                        logger.error('RSRS risk calculation failed', error as Error, { symbol: ticker.symbol });
+                        logger.error('RSRS risk calculation failed', error as Error, { symbol: input.symbol });
                         return undefined;
                     }
                 })()

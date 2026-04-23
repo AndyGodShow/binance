@@ -12,11 +12,30 @@ import { calculateRiskManagement } from '@/lib/risk/riskCalculator';
 import { applyRiskConfigOverrides } from '@/lib/risk/overrideRiskManagement';
 import { buildHistoricalTickerOverrides, getRequiredHistoricalIntervals } from '@/lib/historicalMultiTimeframe';
 import { buildBacktestDiagnostics, BacktestDiagnostics } from '@/lib/backtestDiagnostics';
+import { runBacktestHistoryPreflight, type BacktestHistoryPreflightReport } from '@/lib/backtestHistoryPreflight';
 import { runPortfolioBacktest, PortfolioBacktestResult } from '@/lib/portfolioBacktestEngine';
+import { createStrategyRuntimeState } from '@/lib/strategyRuntimeState';
+import {
+    WEI_SHEN_UNIVERSE,
+    filterWeiShenUniverseSymbols,
+    getDefaultUniverseForStrategy,
+} from '@/lib/weiShenUniverse';
+import {
+    isWeiShenStrategy,
+    resolveStrategyIntervalsWithOverrides,
+} from '@/lib/weiShenStrategy';
+import { buildBacktestValidationStageRequest } from '@/lib/backtestValidationPlanner';
+import { shouldDeferBacktestValidationFailure } from '@/lib/backtestValidation';
 import DataQualityCard from './DataQualityCard';
 import RiskConfigPanel from './RiskConfigPanel';
+import StrategyParameterPanel from './StrategyParameterPanel';
 import { EquityCurveChart, DrawdownChart, ProfitDistributionChart, HoldingTimeChart } from './BacktestCharts';
 import styles from './BacktestPanel.module.css';
+import type {
+    DeepPartial,
+    StrategyId,
+    StrategyParameterConfigMap,
+} from '@/lib/strategyParameters';
 
 type PresetRange = '1d' | '7d' | '30d' | '90d' | '180d' | '1y';
 type SymbolSource = 'top' | 'range' | 'custom';
@@ -48,6 +67,7 @@ interface BacktestRunDetail {
     result: BacktestResult;
     diagnostics: BacktestDiagnostics;
     dataQuality: DataQualityMetrics;
+    preflight: BacktestHistoryPreflightReport;
 }
 
 interface BatchBacktestItem {
@@ -69,6 +89,14 @@ interface BacktestTaskResult {
 interface SymbolValidationResult {
     supportedSymbols: string[];
     skippedSymbols: string[];
+}
+
+interface SymbolValidationProgress {
+    symbol: string;
+    completed: number;
+    total: number;
+    supportedCount: number;
+    skippedCount: number;
 }
 
 interface BacktestValidationStage {
@@ -204,21 +232,31 @@ function parseCustomSymbols(input: string): string[] {
     );
 }
 
+function resolveStrategyBacktestIntervalsWithOverrides(
+    strategyId: string,
+    signalInterval: string,
+    executionSelection: ExecutionIntervalOption,
+    parameterOverrides?: DeepPartial<StrategyParameterConfigMap>,
+) {
+    return resolveStrategyIntervalsWithOverrides({
+        strategyId,
+        signalInterval,
+        executionInterval: resolveExecutionInterval(executionSelection, signalInterval),
+        parameterOverrides,
+    });
+}
+
 function isBacktestSymbolCandidate(symbol: string): boolean {
     return /^[A-Z0-9]+USDT$/.test(symbol);
 }
 
 function buildBacktestValidationUrl(symbol: string, stage: BacktestValidationStage): string {
-    const params = new URLSearchParams({
+    return buildBacktestValidationStageRequest({
         symbol,
         interval: stage.interval,
-        startTime: stage.startTime.toString(),
-        endTime: stage.endTime.toString(),
-        limit: BACKTEST_VALIDATION_LIMIT.toString(),
-        includeAuxiliary: 'false',
-    });
-
-    return `/api/backtest/klines?${params.toString()}`;
+        startTime: stage.startTime,
+        endTime: stage.endTime,
+    }).url;
 }
 
 function estimateStageMinCount(startTime: number, endTime: number, interval: string, fallbackMinimum: number): number {
@@ -308,13 +346,20 @@ function buildBacktestValidationStages(params: {
     preset: PresetRange;
     signalInterval: string;
     executionSelection: ExecutionIntervalOption;
+    parameterOverrides?: DeepPartial<StrategyParameterConfigMap>;
 }): BacktestValidationStage[] {
+    const resolvedIntervals = resolveStrategyBacktestIntervalsWithOverrides(
+        params.strategyId,
+        params.signalInterval,
+        params.executionSelection,
+        params.parameterOverrides,
+    );
     const { startTime, endTime } = HistoricalDataFetcher.getPresetRange(params.preset);
-    const stages = buildSignalValidationStages(params.signalInterval, startTime, endTime);
+    const stages = buildSignalValidationStages(resolvedIntervals.signalInterval, startTime, endTime);
     const lookbackStartTime = Math.max(0, startTime - HISTORICAL_LOOKBACK_BUFFER_MS);
 
     getRequiredHistoricalIntervals(params.strategyId)
-        .filter((interval) => interval !== params.signalInterval)
+        .filter((interval) => interval !== resolvedIntervals.signalInterval)
         .forEach((interval) => {
             stages.push({
                 name: `mtf-${interval}`,
@@ -329,9 +374,8 @@ function buildBacktestValidationStages(params: {
             });
         });
 
-    const resolvedExecutionInterval = resolveExecutionInterval(params.executionSelection, params.signalInterval);
-    if (resolvedExecutionInterval !== params.signalInterval) {
-        stages.push(...buildExecutionValidationStages(resolvedExecutionInterval, startTime, endTime));
+    if (resolvedIntervals.executionInterval !== resolvedIntervals.signalInterval) {
+        stages.push(...buildExecutionValidationStages(resolvedIntervals.executionInterval, startTime, endTime));
     }
 
     return stages;
@@ -352,12 +396,18 @@ async function probeBacktestValidationStage(symbol: string, stage: BacktestValid
                 return count >= stage.minCount;
             }
 
+            if (shouldDeferBacktestValidationFailure(response.status, payload)) {
+                return true;
+            }
+
             if (!isRetryableValidationStatus(response.status) || attempt === 2) {
                 return false;
             }
         } catch {
             if (attempt === 2) {
-                return false;
+                // Network jitter during batch preflight should not block the whole batch.
+                // The actual backtest run still performs stricter per-symbol data checks.
+                return true;
             }
         }
 
@@ -491,17 +541,26 @@ async function validateBacktestSymbols(
         preset: PresetRange;
         signalInterval: string;
         executionSelection: ExecutionIntervalOption;
+        parameterOverrides?: DeepPartial<StrategyParameterConfigMap>;
+        onProgress?: (progress: SymbolValidationProgress) => void;
     }
 ): Promise<SymbolValidationResult> {
-    const uniqueCandidates = Array.from(new Set(symbols.map((symbol) => symbol.trim().toUpperCase())))
+    const normalizedSymbols = Array.from(new Set(symbols.map((symbol) => symbol.trim().toUpperCase())))
         .filter(Boolean)
         .filter(isBacktestSymbolCandidate);
+    const strategyUniverse = getDefaultUniverseForStrategy(options.strategyId);
+    const uniqueCandidates = strategyUniverse
+        ? filterWeiShenUniverseSymbols(normalizedSymbols)
+        : normalizedSymbols;
 
     const invalidSymbols = symbols
         .map((symbol) => symbol.trim().toUpperCase())
-        .filter((symbol) => symbol && !isBacktestSymbolCandidate(symbol));
+        .filter((symbol) => symbol && (!isBacktestSymbolCandidate(symbol) || (strategyUniverse ? !WEI_SHEN_UNIVERSE.includes(symbol as (typeof WEI_SHEN_UNIVERSE)[number]) : false)));
 
     const validationStages = buildBacktestValidationStages(options);
+    let completedCount = 0;
+    let supportedCount = 0;
+    let skippedCount = 0;
 
     const probeResults = await runWithConcurrency(
         uniqueCandidates,
@@ -510,13 +569,33 @@ async function validateBacktestSymbols(
             for (const stage of validationStages) {
                 const ok = await probeBacktestValidationStage(symbol, stage);
                 if (!ok) {
+                    completedCount += 1;
+                    skippedCount += 1;
+                    options.onProgress?.({
+                        symbol,
+                        completed: completedCount,
+                        total: uniqueCandidates.length,
+                        supportedCount,
+                        skippedCount,
+                    });
                     return {
                         symbol,
                         ok: false,
                     };
                 }
+
+                await new Promise((resolve) => setTimeout(resolve, 80));
             }
 
+            completedCount += 1;
+            supportedCount += 1;
+            options.onProgress?.({
+                symbol,
+                completed: completedCount,
+                total: uniqueCandidates.length,
+                supportedCount,
+                skippedCount,
+            });
             return {
                 symbol,
                 ok: true,
@@ -550,6 +629,7 @@ export default function BacktestPanel() {
     const [customSymbols, setCustomSymbols] = useState('BTCUSDT,ETHUSDT,SOLUSDT');
     const [maxConcurrentPositions, setMaxConcurrentPositions] = useState(3);
     const [positionSizePercent, setPositionSizePercent] = useState(30);
+    const [strategyParameterOverrides, setStrategyParameterOverrides] = useState<DeepPartial<StrategyParameterConfigMap>>({});
 
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -566,8 +646,22 @@ export default function BacktestPanel() {
 
     const strategies = strategyRegistry.getAll();
     const executionOptions = getExecutionOptions(interval);
+    const selectedStrategyId = selectedStrategy as StrategyId | '';
 
     const resolveSymbols = async () => {
+        const strategyUniverse = getDefaultUniverseForStrategy(selectedStrategy);
+        if (strategyUniverse) {
+            if (symbolSource === 'custom') {
+                const filtered = filterWeiShenUniverseSymbols(parseCustomSymbols(customSymbols));
+                if (filtered.length === 0) {
+                    throw new Error('魏神策略只允许 BTCUSDT / ETHUSDT / SOLUSDT / XRPUSDT / DOGEUSDT');
+                }
+                return filtered;
+            }
+
+            return [...strategyUniverse];
+        }
+
         if (symbolSource === 'range') {
             const start = Math.max(1, Math.floor(rangeStart));
             const end = Math.max(start, Math.floor(rangeEnd));
@@ -606,8 +700,13 @@ export default function BacktestPanel() {
             throw new Error('策略不存在');
         }
 
+        const { signalInterval: resolvedSignalInterval, executionInterval: resolvedExecutionInterval } = resolveStrategyBacktestIntervalsWithOverrides(
+            strategyId,
+            activeInterval,
+            activeExecutionSelection,
+            strategyParameterOverrides,
+        );
         const { startTime, endTime } = HistoricalDataFetcher.getPresetRange(activePreset);
-        const resolvedExecutionInterval = resolveExecutionInterval(activeExecutionSelection, activeInterval);
         const daysDiff = (endTime - startTime) / DAY_MS;
         const archiveDateRange = getArchiveDateRange(startTime, endTime);
         const normalizedSymbol = symbol.trim().toUpperCase();
@@ -645,10 +744,27 @@ export default function BacktestPanel() {
 
         const klines = await historicalDataFetcher.fetchRangeData(
             normalizedSymbol,
-            activeInterval,
+            resolvedSignalInterval,
             startTime,
             endTime
         );
+
+        const preflight = await runBacktestHistoryPreflight({
+            dataFetcher: historicalDataFetcher,
+            strategyId,
+            symbol: normalizedSymbol,
+            startTime,
+            endTime,
+            signalInterval: resolvedSignalInterval,
+            executionInterval: resolvedExecutionInterval,
+            parameterOverrides: strategyParameterOverrides,
+        });
+
+        if (!preflight.passed) {
+            throw new Error(
+                `历史数据 preflight 未通过：${preflight.reasons[0] || `${normalizedSymbol} 关键周期覆盖不足`}`,
+            );
+        }
 
         if (klines.length === 0) {
             throw new Error('未获取到历史数据');
@@ -664,8 +780,9 @@ export default function BacktestPanel() {
             symbol: normalizedSymbol,
             startTime,
             endTime,
-            baseInterval: activeInterval,
+            baseInterval: resolvedSignalInterval,
             baseKlines: klines,
+            parameterOverrides: strategyParameterOverrides,
             fetchRangeData: (nextSymbol, nextInterval, nextStartTime, nextEndTime) =>
                 historicalDataFetcher.fetchRangeData(nextSymbol, nextInterval, nextStartTime, nextEndTime, {
                     includeAuxiliary: false,
@@ -681,6 +798,7 @@ export default function BacktestPanel() {
 
         const engine = new BacktestEngine(config);
         const activeRiskConfig = riskConfig;
+        const runtimeState = createStrategyRuntimeState();
 
         const result = await engine.run({
             signalKlines: klines,
@@ -689,13 +807,24 @@ export default function BacktestPanel() {
                     ? { ...ticker, ...historicalTickerOverrides.get(ticker.closeTime) }
                     : ticker;
 
-                const signal = strategy.detect(enrichedTicker);
-                if (!signal) return null;
+                const signal = strategy.detect(enrichedTicker, {
+                    now: ticker.closeTime,
+                    runtimeState,
+                    parameterOverrides: strategyParameterOverrides,
+                });
+                if (!signal || signal.executionMode === 'observe') return null;
 
-                const baseRisk = signal.risk || calculateRiskManagement(
-                    strategy.id,
-                    buildRiskCalculationParams(enrichedTicker, signal.direction, signal.confidence, initialCapital)
+                const baseRisk = signal.risk || (
+                    isWeiShenStrategy(strategy.id)
+                        ? undefined
+                        : calculateRiskManagement(
+                            strategy.id,
+                            buildRiskCalculationParams(enrichedTicker, signal.direction, signal.confidence, initialCapital),
+                        )
                 );
+                if (!baseRisk) {
+                    return null;
+                }
 
                 const effectiveRisk = applyRiskConfigOverrides({
                     strategyId: strategy.id,
@@ -713,10 +842,10 @@ export default function BacktestPanel() {
             },
             strategyName: strategy.name,
             symbol: normalizedSymbol,
-            signalInterval: activeInterval,
+            signalInterval: resolvedSignalInterval,
             executionInterval: resolvedExecutionInterval,
             simulationEndTime: endTime,
-            fetchExecutionKlines: resolvedExecutionInterval === activeInterval
+            fetchExecutionKlines: resolvedExecutionInterval === resolvedSignalInterval
                 ? undefined
                 : (nextStartTime, nextEndTime) => historicalDataFetcher.fetchRangeData(
                     normalizedSymbol,
@@ -729,7 +858,7 @@ export default function BacktestPanel() {
 
         const diagnostics = buildBacktestDiagnostics({
             strategyId: strategy.id,
-            interval: activeInterval,
+            interval: resolvedSignalInterval,
             executionInterval: resolvedExecutionInterval,
             requestedDays: daysDiff,
             dataQuality,
@@ -741,6 +870,7 @@ export default function BacktestPanel() {
             result,
             diagnostics,
             dataQuality,
+            preflight,
         };
     };
 
@@ -772,6 +902,15 @@ export default function BacktestPanel() {
                 preset,
                 signalInterval: interval,
                 executionSelection: executionInterval,
+                parameterOverrides: strategyParameterOverrides,
+                onProgress: ({ symbol, completed, total, supportedCount, skippedCount }) => {
+                    setDownloadStatus(
+                        `🔎 正在检查历史回测可用性：${completed}/${total}，最近完成 ${symbol}` +
+                        `，当前可回测 ${supportedCount}` +
+                        (skippedCount > 0 ? `，跳过 ${skippedCount}` : '') +
+                        '...'
+                    );
+                },
             });
             if (supportedSymbols.length === 0) {
                 throw new Error('所选币池都无法通过历史数据校验，请缩小范围或改用自定义币种。');
@@ -832,6 +971,8 @@ export default function BacktestPanel() {
                     initialCapital,
                     maxConcurrentPositions,
                     positionSizePercent,
+                    strategyId: selectedStrategy,
+                    parameterOverrides: strategyParameterOverrides,
                 }
             );
             setAllRuns(sortedRuns);
@@ -1088,6 +1229,26 @@ export default function BacktestPanel() {
                         </div>
                     </div>
                 </div>
+
+                {selectedStrategy && (
+                    <StrategyParameterPanel
+                        key={selectedStrategy}
+                        strategyId={selectedStrategy as StrategyId}
+                        overrideValue={selectedStrategyId ? strategyParameterOverrides[selectedStrategyId] : undefined}
+                        onChange={(value) => {
+                            const strategyId = selectedStrategy as StrategyId;
+                            setStrategyParameterOverrides((prev) => {
+                                const next = { ...prev };
+                                if (value) {
+                                    next[strategyId] = value;
+                                } else {
+                                    delete next[strategyId];
+                                }
+                                return next;
+                            });
+                        }}
+                    />
+                )}
 
                 {selectedStrategy && (
                     <RiskConfigPanel

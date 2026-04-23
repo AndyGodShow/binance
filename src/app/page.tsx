@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useMemo, useEffect, useCallback, useDeferredValue, useRef } from 'react';
-import { OpenInterestFrameSnapshot, TickerData } from '@/lib/types';
+import { useState, useMemo, useEffect, useCallback, useDeferredValue } from 'react';
+import { TickerData } from '@/lib/types';
 import { usePageVisibility } from '@/hooks/usePageVisibility';
 import { usePersistentSWR } from '@/hooks/usePersistentSWR';
+import { useProgressiveTimedPayload } from '@/hooks/useProgressiveTimedPayload';
 import Dashboard from '@/components/Dashboard';
 import StrategyCenter from '@/components/StrategyCenter';
 import SimulatedTrading from '@/components/SimulatedTrading';
@@ -19,6 +20,18 @@ import { useStrategyScanner } from '@/hooks/useStrategyScanner';
 import { useWatchlists } from '@/hooks/useWatchlists';
 import { formatPrice } from '@/lib/risk/priceUtils';
 import { StrategySignal } from '@/lib/strategyTypes';
+import {
+  isHeavyMarketPayloadFresh,
+  isTimedPayloadFresh,
+  mergeBaseAndHeavyMarketData,
+  mergeLightMarketOpenInterest,
+  normalizeTickerUniverse,
+  parseOptionalSeconds,
+  type MultiFrameDataMap,
+  type OpenInterestFrameDataMap,
+  type RsrsDataMap,
+  type TimedPayload,
+} from '@/lib/liveMarketData';
 
 type AppTab = 'dashboard' | 'leaderboard' | 'macro' | 'news' | 'watchlists' | 'longshort' | 'onchain' | 'strategies' | 'trading';
 
@@ -73,31 +86,6 @@ function createDemoSignals(now: number): StrategySignal[] {
   ];
 }
 
-type MultiFrameDataMap = Record<string, { o15m: number; o1h: number; o4h: number }>;
-type OpenInterestFrameDataMap = Record<string, OpenInterestFrameSnapshot>;
-type RsrsDataMap = Record<string, {
-  beta: number;
-  zScore: number;
-  r2: number;
-  rsrsFinal: number;
-  dynamicLongThreshold: number;
-  dynamicShortThreshold: number;
-  bollingerUpper: number;
-  bollingerMid: number;
-  bollingerLower: number;
-  volumeMA: number;
-  rsrsROC: number;
-  rsrsAcceleration: number;
-  adaptiveWindow: number;
-  method: string;
-}>;
-type TimedPayload<T> = {
-  data: T;
-  fetchedAt: number;
-  cacheAgeSeconds?: number;
-  dataSource?: string;
-};
-
 const MAX_STRATEGY_MARKET_DATA_AGE_MS = 5 * 60 * 1000;
 const MAX_STRATEGY_FRAME_DATA_AGE_SECONDS = 20 * 60;
 const MAX_STRATEGY_RSRS_DATA_AGE_SECONDS = 6 * 60 * 60;
@@ -107,122 +95,24 @@ const OI_MULTIFRAME_BATCH_SIZE = 40;
 const OI_MULTIFRAME_BATCH_DELAY_MS = 140;
 const DEMO_BASE_TIME = Date.UTC(2026, 3, 10, 10, 30, 0);
 
-function parseOptionalSeconds(value: string | null): number | undefined {
-  if (!value) {
-    return undefined;
-  }
-
-  const parsed = Number.parseInt(value, 10);
-  return Number.isFinite(parsed) ? parsed : undefined;
-}
-
-function getLatestCloseTime(data: TickerData[] | undefined): number | undefined {
-  if (!data || data.length === 0) {
-    return undefined;
-  }
-
-  let latestCloseTime = 0;
-  data.forEach((ticker) => {
-    if (Number.isFinite(ticker.closeTime) && ticker.closeTime > latestCloseTime) {
-      latestCloseTime = ticker.closeTime;
-    }
-  });
-
-  return latestCloseTime > 0 ? latestCloseTime : undefined;
-}
-
-function isTimedPayloadFresh(payload: TimedPayload<unknown> | undefined, maxAgeSeconds: number): boolean {
-  if (!payload) {
-    return false;
-  }
-
-  if (payload.cacheAgeSeconds !== undefined) {
-    return payload.cacheAgeSeconds <= maxAgeSeconds;
-  }
-
-  return (Date.now() - payload.fetchedAt) <= maxAgeSeconds * 1000;
-}
-
-function isHeavyMarketPayloadFresh(payload: TimedPayload<TickerData[]> | undefined): boolean {
-  if (!payload || !Array.isArray(payload.data) || payload.data.length === 0) {
-    return false;
-  }
-
-  if (payload.cacheAgeSeconds !== undefined && payload.cacheAgeSeconds > MAX_STRATEGY_MARKET_DATA_AGE_MS / 1000) {
-    return false;
-  }
-
-  const latestCloseTime = getLatestCloseTime(payload.data);
-  if (latestCloseTime !== undefined) {
-    return (Date.now() - latestCloseTime) <= MAX_STRATEGY_MARKET_DATA_AGE_MS;
-  }
-
-  return (Date.now() - payload.fetchedAt) <= MAX_STRATEGY_MARKET_DATA_AGE_MS;
-}
-
-function enrichTickerWithDeferredData(
-  ticker: TickerData,
-  frameData?: MultiFrameDataMap,
-  rsrsData?: RsrsDataMap
-): TickerData {
-  const nextTicker = { ...ticker };
-  const valuationPrice = parseFloat(ticker.markPrice || ticker.lastPrice);
-  const price = parseFloat(ticker.lastPrice);
-
-  if (!Number.isFinite(price)) {
-    return nextTicker;
-  }
-
-  if ((!nextTicker.openInterestValue || nextTicker.openInterestValue === '0') && nextTicker.openInterest && Number.isFinite(valuationPrice)) {
-    nextTicker.openInterestValue = (parseFloat(nextTicker.openInterest) * valuationPrice).toString();
-  }
-
-  if (frameData) {
-    const frame = frameData[ticker.symbol];
-    if (frame) {
-      nextTicker.change15m = frame.o15m ? ((price - frame.o15m) / frame.o15m) * 100 : 0;
-      nextTicker.change1h = frame.o1h ? ((price - frame.o1h) / frame.o1h) * 100 : 0;
-      nextTicker.change4h = frame.o4h ? ((price - frame.o4h) / frame.o4h) * 100 : 0;
-    }
-  }
-
-  if (rsrsData && rsrsData[ticker.symbol]) {
-    const rsrs = rsrsData[ticker.symbol];
-    nextTicker.rsrs = rsrs.beta;
-    nextTicker.rsrsZScore = rsrs.zScore;
-    nextTicker.rsrsFinal = rsrs.rsrsFinal;
-    nextTicker.rsrsR2 = rsrs.r2;
-    nextTicker.rsrsDynamicLongThreshold = rsrs.dynamicLongThreshold;
-    nextTicker.rsrsDynamicShortThreshold = rsrs.dynamicShortThreshold;
-    nextTicker.bollingerUpper = rsrs.bollingerUpper;
-    nextTicker.bollingerMid = rsrs.bollingerMid;
-    nextTicker.bollingerLower = rsrs.bollingerLower;
-    nextTicker.volumeMA = rsrs.volumeMA;
-    nextTicker.rsrsROC = rsrs.rsrsROC;
-    nextTicker.rsrsAcceleration = rsrs.rsrsAcceleration;
-    nextTicker.rsrsAdaptiveWindow = rsrs.adaptiveWindow;
-    nextTicker.rsrsMethod = rsrs.method;
-  }
-
-  return nextTicker;
-}
-
-const fetcher = async (url: string) => {
+async function fetcher<T>(url: string): Promise<T> {
   const res = await fetch(url);
+  return readSuccessfulJson(res);
+}
+
+async function readSuccessfulJson<T>(res: Response): Promise<T> {
   if (!res.ok) {
     throw new Error('Failed to fetch data: ' + res.status);
   }
-  return res.json();
-};
+
+  return res.json() as Promise<T>;
+}
 
 async function fetcherWithMeta<T>(url: string): Promise<TimedPayload<T>> {
   const res = await fetch(url);
-  if (!res.ok) {
-    throw new Error('Failed to fetch data: ' + res.status);
-  }
 
   return {
-    data: await res.json() as T,
+    data: await readSuccessfulJson<T>(res),
     fetchedAt: Date.now(),
     cacheAgeSeconds: parseOptionalSeconds(res.headers.get('X-Cache-Age-Seconds')),
     dataSource: res.headers.get('X-Data-Source') || undefined,
@@ -235,11 +125,6 @@ export default function Home() {
   const isPageVisible = usePageVisibility();
   const [enableHeavyMarket, setEnableHeavyMarket] = useState(false);
   const [enableDeferredIndicators, setEnableDeferredIndicators] = useState(false);
-  const [framePayload, setFramePayload] = useState<TimedPayload<MultiFrameDataMap>>();
-  const [frameError, setFrameError] = useState<Error | null>(null);
-  const [oiFramePayload, setOiFramePayload] = useState<TimedPayload<OpenInterestFrameDataMap>>();
-  const [oiFrameError, setOiFrameError] = useState<Error | null>(null);
-  const multiframeSymbolsRef = useRef<string[]>([]);
   const [isDemoMode, setIsDemoMode] = useState(false);
   const {
     watchlists,
@@ -273,7 +158,7 @@ export default function Home() {
 
   const { data: lightMarketData, error: marketError, isLoading: marketLoading } = usePersistentSWR<TickerData[]>(
     shouldRunLiveMarketRequests ? '/api/market/light' : null,
-    shouldRunLiveMarketRequests ? fetcher : null,
+    shouldRunLiveMarketRequests ? ((url: string) => fetcher<TickerData[]>(url)) : null,
     {
     refreshInterval: fastMarketRefreshInterval,
     revalidateOnFocus: false,
@@ -285,7 +170,7 @@ export default function Home() {
 
   const { data: openInterestData } = usePersistentSWR<Record<string, string>>(
     shouldRunLiveMarketRequests ? '/api/oi/all' : null,
-    shouldRunLiveMarketRequests ? fetcher : null,
+    shouldRunLiveMarketRequests ? ((url: string) => fetcher<Record<string, string>>(url)) : null,
     {
     refreshInterval: isPageVisible ? 30000 : 300000,
     revalidateOnFocus: false,
@@ -321,11 +206,6 @@ export default function Home() {
     }
   );
 
-  const heavyMarketData = heavyMarketPayload?.data;
-  const frameData = framePayload?.data;
-  const oiFrameData = oiFramePayload?.data;
-  const rsrsData = rsrsPayload?.data;
-
   const multiframeSymbols = useMemo(() => {
     if (!lightMarketData || lightMarketData.length === 0) {
       return [];
@@ -340,6 +220,63 @@ export default function Home() {
     () => [...multiframeSymbols].sort().join(','),
     [multiframeSymbols]
   );
+
+  const fetchMultiframeBatch = useCallback(
+    (symbols: string[]) => fetcherWithMeta<MultiFrameDataMap>(
+      `/api/market/multiframe?symbols=${encodeURIComponent(symbols.join(','))}`
+    ),
+    []
+  );
+
+  const buildMultiframeError = useCallback(
+    (error: unknown) => error instanceof Error ? error : new Error('Failed to fetch multiframe batch'),
+    []
+  );
+
+  const fetchOiMultiframeBatch = useCallback(
+    (symbols: string[]) => fetcherWithMeta<OpenInterestFrameDataMap>(
+      `/api/oi/multiframe?symbols=${encodeURIComponent(symbols.join(','))}`
+    ),
+    []
+  );
+
+  const buildOiMultiframeError = useCallback(
+    (error: unknown) => error instanceof Error ? error : new Error('Failed to fetch OI multiframe batch'),
+    []
+  );
+
+  const {
+    payload: framePayload,
+    error: frameError,
+    setError: setFrameError,
+  } = useProgressiveTimedPayload({
+    enabled: shouldRunLiveMarketRequests && enableDeferredIndicators && Boolean(multiframeSignature),
+    symbols: multiframeSymbols,
+    batchSize: MULTIFRAME_BATCH_SIZE,
+    batchDelayMs: MULTIFRAME_BATCH_DELAY_MS,
+    refreshIntervalMs: multiframeRefreshInterval,
+    fetchBatch: fetchMultiframeBatch,
+    buildError: buildMultiframeError,
+  });
+
+  const {
+    payload: oiFramePayload,
+    error: oiFrameError,
+    setError: setOiFrameError,
+  } = useProgressiveTimedPayload({
+    enabled: shouldRunLeaderboardRequests && Boolean(multiframeSignature),
+    symbols: multiframeSymbols,
+    batchSize: OI_MULTIFRAME_BATCH_SIZE,
+    batchDelayMs: OI_MULTIFRAME_BATCH_DELAY_MS,
+    refreshIntervalMs: oiMultiframeRefreshInterval,
+    fetchBatch: fetchOiMultiframeBatch,
+    buildError: buildOiMultiframeError,
+  });
+
+  const heavyMarketData = heavyMarketPayload?.data;
+  const frameData = framePayload?.data;
+  const oiFrameData = oiFramePayload?.data;
+  const rsrsData = rsrsPayload?.data;
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -370,10 +307,6 @@ export default function Home() {
   }, [activeTab]);
 
   useEffect(() => {
-    multiframeSymbolsRef.current = multiframeSymbols;
-  }, [multiframeSymbols]);
-
-  useEffect(() => {
     if (!shouldRunLiveMarketRequests || !lightMarketData || lightMarketData.length === 0 || (enableHeavyMarket && enableDeferredIndicators)) {
       return;
     }
@@ -395,7 +328,7 @@ export default function Home() {
     setEnableDeferredIndicators(false);
     setFrameError(null);
     setOiFrameError(null);
-  }, [shouldRunLiveMarketRequests]);
+  }, [setFrameError, setOiFrameError, shouldRunLiveMarketRequests]);
 
   useEffect(() => {
     if (shouldRunLeaderboardRequests) {
@@ -403,281 +336,36 @@ export default function Home() {
     }
 
     setOiFrameError(null);
-  }, [shouldRunLeaderboardRequests]);
+  }, [setOiFrameError, shouldRunLeaderboardRequests]);
 
-  useEffect(() => {
-    if (!shouldRunLiveMarketRequests || !enableDeferredIndicators || !multiframeSignature) {
-      return;
-    }
+  const baseMarketData = useMemo(
+    () => mergeLightMarketOpenInterest(lightMarketData, openInterestData),
+    [lightMarketData, openInterestData]
+  );
 
-    let cancelled = false;
-    let nextRefreshTimer: number | undefined;
-
-    const activeSymbolSet = new Set(multiframeSymbolsRef.current);
-    setFramePayload((prev) => {
-      if (!prev) {
-        return prev;
-      }
-
-      const prunedData = Object.fromEntries(
-        Object.entries(prev.data).filter(([symbol]) => activeSymbolSet.has(symbol))
-      );
-
-      if (Object.keys(prunedData).length === Object.keys(prev.data).length) {
-        return prev;
-      }
-
-      return {
-        ...prev,
-        data: prunedData,
-      };
-    });
-
-    const runProgressiveFetch = async () => {
-      setFrameError(null);
-
-      const symbols = multiframeSymbolsRef.current;
-
-      for (let index = 0; index < symbols.length; index += MULTIFRAME_BATCH_SIZE) {
-        if (cancelled) {
-          return;
-        }
-
-        const batch = symbols.slice(index, index + MULTIFRAME_BATCH_SIZE);
-
-        try {
-          const payload = await fetcherWithMeta<MultiFrameDataMap>(
-            `/api/market/multiframe?symbols=${encodeURIComponent(batch.join(','))}`
-          );
-
-          if (cancelled) {
-            return;
-          }
-
-          setFramePayload((prev) => ({
-            data: {
-              ...(prev?.data || {}),
-              ...payload.data,
-            },
-            fetchedAt: Date.now(),
-            dataSource: 'client-batched',
-          }));
-        } catch (error) {
-          if (!cancelled) {
-            setFrameError(error instanceof Error ? error : new Error('Failed to fetch multiframe batch'));
-          }
-        }
-
-        if (index + MULTIFRAME_BATCH_SIZE < symbols.length) {
-          await new Promise((resolve) => window.setTimeout(resolve, MULTIFRAME_BATCH_DELAY_MS));
-        }
-      }
-
-      if (!cancelled) {
-        nextRefreshTimer = window.setTimeout(runProgressiveFetch, multiframeRefreshInterval);
-      }
-    };
-
-    void runProgressiveFetch();
-
-    return () => {
-      cancelled = true;
-      if (nextRefreshTimer !== undefined) {
-        window.clearTimeout(nextRefreshTimer);
-      }
-    };
-  }, [enableDeferredIndicators, multiframeRefreshInterval, multiframeSignature, shouldRunLiveMarketRequests]);
-
-  useEffect(() => {
-    if (!shouldRunLeaderboardRequests || !multiframeSignature) {
-      return;
-    }
-
-    let cancelled = false;
-    let nextRefreshTimer: number | undefined;
-
-    const activeSymbolSet = new Set(multiframeSymbolsRef.current);
-    setOiFramePayload((prev) => {
-      if (!prev) {
-        return prev;
-      }
-
-      const prunedData = Object.fromEntries(
-        Object.entries(prev.data).filter(([symbol]) => activeSymbolSet.has(symbol))
-      );
-
-      if (Object.keys(prunedData).length === Object.keys(prev.data).length) {
-        return prev;
-      }
-
-      return {
-        ...prev,
-        data: prunedData,
-      };
-    });
-
-    const runProgressiveFetch = async () => {
-      setOiFrameError(null);
-
-      const symbols = multiframeSymbolsRef.current;
-
-      for (let index = 0; index < symbols.length; index += OI_MULTIFRAME_BATCH_SIZE) {
-        if (cancelled) {
-          return;
-        }
-
-        const batch = symbols.slice(index, index + OI_MULTIFRAME_BATCH_SIZE);
-
-        try {
-          const payload = await fetcherWithMeta<OpenInterestFrameDataMap>(
-            `/api/oi/multiframe?symbols=${encodeURIComponent(batch.join(','))}`
-          );
-
-          if (cancelled) {
-            return;
-          }
-
-          setOiFramePayload((prev) => ({
-            data: {
-              ...(prev?.data || {}),
-              ...payload.data,
-            },
-            fetchedAt: Date.now(),
-            dataSource: 'client-batched',
-          }));
-        } catch (error) {
-          if (!cancelled) {
-            setOiFrameError(error instanceof Error ? error : new Error('Failed to fetch OI multiframe batch'));
-          }
-        }
-
-        if (index + OI_MULTIFRAME_BATCH_SIZE < symbols.length) {
-          await new Promise((resolve) => window.setTimeout(resolve, OI_MULTIFRAME_BATCH_DELAY_MS));
-        }
-      }
-
-      if (!cancelled) {
-        nextRefreshTimer = window.setTimeout(runProgressiveFetch, oiMultiframeRefreshInterval);
-      }
-    };
-
-    void runProgressiveFetch();
-
-    return () => {
-      cancelled = true;
-      if (nextRefreshTimer !== undefined) {
-        window.clearTimeout(nextRefreshTimer);
-      }
-    };
-  }, [multiframeSignature, oiMultiframeRefreshInterval, shouldRunLeaderboardRequests]);
-
-  const baseMarketData = useMemo(() => {
-    if (!lightMarketData || lightMarketData.length === 0) {
-      return undefined;
-    }
-
-    return lightMarketData.map((ticker) => {
-      const openInterest = openInterestData?.[ticker.symbol];
-      if (!openInterest) {
-        return ticker;
-      }
-
-      const valuationPrice = parseFloat(ticker.markPrice || ticker.lastPrice);
-      const numericOpenInterest = parseFloat(openInterest);
-      const openInterestValue = Number.isFinite(valuationPrice) && Number.isFinite(numericOpenInterest)
-        ? (numericOpenInterest * valuationPrice).toString()
-        : undefined;
-
-      return {
-        ...ticker,
-        openInterest,
-        openInterestValue,
-      };
-    });
-  }, [lightMarketData, openInterestData]);
-
-  const rawData = useMemo(() => {
-    if (!baseMarketData || baseMarketData.length === 0) {
-      return heavyMarketData;
-    }
-
-    if (!heavyMarketData || heavyMarketData.length === 0) {
-      return baseMarketData;
-    }
-
-    const heavyMap = new Map(heavyMarketData.map((ticker) => [ticker.symbol, ticker]));
-    return baseMarketData.map((ticker) => {
-      const heavyTicker = heavyMap.get(ticker.symbol);
-
-      return {
-        ...ticker,
-        ...(heavyTicker || {}),
-        lastPrice: ticker.lastPrice,
-        priceChange: ticker.priceChange,
-        priceChangePercent: ticker.priceChangePercent,
-        weightedAvgPrice: ticker.weightedAvgPrice,
-        prevClosePrice: ticker.prevClosePrice,
-        highPrice: ticker.highPrice,
-        lowPrice: ticker.lowPrice,
-        volume: ticker.volume,
-        quoteVolume: ticker.quoteVolume,
-        openTime: ticker.openTime,
-        closeTime: ticker.closeTime,
-        markPrice: ticker.markPrice || heavyTicker?.markPrice,
-        fundingRate: ticker.fundingRate || heavyTicker?.fundingRate,
-        openInterest: ticker.openInterest || heavyTicker?.openInterest,
-        openInterestValue: ticker.openInterestValue || heavyTicker?.openInterestValue,
-      };
-    });
-  }, [baseMarketData, heavyMarketData]);
+  const rawData = useMemo(
+    () => mergeBaseAndHeavyMarketData(baseMarketData, heavyMarketData),
+    [baseMarketData, heavyMarketData]
+  );
 
   // Process and merge all data
-  const processedData = useMemo(() => {
-    if (!rawData || !Array.isArray(rawData)) return [];
+  const processedData = useMemo(
+    () => normalizeTickerUniverse(rawData, frameData, rsrsData),
+    [rawData, frameData, rsrsData]
+  );
 
-    // 1. Filter invalid rows and keep only USDT pairs
-    let result = rawData.filter((t): t is TickerData => {
-      if (!t || typeof t.symbol !== 'string') return false;
-      if (typeof t.lastPrice !== 'string' || typeof t.quoteVolume !== 'string') return false;
-      return t.symbol.endsWith('USDT');
-    });
-
-    // 2. Filter out stale data
-    const now = Date.now();
-    result = result.filter(t => Number.isFinite(t.closeTime) && (now - t.closeTime) < 24 * 60 * 60 * 1000);
-
-    // 3. Filter out low-volume coins (test/alpha/delisted coins)
-    result = result.filter(t => Number.isFinite(parseFloat(t.quoteVolume)) && parseFloat(t.quoteVolume) > 100000);
-
-    // 4. Merge all data in one pass
-    result = result.map((ticker) => enrichTickerWithDeferredData(ticker, frameData, rsrsData));
-
-    return result;
-  }, [rawData, frameData, rsrsData]);
-
-  const isHeavyMarketFreshEnough = isHeavyMarketPayloadFresh(heavyMarketPayload);
+  const isHeavyMarketFreshEnough = isHeavyMarketPayloadFresh(heavyMarketPayload, MAX_STRATEGY_MARKET_DATA_AGE_MS);
   const isFrameDataFreshEnough = isTimedPayloadFresh(framePayload, MAX_STRATEGY_FRAME_DATA_AGE_SECONDS);
   const isRsrsDataFreshEnough = isTimedPayloadFresh(rsrsPayload, MAX_STRATEGY_RSRS_DATA_AGE_SECONDS);
   const strategyFrameData = isFrameDataFreshEnough ? frameData : undefined;
   const strategyRsrsData = isRsrsDataFreshEnough ? rsrsData : undefined;
 
-  const strategyMarketData = useMemo(() => {
-    if (!isHeavyMarketFreshEnough || !heavyMarketData || !Array.isArray(heavyMarketData)) {
-      return [];
-    }
-
-    let result = heavyMarketData.filter((ticker): ticker is TickerData => {
-      if (!ticker || typeof ticker.symbol !== 'string') return false;
-      if (typeof ticker.lastPrice !== 'string' || typeof ticker.quoteVolume !== 'string') return false;
-      return ticker.symbol.endsWith('USDT');
-    });
-
-    const now = Date.now();
-    result = result.filter((ticker) => Number.isFinite(ticker.closeTime) && (now - ticker.closeTime) < 24 * 60 * 60 * 1000);
-    result = result.filter((ticker) => Number.isFinite(parseFloat(ticker.quoteVolume)) && parseFloat(ticker.quoteVolume) > 100000);
-
-    return result.map((ticker) => enrichTickerWithDeferredData(ticker, strategyFrameData, strategyRsrsData));
-  }, [heavyMarketData, isHeavyMarketFreshEnough, strategyFrameData, strategyRsrsData]);
+  const strategyMarketData = useMemo(
+    () => isHeavyMarketFreshEnough
+      ? normalizeTickerUniverse(heavyMarketData, strategyFrameData, strategyRsrsData)
+      : [],
+    [heavyMarketData, isHeavyMarketFreshEnough, strategyFrameData, strategyRsrsData]
+  );
 
   const deferredStrategyMarketData = useDeferredValue(strategyMarketData);
   const isStrategyScannerReady = isHeavyMarketFreshEnough;

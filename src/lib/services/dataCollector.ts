@@ -2,6 +2,11 @@ import fs from 'fs';
 import path from 'path';
 import { execFile } from 'child_process';
 import util from 'util';
+import {
+    buildPrimaryArchivePath,
+    getArchiveReadRoots,
+    getArchiveWriteRoot,
+} from './archiveRoots.ts';
 
 const execFilePromise = util.promisify(execFile);
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -22,6 +27,10 @@ export type FormattedFundingRateData = {
 };
 
 type FormattedData = FormattedMetricData | FormattedFundingRateData;
+
+function runtimeExistsSync(targetPath: string): boolean {
+    return fs.existsSync(/* turbopackIgnore: true */ targetPath);
+}
 
 function parseUtcDateString(date: string): number {
     const match = date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -44,14 +53,13 @@ function formatUtcDateString(timestamp: number): string {
 }
 
 export class DataCollector {
-    private dataDir: string;
     private baseUrl = 'https://data.binance.vision/data/futures/um/daily';
 
     constructor() {
-        this.dataDir = path.join(process.cwd(), 'data', 'historical');
+        const archiveRoot = getArchiveWriteRoot();
         if (!isServerless) {
-            if (!fs.existsSync(this.dataDir)) {
-                fs.mkdirSync(this.dataDir, { recursive: true });
+            if (!runtimeExistsSync(archiveRoot)) {
+                fs.mkdirSync(archiveRoot, { recursive: true });
             }
         }
     }
@@ -73,9 +81,9 @@ export class DataCollector {
         if (!Number.isFinite(start) || !Number.isFinite(end) || start > end) {
             throw new Error(`Invalid date range: ${startDate} - ${endDate}`);
         }
-        const symbolDir = path.join(this.dataDir, symbol.toUpperCase(), type);
+        const symbolDir = buildPrimaryArchivePath(symbol, type);
 
-        if (!fs.existsSync(symbolDir)) {
+        if (!runtimeExistsSync(symbolDir)) {
             fs.mkdirSync(symbolDir, { recursive: true });
         }
 
@@ -85,11 +93,11 @@ export class DataCollector {
             const dateStr = formatUtcDateString(currentDay);
             const fileName = `${symbol.toUpperCase()}-${type}-${dateStr}`;
             const zipName = `${fileName}.zip`;
-            const localZipPath = path.join(symbolDir, zipName);
-            const localCsvPath = path.join(symbolDir, `${fileName}.csv`);
+            const localZipPath = path.join(/* turbopackIgnore: true */ symbolDir, zipName);
+            const localCsvPath = path.join(/* turbopackIgnore: true */ symbolDir, `${fileName}.csv`);
 
             // If CSV already exists, skip
-            if (fs.existsSync(localCsvPath)) {
+            if (runtimeExistsSync(localCsvPath)) {
                 console.log(`Using cached: ${fileName}`);
                 continue;
             }
@@ -142,33 +150,20 @@ export class DataCollector {
         if (!Number.isFinite(start) || !Number.isFinite(end) || start > end) {
             return { coveragePercent: 0, totalDays: 0, availableDays: 0, missingDates: [] };
         }
-        const symbolDir = path.join(this.dataDir, symbol.toUpperCase(), type);
-
         const totalDays = Math.floor((end - start) / DAY_MS) + 1;
         let availableDays = 0;
         const missingDates: string[] = [];
-
-        // Check if directory exists
-        if (!fs.existsSync(symbolDir)) {
-            // No data at all
-            for (let currentDay = start; currentDay <= end; currentDay += DAY_MS) {
-                missingDates.push(formatUtcDateString(currentDay));
-            }
-            return {
-                coveragePercent: 0,
-                totalDays,
-                availableDays: 0,
-                missingDates
-            };
-        }
 
         // Check each day
         for (let currentDay = start; currentDay <= end; currentDay += DAY_MS) {
             const dateStr = formatUtcDateString(currentDay);
             const fileName = `${symbol.toUpperCase()}-${type}-${dateStr}.csv`;
-            const filePath = path.join(symbolDir, fileName);
+            const exists = getArchiveReadRoots().some((root) => {
+                const candidate = path.join(/* turbopackIgnore: true */ root, symbol.toUpperCase(), type, fileName);
+                return runtimeExistsSync(candidate);
+            });
 
-            if (fs.existsSync(filePath)) {
+            if (exists) {
                 availableDays++;
             } else {
                 missingDates.push(dateStr);
@@ -192,69 +187,70 @@ export class DataCollector {
     async getFormattedData(symbol: string, type: 'fundingRate', startTime: number, endTime: number): Promise<FormattedFundingRateData[]>;
     async getFormattedData(symbol: string, type: DataType, startTime: number, endTime: number): Promise<FormattedData[]> {
         if (isServerless) return [];
-        const symbolDir = path.join(this.dataDir, symbol.toUpperCase(), type);
-        if (!fs.existsSync(symbolDir)) return [];
-
-        const files = fs.readdirSync(symbolDir).filter(f => f.endsWith('.csv'));
         const allData: FormattedData[] = [];
+        const processedFiles = new Set<string>();
 
-        for (const file of files) {
-            // Check if file date is within range (optimization)
-            // Filename format: SYMBOL-type-YYYY-MM-DD.csv
-            const dateMatch = file.match(/\d{4}-\d{2}-\d{2}/);
-            if (!dateMatch) continue;
+        for (const root of getArchiveReadRoots()) {
+            const symbolDir = path.join(/* turbopackIgnore: true */ root, symbol.toUpperCase(), type);
+            if (!runtimeExistsSync(symbolDir)) {
+                continue;
+            }
 
-            const fileDate = parseUtcDateString(dateMatch[0]);
-            // Simple bound check: file covers the whole day. 
-            // If fileDate is strictly after endTime (day start > requested end), skip.
-            // If fileDate + 24h is strictly before startTime (day end < requested start), skip.
-            if (!Number.isFinite(fileDate) || fileDate > endTime || fileDate + DAY_MS < startTime) continue;
+            const files = fs.readdirSync(symbolDir).filter((file) => file.endsWith('.csv'));
 
-            const filePath = path.join(symbolDir, file);
-            const content = fs.readFileSync(filePath, 'utf-8');
-            const lines = content.trim().split('\n');
+            for (const file of files) {
+                if (processedFiles.has(file)) {
+                    continue;
+                }
 
-            // Skip header if present (Binance CSVs usually start with header or just data? Check later. Usually Headers)
-            // Metrics CSV: create_time, ...
-            // Funding CSV: calc_time, ...
-            const startIndex = lines[0].startsWith('create_time') || lines[0].startsWith('calc_time') ? 1 : 0;
+                const dateMatch = file.match(/\d{4}-\d{2}-\d{2}/);
+                if (!dateMatch) continue;
 
-            for (let i = startIndex; i < lines.length; i++) {
-                const line = lines[i].trim();
-                if (!line) continue; // Skip empty lines
+                const fileDate = parseUtcDateString(dateMatch[0]);
+                if (!Number.isFinite(fileDate) || fileDate > endTime || fileDate + DAY_MS < startTime) continue;
 
-                const cols = line.split(',');
-                if (cols.length < 2) continue; // Skip invalid lines
+                const filePath = path.join(/* turbopackIgnore: true */ symbolDir, file);
+                const content = fs.readFileSync(filePath, 'utf-8');
+                const lines = content.trim().split('\n');
+                const startIndex = lines[0].startsWith('create_time') || lines[0].startsWith('calc_time') ? 1 : 0;
 
-                if (type === 'metrics') {
-                    // create_time, symbol, sum_open_interest, sum_open_interest_value, ...
-                    if (cols.length < 4) continue; // Need at least 4 columns
-                    const timestamp = new Date(cols[0]).getTime();
-                    if (isNaN(timestamp)) continue; // Invalid timestamp
+                for (let i = startIndex; i < lines.length; i++) {
+                    const line = lines[i].trim();
+                    if (!line) continue;
 
-                    if (timestamp >= startTime && timestamp <= endTime) {
-                        allData.push({
-                            timestamp,
-                            openInterest: cols[2],
-                            openInterestValue: cols[3]
-                        });
-                    }
-                } else if (type === 'fundingRate') {
-                    // calc_time, funding_rate, symbol
-                    let ts = 0;
-                    if (cols[0].match(/^\d+$/)) {
-                        ts = parseInt(cols[0]);
-                    } else {
-                        ts = new Date(cols[0]).getTime();
-                    }
+                    const cols = line.split(',');
+                    if (cols.length < 2) continue;
 
-                    if (!isNaN(ts) && ts >= startTime && ts <= endTime) {
-                        allData.push({
-                            fundingTime: ts,
-                            fundingRate: cols[1]
-                        });
+                    if (type === 'metrics') {
+                        if (cols.length < 4) continue;
+                        const timestamp = new Date(cols[0]).getTime();
+                        if (isNaN(timestamp)) continue;
+
+                        if (timestamp >= startTime && timestamp <= endTime) {
+                            allData.push({
+                                timestamp,
+                                openInterest: cols[2],
+                                openInterestValue: cols[3]
+                            });
+                        }
+                    } else if (type === 'fundingRate') {
+                        let ts = 0;
+                        if (cols[0].match(/^\d+$/)) {
+                            ts = parseInt(cols[0]);
+                        } else {
+                            ts = new Date(cols[0]).getTime();
+                        }
+
+                        if (!isNaN(ts) && ts >= startTime && ts <= endTime) {
+                            allData.push({
+                                fundingTime: ts,
+                                fundingRate: cols[1]
+                            });
+                        }
                     }
                 }
+
+                processedFiles.add(file);
             }
         }
 

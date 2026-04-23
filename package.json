@@ -14,7 +14,10 @@
     "verify:api": "node ./scripts/verify-api-smoke.mjs",
     "verify:backtest": "node ./scripts/verify-backtest-batch.mjs",
     "verify:stability": "node ./scripts/verify-stability.mjs",
-    "optimize:strategies": "node --experimental-specifier-resolution=node ./scripts/optimize-strategies.mjs"
+    "optimize:strategies": "node --experimental-specifier-resolution=node ./scripts/optimize-strategies.mjs",
+    "sync:binance-klines": "node --experimental-strip-types ./scripts/sync-binance-kline-archive.ts",
+    "sync:market-archive-top": "node --experimental-strip-types ./scripts/sync-market-archive-top.ts",
+    "audit:backtest-history": "node --experimental-strip-types ./scripts/audit-backtest-history.ts"
   },
   "dependencies": {
     "@vercel/blob": "^2.3.3",

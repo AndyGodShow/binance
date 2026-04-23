@@ -44,12 +44,23 @@ export interface RiskMetrics {
     expectedValue?: number;        // 期望值 (EV)
 }
 
+export interface DynamicExitPlan {
+    enabled: boolean;
+    timeframe: string;
+    emaPeriod: number;
+    donchianLookback: number;
+    activateAfterTargetIndex: number;
+    invalidationPrice?: number;
+    reason: string;
+}
+
 // ==================== 完整风险管理 ====================
 export interface RiskManagement {
     stopLoss: StopLoss;
     takeProfit: TakeProfit;
     positionSizing: PositionSizing;
     metrics: RiskMetrics;
+    dynamicExit?: DynamicExitPlan;
     timeStop?: {                   // 🔥 时间止损配置
         maxHoldBars: number;       // 最大持仓K线数
         profitThreshold: number;   // 利润阈值 (< 此值则平仓)

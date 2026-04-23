@@ -3,6 +3,7 @@ import { unstable_cache } from 'next/cache';
 import { withTimeout } from '@/lib/async';
 import { fetchBinanceJson } from '@/lib/binanceApi';
 import { logger } from '@/lib/logger';
+import { loadLocalKlineArchive } from '@/lib/services/klineArchive';
 
 interface KlineResult {
     symbol: string;
@@ -34,14 +35,57 @@ function parseRequestedSymbols(searchParams: URLSearchParams): string[] | null {
 }
 
 async function buildMultiframeData(requestedSymbols?: string[]): Promise<MultiframeData> {
+    if (requestedSymbols && requestedSymbols.length > 0) {
+        const resultData: MultiframeData = {};
+        const uniqueSymbols = requestedSymbols
+            .filter((symbol) => symbol.endsWith('USDT'))
+            .map((symbol) => symbol.trim().toUpperCase())
+            .filter(Boolean);
+
+        for (const symbol of uniqueSymbols) {
+            const archive = loadLocalKlineArchive(symbol, '15m');
+            if (archive?.klines?.length) {
+                const currentIdx = archive.klines.length - 1;
+                const idx1h = Math.max(0, currentIdx - 4);
+                const idx4h = Math.max(0, currentIdx - 16);
+                resultData[symbol] = {
+                    o15m: Number.parseFloat(archive.klines[currentIdx].open),
+                    o1h: Number.parseFloat(archive.klines[idx1h].open),
+                    o4h: Number.parseFloat(archive.klines[idx4h].open),
+                };
+                continue;
+            }
+
+            try {
+                const klines = await fetchBinanceJson<unknown>(`/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=18`, { init: { cache: 'no-store' } });
+                if (Array.isArray(klines) && klines.length > 0) {
+                    const currentIdx = klines.length - 1;
+                    const idx1h = Math.max(0, currentIdx - 4);
+                    const idx4h = Math.max(0, currentIdx - 16);
+                    resultData[symbol] = {
+                        o15m: Number.parseFloat(klines[currentIdx][1]),
+                        o1h: Number.parseFloat(klines[idx1h][1]),
+                        o4h: Number.parseFloat(klines[idx4h][1]),
+                    };
+                }
+            } catch {
+                // If both archive and upstream fail, omit the symbol so callers can decide whether to fall back.
+            }
+        }
+
+        return resultData;
+    }
+
     // 1. Prefer exchangeInfo so we only query active perpetual contracts.
     let targetSymbols: string[] = [];
     // Fetch tickers immediately to get volume and symbols. We prioritize high-volume contracts.
     let tickers: { symbol: string, quoteVolume: string }[] = [];
-    try {
-        tickers = await fetchBinanceJson<{ symbol: string, quoteVolume: string }[]>('/fapi/v1/ticker/24hr', { init: { cache: 'no-store' } });
-    } catch {
-        tickers = [];
+    if (!requestedSymbols || requestedSymbols.length === 0) {
+        try {
+            tickers = await fetchBinanceJson<{ symbol: string, quoteVolume: string }[]>('/fapi/v1/ticker/24hr', { init: { cache: 'no-store' } });
+        } catch {
+            tickers = [];
+        }
     }
 
     try {
@@ -78,17 +122,33 @@ async function buildMultiframeData(requestedSymbols?: string[]): Promise<Multifr
         }
     }
 
-    if (!requestedSymbols || requestedSymbols.length === 0) {
-        // Default full-dataset requests still keep a cap to avoid edge runtimes timing out.
-        targetSymbols = targetSymbols.slice(0, 320);
-    }
+    targetSymbols = targetSymbols.slice(0, 320);
+
+    const buildArchiveFallback = (symbol: string): KlineResult | null => {
+        const archive = loadLocalKlineArchive(symbol, '15m');
+        const klines = archive?.klines ?? [];
+        if (klines.length === 0) {
+            return null;
+        }
+
+        const currentIdx = klines.length - 1;
+        const idx1h = Math.max(0, currentIdx - 4);
+        const idx4h = Math.max(0, currentIdx - 16);
+
+        return {
+            symbol,
+            o15m: Number.parseFloat(klines[currentIdx].open),
+            o1h: Number.parseFloat(klines[idx1h].open),
+            o4h: Number.parseFloat(klines[idx4h].open),
+        };
+    };
 
     const fetchSymbolData = async (symbol: string): Promise<KlineResult> => {
         try {
             // 获取18根K线 (当前1根 + 历史17根)，确保足够看16根之前的数据 (4小时 = 16 * 15m)
             const klines = await fetchBinanceJson<unknown>(`/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=18`, { init: { cache: 'no-store' } });
             if (!Array.isArray(klines) || klines.length === 0) {
-                return { symbol, o15m: 0, o1h: 0, o4h: 0 };
+                return buildArchiveFallback(symbol) ?? { symbol, o15m: 0, o1h: 0, o4h: 0 };
             }
 
             const currentIdx = klines.length - 1;
@@ -109,7 +169,7 @@ async function buildMultiframeData(requestedSymbols?: string[]): Promise<Multifr
                 o4h: open4h
             };
         } catch {
-            return { symbol, o15m: 0, o1h: 0, o4h: 0 };
+            return buildArchiveFallback(symbol) ?? { symbol, o15m: 0, o1h: 0, o4h: 0 };
         }
     };
 

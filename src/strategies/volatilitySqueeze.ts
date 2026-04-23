@@ -1,24 +1,30 @@
-import type { TradingStrategy, StrategySignal, CompositeCondition } from '../lib/strategyTypes.ts';
+import type { TradingStrategy, StrategySignal, CompositeCondition, StrategyDetectionContext } from '../lib/strategyTypes.ts';
 import type { TickerData } from '../lib/types.ts';
-import { cooldownManager } from '../lib/cooldownManager.ts';
 import { logger } from '../lib/logger.ts';
 import { APP_CONFIG } from '../lib/config.ts';
 import { calculateRiskManagement } from '../lib/risk/riskCalculator.ts';
 import { getStrategyParameterConfig } from '../lib/strategyParameters.ts';
+import { getStrategyRuntimeState } from '../lib/strategyRuntimeState.ts';
+import {
+    type VolatilitySqueezeStrategyInput,
+    toVolatilitySqueezeStrategyInput,
+} from '../lib/strategyInputs.ts';
 
 // ========== Squeeze 策略所需参数 ==========：检查条件并创建条件对象
 function checkCondition(
     name: string,
     description: string,
     met: boolean,
-    value?: number,
-    threshold?: number
+    _value?: number,
+    _threshold?: number,
 ): CompositeCondition {
-    return { name, description, met, value, threshold };
+    void _value;
+    void _threshold;
+    return { name, description, met };
 }
 
-function buildRecentBreakoutLevels(ticker: TickerData): { recentHigh: number | null; recentLow: number | null; bodyPercent: number } {
-    const candles = ticker.ohlc || [];
+function buildRecentBreakoutLevels(input: VolatilitySqueezeStrategyInput): { recentHigh: number | null; recentLow: number | null; bodyPercent: number } {
+    const candles = input.ohlc || [];
     const latest = candles[candles.length - 1];
     const priorCandles = candles.slice(-6, -1);
 
@@ -41,28 +47,30 @@ export const volatilitySqueezeStrategy: TradingStrategy = {
     category: 'trend',
     enabled: true,
 
-    detect: (ticker: TickerData): StrategySignal | null => {
-        const params = getStrategyParameterConfig('volatility-squeeze');
+    detect: (ticker: TickerData, context?: StrategyDetectionContext): StrategySignal | null => {
+        const input = toVolatilitySqueezeStrategyInput(ticker);
+        const params = getStrategyParameterConfig('volatility-squeeze', context?.parameterOverrides?.['volatility-squeeze']);
+        const runtimeState = getStrategyRuntimeState(context);
         // 冷却期检查
-        if (cooldownManager.check(ticker.symbol, 'volatility-squeeze', params.cooldownPeriodMs)) {
+        if (runtimeState.cooldown.check(input.symbol, 'volatility-squeeze', params.cooldownPeriodMs)) {
             return null;
         }
 
         // 需要完整的 Squeeze 数据
-        if (!ticker.squeezeStatus || !ticker.momentumColor || !ticker.keltnerMid || !ticker.ohlc || ticker.ohlc.length < 6) {
+        if (!input.squeezeStatus || !input.momentumColor || !input.keltnerMid || !input.ohlc || input.ohlc.length < 6) {
             return null;
         }
 
         const conditions: CompositeCondition[] = [];
-        const currentPrice = parseFloat(ticker.lastPrice);
+        const currentPrice = parseFloat(input.lastPrice);
         if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
             return null;
         }
 
         // ========== 条件1: 高质量挤压背景 ==========
-        const squeezeDuration = ticker.lastSqueezeDuration || ticker.squeezeDuration || 0;
-        const squeezeStrength = ticker.squeezeStrength || 0;
-        const bandwidthPercentile = ticker.bandwidthPercentile ?? 100;
+        const squeezeDuration = input.lastSqueezeDuration || input.squeezeDuration || 0;
+        const squeezeStrength = input.squeezeStrength || 0;
+        const bandwidthPercentile = input.bandwidthPercentile ?? 100;
         const hasQualifiedSqueeze =
             squeezeDuration >= params.minSqueezeDuration &&
             bandwidthPercentile < params.maxSqueezeBandwidthPercentile;
@@ -76,7 +84,7 @@ export const volatilitySqueezeStrategy: TradingStrategy = {
         ));
 
         // ========== 条件2: 释放窗口 ==========
-        const releaseBarsAgo = ticker.releaseBarsAgo;
+        const releaseBarsAgo = input.releaseBarsAgo;
         const inReleaseWindow =
             typeof releaseBarsAgo === 'number' &&
             Number.isFinite(releaseBarsAgo) &&
@@ -95,8 +103,8 @@ export const volatilitySqueezeStrategy: TradingStrategy = {
         ));
 
         // ========== 条件3: 动能方向确认 ==========
-        const momentumColor = ticker.momentumColor;
-        const momentumValue = ticker.momentumValue || 0;
+        const momentumColor = input.momentumColor;
+        const momentumValue = input.momentumValue || 0;
         const strongLongMomentum = momentumColor === 'cyan';
         const strongShortMomentum = momentumColor === 'red';
         const longMomentum = strongLongMomentum || (momentumColor === 'blue' && momentumValue > 0);
@@ -118,10 +126,10 @@ export const volatilitySqueezeStrategy: TradingStrategy = {
         ));
 
         // ========== 条件4: 价格位置与突破 ==========
-        const keltnerMid = ticker.keltnerMid;
-        const { recentHigh, recentLow, bodyPercent } = buildRecentBreakoutLevels(ticker);
-        const squeezeBoxHigh = ticker.squeezeBoxHigh;
-        const squeezeBoxLow = ticker.squeezeBoxLow;
+        const keltnerMid = input.keltnerMid;
+        const { recentHigh, recentLow, bodyPercent } = buildRecentBreakoutLevels(input);
+        const squeezeBoxHigh = input.squeezeBoxHigh;
+        const squeezeBoxLow = input.squeezeBoxLow;
 
         const pricePositionValid = direction === 'long'
             ? currentPrice > keltnerMid &&
@@ -146,7 +154,7 @@ export const volatilitySqueezeStrategy: TradingStrategy = {
         ));
 
         // ========== 条件5: 放量实体 ==========
-        const volumeRatio = ticker.volumeRatio ?? (ticker.volumeMA ? parseFloat(ticker.quoteVolume) / ticker.volumeMA : 1);
+        const volumeRatio = input.volumeRatio ?? (input.volumeMA ? parseFloat(input.quoteVolume) / input.volumeMA : 1);
         const volumeExpansion =
             Number.isFinite(volumeRatio) &&
             volumeRatio >= params.minVolumeRatio &&
@@ -161,9 +169,9 @@ export const volatilitySqueezeStrategy: TradingStrategy = {
         ));
 
         // ========== 条件6: 趋势过滤 ==========
-        const adx = ticker.adx || 0;
-        const plusDI = ticker.plusDI || 0;
-        const minusDI = ticker.minusDI || 0;
+        const adx = input.adx || 0;
+        const plusDI = input.plusDI || 0;
+        const minusDI = input.minusDI || 0;
         const trendFilter = adx >= params.minAdx && (
             direction === 'long'
                 ? plusDI > minusDI
@@ -223,7 +231,7 @@ export const volatilitySqueezeStrategy: TradingStrategy = {
         }
 
         const metConditions = conditions.filter(c => c.met).map(c => c.description);
-        cooldownManager.record(ticker.symbol, 'volatility-squeeze');
+        runtimeState.cooldown.record(input.symbol, 'volatility-squeeze');
 
         // 🔥 计算风险管理参数
         let riskManagement;
@@ -232,9 +240,9 @@ export const volatilitySqueezeStrategy: TradingStrategy = {
                 entryPrice: currentPrice,
                 direction,
                 confidence: Math.min(params.confidenceWeights.maxConfidence, confidence),
-                atr: ticker.atr,
-                keltnerUpper: ticker.keltnerUpper,
-                keltnerLower: ticker.keltnerLower,
+                atr: input.atr,
+                keltnerUpper: input.keltnerUpper,
+                keltnerLower: input.keltnerLower,
                 keltnerMid,
                 momentumColor,
                 squeezeDuration,
@@ -244,11 +252,11 @@ export const volatilitySqueezeStrategy: TradingStrategy = {
                 riskPercentage: 0.8,
             });
         } catch (error) {
-            logger.error('Risk calculation failed for volatility-squeeze', error as Error, { symbol: ticker.symbol });
+            logger.error('Risk calculation failed for volatility-squeeze', error as Error, { symbol: input.symbol });
         }
 
         return {
-            symbol: ticker.symbol,
+            symbol: input.symbol,
                 strategyId: 'volatility-squeeze',
                 strategyName: '🎯 波动率挤压',
                 direction,
