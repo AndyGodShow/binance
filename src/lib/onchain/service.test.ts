@@ -3,11 +3,13 @@ import assert from 'node:assert/strict';
 
 import type { TokenSearchResult } from './types.ts';
 import {
+    buildCandidateTokenResults,
     filterAndSortSearchResults,
     getFallbackBannerMessage,
     matchOfficialAlphaTokens,
     normalizeAcquisitionMix,
     pickPrimaryToken,
+    resolveOnchainMappingStatus,
     resolveSelectedToken,
 } from './service.ts';
 
@@ -180,6 +182,20 @@ test('getFallbackBannerMessage keeps upstream failure guidance as default', () =
     );
 });
 
+test('getFallbackBannerMessage marks unconfirmed mappings without showing chip data', () => {
+    assert.match(
+        getFallbackBannerMessage('data_source_unconfirmed' as never),
+        /数据源待确认/
+    );
+});
+
+test('getFallbackBannerMessage explains native assets are not ERC20 holder targets', () => {
+    assert.match(
+        getFallbackBannerMessage('native_asset_unsupported' as never),
+        /原生币/
+    );
+});
+
 test('matchOfficialAlphaTokens prefers official alpha addresses that map back to the cex symbol', () => {
     const matched = matchOfficialAlphaTokens(
         [
@@ -245,6 +261,16 @@ test('matchOfficialAlphaTokens ignores name-only lookalikes that are not the cex
     assert.deepEqual(
         matched.map((item) => item.contractAddress),
         ['0xeth-pepe']
+    );
+});
+
+test('resolveOnchainMappingStatus does not mark unverified alpha fallback candidates as confirmed', () => {
+    assert.equal(
+        resolveOnchainMappingStatus('alpha', {
+            ...sampleTokens[0],
+            isVerifiedContract: false,
+        }),
+        'candidate'
     );
 });
 
@@ -315,5 +341,53 @@ test('filterAndSortSearchResults still keeps the strongest holder-backed candida
     assert.deepEqual(
         ranked.map((token) => token.tokenAddress),
         ['0x902', '0x901', '0x903']
+    );
+});
+
+test('buildCandidateTokenResults filters weak imposters and ranks market cap before liquidity and holders', () => {
+    const ranked = buildCandidateTokenResults([
+        {
+            ...sampleTokens[0],
+            tokenAddress: '0xdead',
+            chainId: 'ethereum',
+            chain: 'ethereum',
+            marketCap: 5_000,
+            totalLiquidityUsd: 0,
+            totalHolders: 5_000,
+        },
+        {
+            ...sampleTokens[0],
+            tokenAddress: '0xmid',
+            chainId: 'ethereum',
+            chain: 'ethereum',
+            marketCap: 8_000_000,
+            totalLiquidityUsd: 900_000,
+            totalHolders: 1_500,
+        },
+        {
+            ...sampleTokens[0],
+            tokenAddress: '0xlarge',
+            chainId: 'ethereum',
+            chain: 'ethereum',
+            marketCap: 12_000_000,
+            totalLiquidityUsd: 80_000,
+            totalHolders: 500,
+        },
+        {
+            ...sampleTokens[0],
+            tokenAddress: '0xwrong',
+            chainId: 'ethereum',
+            chain: 'ethereum',
+            symbol: 'FAKE',
+            name: 'Fake Token',
+            marketCap: 50_000_000,
+            totalLiquidityUsd: 2_000_000,
+            totalHolders: 20_000,
+        },
+    ], ['PEPE'], 'PEPE');
+
+    assert.deepEqual(
+        ranked.map((token) => token.tokenAddress),
+        ['0xlarge', '0xmid']
     );
 });

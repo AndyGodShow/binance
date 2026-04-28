@@ -18,7 +18,7 @@ export async function GET() {
                     digest: null,
                     status: 'empty',
                     storageMode,
-                    message: 'Daily news has not been generated yet',
+                    message: 'Important news has not been generated yet',
                 } satisfies DailyNewsApiResponse, {
                     headers: {
                         'Cache-Control': 'no-store',
@@ -45,7 +45,7 @@ export async function GET() {
                 digest: null,
                 status: 'empty',
                 storageMode: generated.storageMode || storageMode,
-                message: generated.message || 'Daily news has not been generated yet',
+                message: generated.message || 'Important news has not been generated yet',
             } satisfies DailyNewsApiResponse, {
                 headers: {
                     'Cache-Control': 'no-store',
@@ -68,7 +68,7 @@ export async function GET() {
             digest: null,
             status: 'empty',
             storageMode: process.env.BLOB_READ_WRITE_TOKEN ? 'blob' : 'local-file',
-            message: 'Failed to read daily news digest',
+            message: 'Failed to read important news digest',
         } satisfies DailyNewsApiResponse, { status: 500 });
     }
 }

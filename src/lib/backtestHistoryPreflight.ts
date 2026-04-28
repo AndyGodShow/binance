@@ -20,6 +20,13 @@ export interface BacktestHistoryPreflightReport {
     reasons: string[];
 }
 
+export interface ExecutableBacktestRange {
+    startTime: number;
+    endTime: number;
+    degraded: boolean;
+    reason: string;
+}
+
 interface BacktestHistoryPreflightOptions {
     dataFetcher: HistoricalDataFetcher;
     strategyId: string;
@@ -123,5 +130,42 @@ export async function runBacktestHistoryPreflight(
         intervals,
         passed: failedIntervals.length === 0,
         reasons,
+    };
+}
+
+export function resolveExecutableBacktestRange(
+    report: BacktestHistoryPreflightReport,
+): ExecutableBacktestRange | null {
+    const executionCriticalIntervals = report.intervals.filter((interval) =>
+        interval.role === 'signal' || interval.role === 'execution'
+    );
+    const criticalIntervals = executionCriticalIntervals.length > 0
+        ? executionCriticalIntervals
+        : report.intervals;
+    const intervalsWithData = criticalIntervals.filter((interval) =>
+        interval.actualStartTime !== null &&
+        interval.actualEndTime !== null &&
+        interval.actualBars > 0 &&
+        interval.gapCount === 0
+    );
+
+    if (intervalsWithData.length !== criticalIntervals.length || intervalsWithData.length === 0) {
+        return null;
+    }
+
+    const startTime = Math.max(...intervalsWithData.map((interval) => interval.actualStartTime!));
+    const endTime = Math.min(...intervalsWithData.map((interval) => interval.actualEndTime!));
+
+    if (!Number.isFinite(startTime) || !Number.isFinite(endTime) || startTime >= endTime) {
+        return null;
+    }
+
+    return {
+        startTime,
+        endTime,
+        degraded: !report.passed || startTime > report.requestedStartTime || endTime < report.requestedEndTime,
+        reason: report.passed
+            ? '历史数据完整。'
+            : '历史数据不完整，已自动收缩到各关键周期共同可用区间。',
     };
 }

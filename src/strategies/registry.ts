@@ -5,28 +5,87 @@ import {
     capitalInflowStrategy
 } from './compositeStrategies.ts';
 import { rsrsStrategy } from './rsrs.ts';
+import { sentimentHotspotStrategy } from './sentimentHotspot.ts';
 import { volatilitySqueezeStrategy } from './volatilitySqueeze.ts';
 import { weiShenStrategy } from './weiShen.ts';
 
-class StrategyRegistry {
+const STRATEGY_ENABLED_IDS_STORAGE_KEY = 'strategyEnabledIds';
+
+interface StrategyRegistryStorage {
+    getItem(key: string): string | null;
+    setItem(key: string, value: string): void;
+}
+
+interface StrategyRegistryOptions {
+    strategies?: TradingStrategy[];
+    storage?: StrategyRegistryStorage | null;
+}
+
+const DEFAULT_STRATEGIES = [
+    strongBreakoutStrategy,
+    trendConfirmationStrategy,
+    capitalInflowStrategy,
+    rsrsStrategy,
+    volatilitySqueezeStrategy,
+    weiShenStrategy,
+    sentimentHotspotStrategy,
+] as const;
+
+function getBrowserStorage(): StrategyRegistryStorage | null {
+    if (typeof window === 'undefined') {
+        return null;
+    }
+
+    return window.localStorage;
+}
+
+export class StrategyRegistry {
     private strategies: Map<string, TradingStrategy> = new Map();
     private listeners: Set<() => void> = new Set();
     private enabledStrategyIds: Set<string> = new Set();
+    private storage: StrategyRegistryStorage | null;
 
-    constructor() {
-        // 注册复合策略（高准确率）
-        this.register(strongBreakoutStrategy);
-        this.register(trendConfirmationStrategy);
-        this.register(capitalInflowStrategy);
+    constructor(options: StrategyRegistryOptions = {}) {
+        this.storage = options.storage === undefined ? getBrowserStorage() : options.storage;
+        const strategies = options.strategies ?? DEFAULT_STRATEGIES;
 
-        // 注册 RSRS 策略
-        this.register(rsrsStrategy);
+        strategies.forEach((strategy) => this.register(strategy));
+        this.restoreEnabledStrategyIds();
+    }
 
-        // 注册 Volatility Squeeze 策略
-        this.register(volatilitySqueezeStrategy);
+    private restoreEnabledStrategyIds() {
+        const saved = this.storage?.getItem(STRATEGY_ENABLED_IDS_STORAGE_KEY);
+        if (!saved) {
+            return;
+        }
 
-        // 注册账本反推策略
-        this.register(weiShenStrategy);
+        try {
+            const parsed = JSON.parse(saved);
+            if (!Array.isArray(parsed)) {
+                return;
+            }
+
+            const nextEnabled = new Set<string>();
+            parsed.forEach((id) => {
+                if (typeof id === 'string' && this.strategies.has(id)) {
+                    nextEnabled.add(id);
+                }
+            });
+            this.enabledStrategyIds = nextEnabled;
+        } catch (err) {
+            console.warn('Failed to restore enabled strategies:', err);
+        }
+    }
+
+    private persistEnabledStrategyIds() {
+        try {
+            this.storage?.setItem(
+                STRATEGY_ENABLED_IDS_STORAGE_KEY,
+                JSON.stringify(Array.from(this.enabledStrategyIds)),
+            );
+        } catch (err) {
+            console.warn('Failed to persist enabled strategies:', err);
+        }
     }
 
     /**
@@ -86,6 +145,7 @@ class StrategyRegistry {
             } else {
                 this.enabledStrategyIds.add(id);
             }
+            this.persistEnabledStrategyIds();
             this.notify(); // 触发更新通知
         }
     }

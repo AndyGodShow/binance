@@ -24,6 +24,8 @@ const DEX_SCREENER_BASE = 'https://api.dexscreener.com/latest/dex';
 const DEFAULT_QUERY = 'PEPE';
 const SOLANA_NETWORK = process.env.SOLANA_NETWORK ?? 'mainnet';
 const MIN_HOLDER_COUNT = 100;
+const MIN_CANDIDATE_MARKET_CAP = 2_000_000;
+const MIN_CANDIDATE_LIQUIDITY = 1;
 const SUPPORTED_EVM_CHAINS = new Set([
     'ethereum',
     'bsc',
@@ -34,6 +36,29 @@ const SUPPORTED_EVM_CHAINS = new Set([
     'avalanche',
     'fantom',
     'cronos',
+]);
+const NATIVE_CONTRACT_ASSETS = new Set([
+    'BTC',
+    'ETH',
+    'SOL',
+    'BNB',
+    'XRP',
+    'ADA',
+    'DOGE',
+    'TRX',
+    'TON',
+    'AVAX',
+    'DOT',
+    'LTC',
+    'BCH',
+]);
+const STABLE_CONTRACT_ASSETS = new Set([
+    'USDT',
+    'USDC',
+    'FDUSD',
+    'TUSD',
+    'DAI',
+    'USDE',
 ]);
 
 interface BinanceContractSymbol {
@@ -253,6 +278,10 @@ function tokenizeSearchInput(query: string) {
     return Array.from(new Set([normalized, strippedQuote, strippedMultiplier].filter(Boolean))) as string[];
 }
 
+function hasTokenTerm(query: string, assetSet: Set<string>) {
+    return tokenizeSearchInput(query).some((term) => assetSet.has(term));
+}
+
 function mapHolderChangeWindow(raw: unknown): { change: number; changePercent: number } {
     const obj = recordOfValues(raw);
     return {
@@ -436,6 +465,17 @@ function mapSearchResults(raw: Array<Record<string, unknown>>): TokenSearchResul
         .slice(0, 10);
 }
 
+export function resolveOnchainMappingStatus(
+    scope: OnchainSearchScope,
+    token: TokenSearchResult
+) {
+    if (token.isVerifiedContract) {
+        return 'confirmed';
+    }
+
+    return scope === 'contracts' || scope === 'alpha' ? 'candidate' : 'unavailable';
+}
+
 function withDerivedMarketStats(token: TokenSearchResult): TokenSearchResult {
     const turnoverRatio = token.marketCap && token.marketCap > 0 && token.dexPriceStats.h24.volumeUsd !== null
         ? token.dexPriceStats.h24.volumeUsd / token.marketCap
@@ -596,7 +636,7 @@ function mapAlphaTokenToSearchResult(item: BinanceAlphaToken): TokenSearchResult
         totalLiquidityUsd: item.liquidity == null ? null : parseNumber(item.liquidity),
         securityScore: null,
         totalHolders: item.holders == null ? null : parseNumber(item.holders),
-        isVerifiedContract: false,
+        isVerifiedContract: true,
         turnoverRatio: null,
         dexTrades: {
             h1: emptyTradeWindow(),
@@ -625,6 +665,57 @@ async function searchByTerms(terms: string[]) {
         deduped.set(`${token.chainId}:${token.tokenAddress.toLowerCase()}`, token);
     });
     return Array.from(deduped.values());
+}
+
+export function buildCandidateTokenResults(
+    searchResults: TokenSearchResult[],
+    matchedBaseAssets: string[],
+    query: string
+) {
+    const normalizedTerms = new Set(
+        (matchedBaseAssets.length > 0 ? matchedBaseAssets : [query]).flatMap((asset) => tokenizeSearchInput(asset))
+    );
+
+    return searchResults
+        .filter((token) => {
+            const symbol = normalizeAssetTerm(token.symbol);
+            const name = normalizeAssetTerm(token.name);
+            const marketCap = token.marketCap ?? 0;
+            const liquidity = token.totalLiquidityUsd ?? 0;
+            const holders = token.totalHolders ?? 0;
+            const identityMatches = Array.from(normalizedTerms).some((term) => (
+                symbol === term
+                || name === term
+                || symbol.includes(term)
+                || name.includes(term)
+            ));
+
+            return (
+                identityMatches
+                && isSupportedOnchainToken(token)
+                && marketCap >= MIN_CANDIDATE_MARKET_CAP
+                && liquidity >= MIN_CANDIDATE_LIQUIDITY
+                && holders >= MIN_HOLDER_COUNT
+            );
+        })
+        .sort((a, b) => {
+            const marketCapDiff = (b.marketCap ?? 0) - (a.marketCap ?? 0);
+            if (marketCapDiff !== 0) {
+                return marketCapDiff;
+            }
+
+            const liquidityDiff = (b.totalLiquidityUsd ?? 0) - (a.totalLiquidityUsd ?? 0);
+            if (liquidityDiff !== 0) {
+                return liquidityDiff;
+            }
+
+            const holderDiff = (b.totalHolders ?? 0) - (a.totalHolders ?? 0);
+            if (holderDiff !== 0) {
+                return holderDiff;
+            }
+
+            return chainPriority(b.chainId) - chainPriority(a.chainId);
+        });
 }
 
 async function enrichSearchResultsWithHolderCounts(searchResults: TokenSearchResult[]) {
@@ -745,51 +836,6 @@ async function hydrateDexDetails(token: TokenSearchResult): Promise<TokenSearchR
     }
 }
 
-function filterContractCandidates(
-    searchResults: TokenSearchResult[],
-    matchedBaseAssets: string[],
-    query: string
-) {
-    if (matchedBaseAssets.length === 0) {
-        return [...searchResults].sort((a, b) => primaryTokenScore(b, query) - primaryTokenScore(a, query));
-    }
-
-    const normalizedTerms = new Set(
-        matchedBaseAssets.flatMap((asset) => tokenizeSearchInput(asset))
-    );
-
-    const filtered = searchResults.filter((token) => {
-        const symbol = normalizeAssetTerm(token.symbol);
-        const name = normalizeAssetTerm(token.name);
-        return Array.from(normalizedTerms).some((term) => (
-            symbol === term
-            || symbol.includes(term)
-            || name.includes(term)
-        ));
-    });
-
-    return filtered.sort((a, b) => {
-        const scoreDiff = primaryTokenScore(b, query) - primaryTokenScore(a, query);
-        if (scoreDiff !== 0) {
-            return scoreDiff;
-        }
-
-        const chainDiff = chainPriority(b.chainId) - chainPriority(a.chainId);
-        if (chainDiff !== 0) {
-            return chainDiff;
-        }
-        const holderDiff = (b.totalHolders ?? -1) - (a.totalHolders ?? -1);
-        if (holderDiff !== 0) {
-            return holderDiff;
-        }
-        const marketCapDiff = (b.marketCap ?? 0) - (a.marketCap ?? 0);
-        if (marketCapDiff !== 0) {
-            return marketCapDiff;
-        }
-        return (b.totalLiquidityUsd ?? 0) - (a.totalLiquidityUsd ?? 0);
-    });
-}
-
 export function pickPrimaryToken(searchResults: TokenSearchResult[], query: string) {
     if (searchResults.length === 0) {
         return null;
@@ -824,6 +870,8 @@ async function buildContractSearchResults(query: string) {
             if (directOfficialMatches.length > 0) {
                 return filterAndSortSearchResults(directOfficialMatches, 0);
             }
+
+            return enrichSearchResultsWithHolderCounts(await searchTokens(query));
         }
 
         const terms = tokenizeSearchInput(query);
@@ -849,15 +897,11 @@ async function buildContractSearchResults(query: string) {
         }
 
         const searchTerms: string[] = Array.from(new Set(matchedAssets.flatMap((asset) => tokenizeSearchInput(asset))));
-
         const rawResults = await searchByTerms(searchTerms.length > 0 ? searchTerms.slice(0, 6) : [query]);
-        const prefiltered = filterContractCandidates(rawResults, matchedAssets, query);
-        const enrichmentBase = prefiltered.length > 0 ? prefiltered : rawResults;
-        const enriched = await enrichSearchResultsWithHolderCounts(enrichmentBase);
-        const filtered = filterContractCandidates(enriched, matchedAssets, query);
-        return filtered.length > 0 ? filtered : enrichmentBase.slice(0, 10);
+        const enriched = await enrichSearchResultsWithHolderCounts(rawResults);
+        return buildCandidateTokenResults(enriched.length > 0 ? enriched : rawResults, matchedAssets, query).slice(0, 5);
     } catch {
-        return enrichSearchResultsWithHolderCounts(await searchTokens(query));
+        return [];
     }
 }
 
@@ -872,7 +916,7 @@ async function buildAlphaSearchResults(query: string) {
         const filtered = filterAndSortSearchResults(mapped);
         return filtered.length > 0 ? filtered : filterAndSortSearchResults(mapped, 0);
     } catch {
-        return enrichSearchResultsWithHolderCounts(await searchTokens(query));
+        return [];
     }
 }
 
@@ -991,9 +1035,13 @@ function fallbackPayload(
                 ? '这次没有检索到匹配的链上主地址，请换一个币种名、符号或合约地址再试。'
                 : reason === 'unsupported_chain'
                     ? '主地址已经找到，但这条链当前不在可用的链上控筹支持范围内。'
-                    : reason === 'metrics_unavailable'
-                        ? '主地址已经找到，但持币结构指标暂时拉取失败，所以这次不展示控筹结论。'
-                        : '链上数据源暂时不可用，请稍后重试。'
+                    : reason === 'data_source_unconfirmed'
+                        ? '已找到币安合约标的，但无法从可验证来源确认对应链和 token contract address，所以这次不展示控筹结论。'
+                        : reason === 'native_asset_unsupported'
+                            ? '该标的是原生币或稳定币合约，不能直接套用 ERC20/BEP20/Solana token holder 逻辑生成控筹结论。'
+                            : reason === 'metrics_unavailable'
+                                ? '主地址已经找到，但持币结构指标暂时拉取失败，所以这次不展示控筹结论。'
+                                : '链上数据源暂时不可用，请稍后重试。'
     ];
 
     return {
@@ -1001,6 +1049,7 @@ function fallbackPayload(
         query,
         scope,
         sourceMode: 'fallback',
+        mappingStatus: 'unavailable',
         fallbackReason: reason,
         searchResults,
         selectedToken,
@@ -1021,6 +1070,10 @@ export function getFallbackBannerMessage(reason?: OnchainFallbackReason) {
             return '当前没有拿到可用链上结果：这次没有检索到匹配的链上标的，请换一个币种名、符号或合约地址再试。';
         case 'unsupported_chain':
             return '当前没有生成控筹结果：主地址已经找到，但这条链暂时不支持链上持币结构追踪。';
+        case 'data_source_unconfirmed':
+            return '数据源待确认：已匹配到币安合约标的，但暂时无法从可验证来源确认对应链和 token contract address，本次不会展示可能误导的筹码分布。';
+        case 'native_asset_unsupported':
+            return '当前没有生成控筹结果：该标的是原生币或稳定币合约，不能强行套用 ERC20/BEP20/Solana token holder 地址分布。';
         case 'metrics_unavailable':
             return '当前没有生成控筹结果：目标币已定位，但持币结构数据暂时拉取失败，请稍后重试。';
         case 'upstream_request_failed':
@@ -1040,6 +1093,17 @@ export async function buildTokenResearchPayload(
 
     try {
         const normalizedQuery = query || DEFAULT_QUERY;
+        if (scope === 'contracts' && hasTokenTerm(normalizedQuery, NATIVE_CONTRACT_ASSETS)) {
+            return fallbackPayload(query, scope, 'native_asset_unsupported');
+        }
+        if (scope === 'contracts' && hasTokenTerm(normalizedQuery, STABLE_CONTRACT_ASSETS)) {
+            return fallbackPayload(query, scope, 'data_source_unconfirmed', {
+                notes: [
+                    '已识别为稳定币合约标的，但当前控筹分析不直接复用跨链稳定币合约地址。',
+                    '稳定币需要单独确认发行链、合约版本和交易所储备地址后才能生成可靠筹码分布。',
+                ],
+            });
+        }
         const searchResults = scope === 'alpha'
             ? await buildAlphaSearchResults(normalizedQuery)
             : await buildContractSearchResults(normalizedQuery);
@@ -1050,9 +1114,10 @@ export async function buildTokenResearchPayload(
             normalizedQuery
         );
         if (!selectedToken) {
-            return fallbackPayload(query, scope, 'no_search_results', { searchResults });
+            return fallbackPayload(query, scope, scope === 'contracts' ? 'data_source_unconfirmed' : 'no_search_results', { searchResults });
         }
         const selectedTokenWithDex = await hydrateDexDetails(selectedToken);
+        const mappingStatus = resolveOnchainMappingStatus(scope, selectedTokenWithDex);
         if (!isSupportedOnchainToken(selectedTokenWithDex)) {
             return fallbackPayload(query, scope, 'unsupported_chain', {
                 searchResults,
@@ -1107,12 +1172,18 @@ export async function buildTokenResearchPayload(
         const historical = historicalResult ?? [];
         const dataQuality = buildChipDataQuality(metricsResult, historical, topHolders);
         const notes: string[] = [
-            scope === 'alpha'
+            mappingStatus === 'candidate'
+                ? '当前结果来自候选筛选：未拿到官方确认地址，但已通过 symbol/name、市值、流动性和持币人数硬过滤，适合作为小山寨盯盘参考。'
+                : scope === 'alpha'
                 ? '当前模式聚焦 Binance Alpha 币种，并优先围绕官方可识别的主地址做单地址追踪。'
                 : '当前模式聚焦 Binance 合约币种，会先锁定一个主地址，再围绕该地址追踪控筹和持币结构。',
-            '主地址优先使用币安官方可识别地址；若官方地址缺失，则退回流动性、持币人数与链优先级综合判定。',
+            mappingStatus === 'candidate'
+                ? `候选硬过滤要求市值不低于 $${MIN_CANDIDATE_MARKET_CAP.toLocaleString('en-US')}、流动性大于 0、持币人数不少于 ${MIN_HOLDER_COUNT}，排序优先级为市值、流动性、持币人数。`
+                : '主地址优先使用币安官方可识别地址；若官方地址缺失，则不输出已确认控筹结论。',
             '搜索与价格快照来自 DEX Screener，筹码与持币结构来自 Moralis holders、historical holders 和 owners。',
-            `候选结果已按持币地址数从高到低排序，并优先过滤掉持币地址少于 ${MIN_HOLDER_COUNT} 的低相关币。`,
+            mappingStatus === 'candidate'
+                ? '候选结果不是官方确认地址，请结合合约地址、链、成交池和项目公告二次确认。'
+                : `候选结果已按持币地址数从高到低排序，并优先过滤掉持币地址少于 ${MIN_HOLDER_COUNT} 的低相关币。`,
         ];
         if (!historicalResult) {
             notes.push('历史持币数据加载失败，当前仅显示最新快照。');
@@ -1123,6 +1194,7 @@ export async function buildTokenResearchPayload(
             query,
             scope,
             sourceMode: 'hybrid',
+            mappingStatus,
             searchResults,
             selectedToken: selectedTokenWithDex,
             metrics: metricsResult,

@@ -4,6 +4,7 @@ import { fetchBinanceJson } from '@/lib/binanceApi';
 import { logger } from '@/lib/logger';
 import {
     buildMacroDashboard,
+    DIGITAL_ASSET_ETF_ASSETS,
     parseBitboBtcEtfFlowHtml,
     parseBtcEtfFlowText,
     type BtcEtfFlowSnapshot,
@@ -66,8 +67,7 @@ const YAHOO_ASSETS: YahooAssetConfig[] = [
     { symbol: 'XAGUSD=X', label: '伦敦银', market: '大宗商品', querySymbols: ['XAGUSD=X', 'SI=F'] },
     { symbol: 'CL=F', label: 'WTI原油', market: '大宗商品' },
     { symbol: 'BZ=F', label: '布伦特原油', market: '大宗商品' },
-    { symbol: 'IBIT', label: 'BTC现货ETF', market: '数字资产 ETF' },
-    { symbol: 'ETHA', label: 'ETH现货ETF', market: '数字资产 ETF' },
+    ...DIGITAL_ASSET_ETF_ASSETS,
     { symbol: '000001.SS', label: '上证指数', market: '中韩日指数' },
     { symbol: '^KS11', label: '韩国KOSPI', market: '中韩日指数' },
     { symbol: '^N225', label: '日经225', market: '中韩日指数' },
@@ -318,7 +318,7 @@ export async function GET() {
             {
                 key: 'etf',
                 label: 'ETF 资金流',
-                provider: etfFlowResult?.provider === 'Bitbo' ? 'Bitbo (fallback)' : etfFlowResult?.provider || 'Unavailable',
+                provider: etfFlowResult?.provider === 'Bitbo' ? 'Bitbo (备用源)' : etfFlowResult?.provider || 'Unavailable',
                 status: etfFlowResult ? (etfFlowResult.provider === 'Bitbo' ? 'fallback' : 'live') : 'unavailable',
                 detail: etfFlowResult ? etfFlowResult.date : '暂无可用源',
             },

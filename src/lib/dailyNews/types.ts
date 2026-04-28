@@ -1,6 +1,9 @@
 export type NewsCategory = 'macro' | 'ai' | 'crypto';
 export type ImportanceLevel = 'high' | 'medium' | 'low';
 export type CategoryStatus = 'ok' | 'partial' | 'failed';
+export type ImpactDirection = 'risk_on' | 'risk_off' | 'mixed' | 'neutral';
+export type ImpactHorizon = 'intraday' | '1-3d' | '1-4w';
+export type NewsRiskBias = ImpactDirection;
 
 export const NEWS_CATEGORIES: NewsCategory[] = ['macro', 'ai', 'crypto'];
 
@@ -37,6 +40,12 @@ export interface DailyNewsItem {
     importanceScore: number;
     importanceLevel: ImportanceLevel;
     tags: string[];
+    subcategory?: string;
+    affectedAssets?: string[];
+    impactDirection?: ImpactDirection;
+    impactHorizon?: ImpactHorizon;
+    whyItMatters?: string;
+    watchpoints?: string[];
 }
 
 export interface DailyNewsCategoryStatus {
@@ -53,6 +62,15 @@ export interface DailyNewsCategoryStatus {
     error?: string;
 }
 
+export interface DailyNewsBrief {
+    riskBias: NewsRiskBias;
+    headline: string;
+    driverTags: string[];
+    affectedAssets: string[];
+    highImpactCount: number;
+    latestSignals: string[];
+}
+
 export interface DailyNewsDigest {
     generatedAt: string;
     windowStart: string;
@@ -62,6 +80,7 @@ export interface DailyNewsDigest {
     ai: DailyNewsItem[];
     crypto: DailyNewsItem[];
     categoryStatus: Record<NewsCategory, DailyNewsCategoryStatus>;
+    brief?: DailyNewsBrief;
 }
 
 export interface CategoryCollectionResult {

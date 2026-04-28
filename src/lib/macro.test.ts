@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
     buildMacroDashboard,
+    DIGITAL_ASSET_ETF_ASSETS,
     parseBitboBtcEtfFlowHtml,
     parseBtcEtfFlowText,
     normalizeMacroDashboardData,
@@ -121,6 +122,8 @@ test('buildMacroDashboard exposes localized macro market groups', () => {
             '^N225': { symbol: '^N225', label: '日经225', market: '中韩日指数', price: 58157, changePercent: 0.48 },
             IBIT: { symbol: 'IBIT', label: 'BTC现货ETF', market: '数字资产 ETF', price: 42.13, changePercent: 1.3 },
             ETHA: { symbol: 'ETHA', label: 'ETH现货ETF', market: '数字资产 ETF', price: 31.68, changePercent: 1.8 },
+            BSOL: { symbol: 'BSOL', label: 'SOL质押ETF', market: '数字资产 ETF', price: 28.4, changePercent: 2.1 },
+            XRPC: { symbol: 'XRPC', label: 'XRP现货ETF', market: '数字资产 ETF', price: 24.6, changePercent: -0.8 },
             '^VIX': { symbol: '^VIX', label: 'VIX', market: '监控', price: 18.36, changePercent: 0.1 },
             'DX-Y.NYB': { symbol: 'DX-Y.NYB', label: 'DXY', market: '监控', price: 98.11, changePercent: -0.01 },
             '^TNX': { symbol: '^TNX', label: 'US10Y', market: '监控', price: 4.256, changePercent: -0.95 },
@@ -132,9 +135,32 @@ test('buildMacroDashboard exposes localized macro market groups', () => {
         [
             ['美股', ['标普500指数', '纳斯达克综合指数', '纳斯达克100']],
             ['大宗商品', ['伦敦金', '伦敦银', 'WTI原油']],
-            ['数字资产 ETF', ['BTC现货ETF', 'ETH现货ETF']],
+            ['数字资产 ETF', ['BTC现货ETF', 'ETH现货ETF', 'SOL质押ETF', 'XRP现货ETF']],
             ['中韩日指数', ['上证指数', '韩国KOSPI', '日经225']],
         ]
+    );
+});
+
+test('digital asset ETF defaults include listed single-asset crypto ETFs', () => {
+    assert.deepEqual(
+        DIGITAL_ASSET_ETF_ASSETS.map((asset) => [asset.symbol, asset.label]),
+        [
+            ['IBIT', 'BTC现货ETF'],
+            ['ETHA', 'ETH现货ETF'],
+            ['BSOL', 'SOL质押ETF'],
+            ['XRPC', 'XRP现货ETF'],
+        ]
+    );
+});
+
+test('buildMacroDashboard does not claim fallback ETF flow data when no ETF flow snapshot exists', () => {
+    const dashboard = buildMacroDashboard(createPayload({ etfFlow: undefined }));
+
+    assert.ok(
+        dashboard.insights.some((insight) => insight.includes('ETF 资金流暂未拉到'))
+    );
+    assert.ok(
+        dashboard.insights.every((insight) => !insight.includes('读数可用'))
     );
 });
 

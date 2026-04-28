@@ -210,12 +210,31 @@ export default function SignalCard({ signal, onDismiss, onSymbolClick }: SignalC
             {/* 显示所有叠加的策略 */}
             {signal.stackedStrategies && signal.stackedStrategies.length > 1 && (
                 <div className={styles.stackedList}>
-                    <div className={styles.stackedTitle}>触发策略:</div>
-                    {signal.stackedStrategies.map((strategy, idx) => (
-                        <div key={idx} className={styles.stackedItem}>
-                            • {strategy}
-                        </div>
-                    ))}
+                    <div className={styles.stackedTitle}>触发策略</div>
+                    {signal.stackedSignalDetails?.length
+                        ? signal.stackedSignalDetails.map((detail) => {
+                            const detailDirection = detail.direction === 'long' ? '做多' : '做空';
+                            const conditionText = typeof detail.conditionsMet === 'number' && typeof detail.totalConditions === 'number'
+                                ? ` · 条件 ${detail.conditionsMet}/${detail.totalConditions}`
+                                : '';
+                            const modeText = detail.executionMode === 'observe' ? ' · 观察' : '';
+                            const gradeText = detail.grade ? ` · ${detail.grade}级` : '';
+
+                            return (
+                                <div key={detail.strategyId} className={styles.stackedDetailItem}>
+                                    <div className={styles.stackedDetailHeader}>
+                                        <span>{detail.strategyName}</span>
+                                        <span>{detail.confidence}分 · {detailDirection}{gradeText}{modeText}{conditionText}</span>
+                                    </div>
+                                    <div className={styles.stackedReason}>{detail.reason}</div>
+                                </div>
+                            );
+                        })
+                        : signal.stackedStrategies.map((strategy, idx) => (
+                            <div key={idx} className={styles.stackedItem}>
+                                • {strategy}
+                            </div>
+                        ))}
                 </div>
             )}
 

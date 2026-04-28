@@ -1,8 +1,11 @@
 export type OnchainSourceMode = 'hybrid' | 'fallback';
+export type OnchainMappingStatus = 'confirmed' | 'candidate' | 'unavailable';
 export type OnchainFallbackReason =
     | 'missing_moralis_api_key'
     | 'no_search_results'
     | 'unsupported_chain'
+    | 'data_source_unconfirmed'
+    | 'native_asset_unsupported'
     | 'metrics_unavailable'
     | 'upstream_request_failed';
 export type ChainFamily = 'evm' | 'solana';
@@ -149,6 +152,7 @@ export interface TokenResearchPayload {
     query: string;
     scope: OnchainSearchScope;
     sourceMode: OnchainSourceMode;
+    mappingStatus: OnchainMappingStatus;
     fallbackReason?: OnchainFallbackReason;
     searchResults: TokenSearchResult[];
     selectedToken: TokenSearchResult | null;

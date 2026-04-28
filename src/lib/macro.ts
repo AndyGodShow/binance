@@ -118,6 +118,13 @@ type PersistedMacroDashboardData = Omit<Partial<MacroDashboardData>, 'etfFlow'> 
 
 const ETF_COLUMN_SYMBOLS = ['IBIT', 'FBTC', 'BITB', 'ARKB', 'BTCO', 'EZBC', 'BRRR', 'HODL', 'BTCW', 'GBTC', 'BTC', 'DEFI'];
 
+export const DIGITAL_ASSET_ETF_ASSETS = [
+    { symbol: 'IBIT', label: 'BTC现货ETF', market: '数字资产 ETF' },
+    { symbol: 'ETHA', label: 'ETH现货ETF', market: '数字资产 ETF' },
+    { symbol: 'BSOL', label: 'SOL质押ETF', market: '数字资产 ETF' },
+    { symbol: 'XRPC', label: 'XRP现货ETF', market: '数字资产 ETF' },
+] as const;
+
 const MACRO_GROUPS: Array<{ title: string; markets: string[] }> = [
     { title: '美股', markets: ['美股'] },
     { title: '大宗商品', markets: ['大宗商品', '大宗'] },
@@ -226,7 +233,17 @@ function buildGroups(assets: Record<string, MacroSourceAsset>): MacroBoardGroup[
 }
 
 function computeMomentumScore(payload: MacroSourcePayload): number {
-    const tracked = ['^GSPC', '^IXIC', '^NDX', 'SPY', 'QQQ', 'IBIT', 'ETHA', '000001.SS', '^KS11', '^N225'];
+    const tracked = [
+        '^GSPC',
+        '^IXIC',
+        '^NDX',
+        'SPY',
+        'QQQ',
+        ...DIGITAL_ASSET_ETF_ASSETS.map((asset) => asset.symbol),
+        '000001.SS',
+        '^KS11',
+        '^N225',
+    ];
     const changes = tracked
         .map((symbol) => payload.assets[symbol]?.changePercent)
         .filter((value): value is number => Number.isFinite(value));
@@ -334,7 +351,7 @@ export function buildMacroDashboard(payload: MacroSourcePayload): MacroDashboard
             : undefined,
         payload.etfFlow
             ? `ETF 最近一个交易日 ${payload.etfFlow.totalNetInflowUsdMillion >= 0 ? '净流入' : '净流出'} ${Math.abs(payload.etfFlow.totalNetInflowUsdMillion).toFixed(1)}M。`
-            : 'ETF 资金流改为回退源抓取，读数可用但建议与盘后统计交叉确认。',
+            : 'ETF 资金流暂未拉到，建议以发行方或盘后统计交叉确认。',
     ].filter((item): item is string => Boolean(item));
 
     return {

@@ -32,6 +32,17 @@ test('candidate presets are generated for every strategy', () => {
     });
 });
 
+test('sentiment hotspot participates in shared strategy parameter config', () => {
+    const baseline = getStrategyParameterConfig('sentiment-hotspot');
+
+    assert.equal(baseline.minHeatSourceCount, 2);
+    assert.equal(baseline.cooldownMs, 24 * 60 * 60 * 1000);
+
+    const conservative = buildStrategyParameterCandidates('sentiment-hotspot')[1];
+    assert.ok(conservative.overrides['sentiment-hotspot']);
+    assert.equal(conservative.overrides['sentiment-hotspot']?.minHeatSourceCount, 3);
+});
+
 test('withStrategyParameterOverrides keeps overrides active for async tasks', async () => {
     const baselineEnabled = getStrategyParameterConfig('trend-confirmation').betaFilter.enabled;
     assert.equal(baselineEnabled, false);

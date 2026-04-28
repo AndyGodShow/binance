@@ -320,6 +320,40 @@
     line-height: 1.5;
 }
 
+.stackedDetailItem {
+    padding: 8px 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.stackedDetailItem:first-of-type {
+    border-top: none;
+    padding-top: 0;
+}
+
+.stackedDetailHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    color: rgba(255, 255, 255, 0.86);
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.4;
+}
+
+.stackedDetailHeader span:last-child {
+    color: rgba(147, 197, 253, 0.92);
+    text-align: right;
+    flex-shrink: 0;
+}
+
+.stackedReason {
+    margin-top: 4px;
+    color: rgba(255, 255, 255, 0.58);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
 /* 复合策略条件显示 */
 .compositeConditions {
     background: rgba(59, 130, 246, 0.05);

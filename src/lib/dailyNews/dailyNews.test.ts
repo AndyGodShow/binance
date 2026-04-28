@@ -124,6 +124,87 @@ test('dedupeAndRankCandidates aggregates same-event articles before selecting to
     assert.equal(result.dropped.duplicates, 1);
 });
 
+test('dedupeAndRankCandidates orders selected news by newest publish time first', () => {
+    const result = dedupeAndRankCandidates('crypto', [
+        candidate({
+            category: 'crypto',
+            title: 'SEC approves spot Solana ETF filing after Bitcoin ETF inflows',
+            summary: 'A US ETF approval can widen institutional access to crypto assets.',
+            source: 'Reuters',
+            domain: 'reuters.com',
+            url: 'https://www.reuters.com/technology/sec-approves-solana-etf-2026-04-17/',
+            publishedAt: '2026-04-17T10:00:00.000Z',
+            tags: ['SEC', 'ETF', 'SOL', 'BTC'],
+        }),
+        candidate({
+            category: 'crypto',
+            title: 'Bitcoin miners report liquidation pressure as crypto markets steady',
+            summary: 'Miner pressure can affect BTC supply during weaker liquidity windows.',
+            source: 'CoinDesk',
+            domain: 'coindesk.com',
+            url: 'https://www.coindesk.com/markets/2026/04/17/bitcoin-miners-liquidation-pressure/',
+            publishedAt: '2026-04-17T22:00:00.000Z',
+            tags: ['BTC', 'liquidation'],
+        }),
+    ], WINDOW, 10);
+
+    assert.match(result.items[0].title, /miners/i);
+    assert.match(result.items[1].title, /Solana ETF/i);
+});
+
+test('dedupeAndRankCandidates uses importance score as a tie breaker for same-time news', () => {
+    const publishedAt = '2026-04-17T18:00:00.000Z';
+    const result = dedupeAndRankCandidates('crypto', [
+        candidate({
+            category: 'crypto',
+            title: 'Small blockchain token announces community wallet update',
+            summary: 'A crypto wallet update was released for a smaller blockchain community.',
+            source: 'Example',
+            domain: 'example.com',
+            url: 'https://example.com/small-blockchain-token-wallet-update',
+            publishedAt,
+            tags: ['crypto', 'wallet'],
+        }),
+        candidate({
+            category: 'crypto',
+            title: 'SEC approves spot Bitcoin ETF options as Ethereum liquidity improves',
+            summary: 'The approval can shift institutional crypto liquidity and BTC market structure.',
+            source: 'Reuters',
+            domain: 'reuters.com',
+            url: 'https://www.reuters.com/markets/sec-approves-bitcoin-etf-options-2026-04-17/',
+            publishedAt,
+            tags: ['SEC', 'ETF', 'BTC', 'ETH'],
+        }),
+    ], WINDOW, 10);
+
+    assert.match(result.items[0].title, /Bitcoin ETF/i);
+    assert.ok(result.items[0].importanceScore > result.items[1].importanceScore);
+});
+
+test('dedupeAndRankCandidates enriches news with event context fields', () => {
+    const result = dedupeAndRankCandidates('crypto', [
+        candidate({
+            category: 'crypto',
+            title: 'SEC approves spot Ethereum ETF staking proposal as Bitcoin holds breakout',
+            summary: 'The approval may improve ETH liquidity and shift institutional crypto risk appetite.',
+            source: 'Reuters',
+            domain: 'reuters.com',
+            url: 'https://www.reuters.com/technology/sec-approves-ethereum-etf-staking-2026-04-17/',
+            publishedAt: '2026-04-17T18:00:00.000Z',
+            tags: ['SEC', 'ETF', 'ETH', 'BTC'],
+            rawSnippet: '',
+        }),
+    ], WINDOW, 10);
+
+    const item = result.items[0];
+    assert.equal(item.subcategory, 'ETF');
+    assert.deepEqual(item.affectedAssets, ['BTC', 'ETH']);
+    assert.equal(item.impactDirection, 'risk_on');
+    assert.equal(item.impactHorizon, '1-3d');
+    assert.match(item.whyItMatters || '', /ETF|流动性|风险偏好/);
+    assert.ok((item.watchpoints || []).length >= 2);
+});
+
 test('scoreNewsCandidate rewards authoritative multi-source market-moving news', () => {
     const score = scoreNewsCandidate(candidate({
         category: 'crypto',
@@ -181,6 +262,66 @@ test('buildDailyNewsDigestFromResults survives one failed category', () => {
     assert.equal(digest.ai.length, 1);
     assert.equal(digest.categoryStatus.macro.status, 'failed');
     assert.equal(digest.categoryStatus.crypto.status, 'partial');
+});
+
+test('buildDailyNewsDigestFromResults creates an important signal brief from event context', () => {
+    const digest = buildDailyNewsDigestFromResults([
+        {
+            category: 'macro',
+            ok: true,
+            candidates: [
+                candidate({
+                    title: 'US CPI inflation jumps as Treasury yields rise after tariff shock',
+                    summary: 'Sticky inflation and higher Treasury yields can pressure risk assets.',
+                    source: 'Reuters',
+                    domain: 'reuters.com',
+                    url: 'https://www.reuters.com/markets/us-cpi-inflation-treasury-yields-2026-04-17/',
+                    publishedAt: '2026-04-17T20:00:00.000Z',
+                    tags: ['CPI', 'inflation', 'Treasury'],
+                    rawSnippet: '',
+                }),
+                candidate({
+                    title: 'Oil rises as war risk renews inflation fears',
+                    summary: 'War risk and oil prices can keep inflation expectations elevated.',
+                    source: 'CNBC',
+                    domain: 'cnbc.com',
+                    url: 'https://www.cnbc.com/2026/04/17/oil-war-inflation-risk.html',
+                    publishedAt: '2026-04-17T19:00:00.000Z',
+                    tags: ['市场', '聚合', 'oil', 'war', 'inflation'],
+                    rawSnippet: '',
+                }),
+            ],
+        },
+        {
+            category: 'crypto',
+            ok: true,
+            candidates: [
+                candidate({
+                    category: 'crypto',
+                    title: 'Bitcoin ETF inflows improve as BTC liquidity expands',
+                    summary: 'ETF inflows can improve BTC market liquidity.',
+                    source: 'CoinDesk',
+                    domain: 'coindesk.com',
+                    url: 'https://www.coindesk.com/markets/2026/04/17/bitcoin-etf-inflows/',
+                    publishedAt: '2026-04-17T18:00:00.000Z',
+                    tags: ['BTC', 'ETF'],
+                    rawSnippet: '',
+                }),
+            ],
+        },
+        {
+            category: 'ai',
+            ok: true,
+            candidates: [],
+        },
+    ], WINDOW);
+
+    assert.equal(digest.brief?.riskBias, 'risk_off');
+    assert.match(digest.brief?.headline || '', /风险偏好降温|risk-off/);
+    assert.ok(digest.brief?.driverTags.includes('通胀'));
+    assert.equal(digest.brief?.driverTags.includes('聚合'), false);
+    assert.ok(digest.brief?.affectedAssets.includes('BTC'));
+    assert.ok((digest.brief?.latestSignals || []).length >= 2);
 });
 
 test('file storage saves latest digest and reuses an existing same-window digest', async () => {

@@ -44,7 +44,7 @@ test('wei-shen universe helpers only keep the explicit five-coin whitelist', () 
     assert.equal(WEI_SHEN_UNIVERSE.length, 5);
 });
 
-test('live visibility keeps wei-shen B trades and C observations while filtering other low-confidence trades', () => {
+test('live visibility keeps wei-shen B trades and hides C observations while filtering other low-confidence trades', () => {
     const weiBSignal = createSignal({
         confidence: 84,
         executionMode: 'trade',
@@ -62,6 +62,6 @@ test('live visibility keeps wei-shen B trades and C observations while filtering
     });
 
     assert.equal(isStrategySignalVisible(weiBSignal, 85), true);
-    assert.equal(isStrategySignalVisible(weiCSignal, 85), true);
+    assert.equal(isStrategySignalVisible(weiCSignal, 85), false);
     assert.equal(isStrategySignalVisible(otherLowConfidence, 85), false);
 });

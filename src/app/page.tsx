@@ -20,6 +20,7 @@ import { useStrategyScanner } from '@/hooks/useStrategyScanner';
 import { useWatchlists } from '@/hooks/useWatchlists';
 import { formatPrice } from '@/lib/risk/priceUtils';
 import { StrategySignal } from '@/lib/strategyTypes';
+import type { DeepPartial, StrategyParameterConfigMap } from '@/lib/strategyParameters';
 import {
   isHeavyMarketPayloadFresh,
   isTimedPayloadFresh,
@@ -126,6 +127,7 @@ export default function Home() {
   const [enableHeavyMarket, setEnableHeavyMarket] = useState(false);
   const [enableDeferredIndicators, setEnableDeferredIndicators] = useState(false);
   const [isDemoMode, setIsDemoMode] = useState(false);
+  const [strategyParameterOverrides, setStrategyParameterOverrides] = useState<DeepPartial<StrategyParameterConfigMap>>({});
   const {
     watchlists,
     activeWatchlist,
@@ -375,7 +377,9 @@ export default function Home() {
   );
 
   // Run strategy scanner
-  const { signals, dismissSignal, clearAll: clearAllSignals } = useStrategyScanner(strategyScanData);
+  const { signals, dismissSignal, clearAll: clearAllSignals } = useStrategyScanner(strategyScanData, {
+    parameterOverrides: strategyParameterOverrides,
+  });
   const demoSignals = useMemo<StrategySignal[]>(() => {
     if (!isDemoMode) {
       return [];
@@ -521,7 +525,10 @@ export default function Home() {
         />
       )}
       {activeTab === 'trading' && (
-        <SimulatedTrading />
+        <SimulatedTrading
+          strategyParameterOverrides={strategyParameterOverrides}
+          onStrategyParameterOverridesChange={setStrategyParameterOverrides}
+        />
       )}
 
       {/* Shared ChartDrawer for all tabs */}

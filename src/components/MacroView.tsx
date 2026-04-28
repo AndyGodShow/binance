@@ -184,7 +184,7 @@ export default function MacroView() {
                                                     : styles.toneNegative
                                         }`}
                                     >
-                                        {source.status === 'live' ? '正常' : source.status === 'fallback' ? '回退' : '异常'}
+                                        {source.status === 'live' ? '正常' : source.status === 'fallback' ? '备用源' : '异常'}
                                     </span>
                                     {source.detail && <span className={styles.sourceDetail}>{source.detail}</span>}
                                 </div>

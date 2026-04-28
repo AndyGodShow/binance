@@ -75,7 +75,7 @@ async function generateDailyNewsDigestInner(options: GenerateOptions = {}): Prom
                 generated: false,
                 reusedExisting: true,
                 storageMode: storage.mode,
-                message: 'Reused existing digest for the same rolling window',
+                message: 'Reused existing important news digest for the same rolling window',
             };
         }
     }
@@ -94,7 +94,7 @@ async function generateDailyNewsDigestInner(options: GenerateOptions = {}): Prom
                 generated: false,
                 reusedExisting: true,
                 storageMode: storage.mode,
-                message: 'Generation produced no usable items; returned previous digest',
+                message: 'Generation produced no usable important news items; returned previous digest',
             };
         }
 
@@ -103,7 +103,7 @@ async function generateDailyNewsDigestInner(options: GenerateOptions = {}): Prom
             generated: false,
             reusedExisting: false,
             storageMode: storage.mode,
-            message: 'Generation produced no usable items',
+            message: 'Generation produced no usable important news items',
         };
     }
 

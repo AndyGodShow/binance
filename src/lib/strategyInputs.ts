@@ -127,12 +127,22 @@ export const WEI_SHEN_INPUT_FIELDS = [
     'strategyContexts',
 ] as const;
 
+export const SENTIMENT_HOTSPOT_INPUT_FIELDS = [
+    'symbol',
+    'lastPrice',
+    'priceChangePercent',
+    'quoteVolume',
+    'fundingRate',
+    'strategyContexts',
+] as const;
+
 export type StrongBreakoutStrategyInput = Pick<TickerData, (typeof STRONG_BREAKOUT_INPUT_FIELDS)[number]>;
 export type TrendConfirmationStrategyInput = Pick<TickerData, (typeof TREND_CONFIRMATION_INPUT_FIELDS)[number]>;
 export type CapitalInflowStrategyInput = Pick<TickerData, (typeof CAPITAL_INFLOW_INPUT_FIELDS)[number]>;
 export type RsrsStrategyInput = Pick<TickerData, (typeof RSRS_INPUT_FIELDS)[number]>;
 export type VolatilitySqueezeStrategyInput = Pick<TickerData, (typeof VOLATILITY_SQUEEZE_INPUT_FIELDS)[number]>;
 export type WeiShenStrategyInput = Pick<TickerData, (typeof WEI_SHEN_INPUT_FIELDS)[number]>;
+export type SentimentHotspotStrategyInput = Pick<TickerData, (typeof SENTIMENT_HOTSPOT_INPUT_FIELDS)[number]>;
 
 export const STRATEGY_INPUT_CONTRACTS = {
     'strong-breakout': STRONG_BREAKOUT_INPUT_FIELDS,
@@ -141,6 +151,7 @@ export const STRATEGY_INPUT_CONTRACTS = {
     'rsrs-trend': RSRS_INPUT_FIELDS,
     'volatility-squeeze': VOLATILITY_SQUEEZE_INPUT_FIELDS,
     'wei-shen-ledger': WEI_SHEN_INPUT_FIELDS,
+    'sentiment-hotspot': SENTIMENT_HOTSPOT_INPUT_FIELDS,
 } as const;
 
 export function toStrongBreakoutStrategyInput(ticker: TickerData): StrongBreakoutStrategyInput {
@@ -165,4 +176,8 @@ export function toVolatilitySqueezeStrategyInput(ticker: TickerData): Volatility
 
 export function toWeiShenStrategyInput(ticker: TickerData): WeiShenStrategyInput {
     return pickTickerFields(ticker, WEI_SHEN_INPUT_FIELDS);
+}
+
+export function toSentimentHotspotStrategyInput(ticker: TickerData): SentimentHotspotStrategyInput {
+    return pickTickerFields(ticker, SENTIMENT_HOTSPOT_INPUT_FIELDS);
 }

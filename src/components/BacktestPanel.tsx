@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from 'react';
+import type { Dispatch, SetStateAction } from 'react';
 import { historicalDataFetcher, HistoricalDataFetcher } from '@/lib/historicalDataFetcher';
 import { BacktestEngine, BacktestResult, BacktestConfig, Trade } from '@/lib/backtestEngine';
 import { strategyRegistry } from '@/strategies/registry';
@@ -12,7 +13,12 @@ import { calculateRiskManagement } from '@/lib/risk/riskCalculator';
 import { applyRiskConfigOverrides } from '@/lib/risk/overrideRiskManagement';
 import { buildHistoricalTickerOverrides, getRequiredHistoricalIntervals } from '@/lib/historicalMultiTimeframe';
 import { buildBacktestDiagnostics, BacktestDiagnostics } from '@/lib/backtestDiagnostics';
-import { runBacktestHistoryPreflight, type BacktestHistoryPreflightReport } from '@/lib/backtestHistoryPreflight';
+import { buildExecutionIntervalFallbackCandidates as buildExecutionIntervalFallbackCandidateList } from '@/lib/backtestExecutionResolution';
+import {
+    resolveExecutableBacktestRange,
+    runBacktestHistoryPreflight,
+    type BacktestHistoryPreflightReport,
+} from '@/lib/backtestHistoryPreflight';
 import { runPortfolioBacktest, PortfolioBacktestResult } from '@/lib/portfolioBacktestEngine';
 import { createStrategyRuntimeState } from '@/lib/strategyRuntimeState';
 import {
@@ -68,6 +74,8 @@ interface BacktestRunDetail {
     diagnostics: BacktestDiagnostics;
     dataQuality: DataQualityMetrics;
     preflight: BacktestHistoryPreflightReport;
+    rangeAdjusted: boolean;
+    rangeAdjustmentReason?: string;
 }
 
 interface BatchBacktestItem {
@@ -86,9 +94,16 @@ interface BacktestTaskResult {
     error?: Error;
 }
 
+interface SymbolIssueDetail {
+    symbol: string;
+    reason: string;
+}
+
 interface SymbolValidationResult {
     supportedSymbols: string[];
     skippedSymbols: string[];
+    skippedDetails: SymbolIssueDetail[];
+    executionIntervalsBySymbol: Record<string, string>;
 }
 
 interface SymbolValidationProgress {
@@ -107,7 +122,33 @@ interface BacktestValidationStage {
     minCount: number;
 }
 
+interface ProbeBacktestValidationResult {
+    ok: boolean;
+    reason?: string;
+}
+
+interface SymbolValidationSuccess {
+    symbol: string;
+    ok: true;
+    executionInterval: string;
+    degraded: boolean;
+    reason?: undefined;
+}
+
+interface SymbolValidationFailure {
+    symbol: string;
+    ok: false;
+    reason: string;
+}
+
+type SymbolValidationProbeResult = SymbolValidationSuccess | SymbolValidationFailure;
+
 const MAX_BACKTEST_CONCURRENCY = 2;
+
+interface BacktestPanelProps {
+    strategyParameterOverrides?: DeepPartial<StrategyParameterConfigMap>;
+    onStrategyParameterOverridesChange?: Dispatch<SetStateAction<DeepPartial<StrategyParameterConfigMap>>>;
+}
 
 async function requestHistoricalDataDownload(
     symbol: string,
@@ -346,19 +387,24 @@ function buildBacktestValidationStages(params: {
     preset: PresetRange;
     signalInterval: string;
     executionSelection: ExecutionIntervalOption;
+    executionIntervalOverride?: string;
     parameterOverrides?: DeepPartial<StrategyParameterConfigMap>;
 }): BacktestValidationStage[] {
-    const resolvedIntervals = resolveStrategyBacktestIntervalsWithOverrides(
+    const baseResolvedIntervals = resolveStrategyBacktestIntervalsWithOverrides(
         params.strategyId,
         params.signalInterval,
         params.executionSelection,
         params.parameterOverrides,
     );
+    const resolvedIntervals = {
+        ...baseResolvedIntervals,
+        executionInterval: params.executionIntervalOverride ?? baseResolvedIntervals.executionInterval,
+    };
     const { startTime, endTime } = HistoricalDataFetcher.getPresetRange(params.preset);
     const stages = buildSignalValidationStages(resolvedIntervals.signalInterval, startTime, endTime);
     const lookbackStartTime = Math.max(0, startTime - HISTORICAL_LOOKBACK_BUFFER_MS);
 
-    getRequiredHistoricalIntervals(params.strategyId)
+    getRequiredHistoricalIntervals(params.strategyId, params.parameterOverrides)
         .filter((interval) => interval !== resolvedIntervals.signalInterval)
         .forEach((interval) => {
             stages.push({
@@ -381,11 +427,29 @@ function buildBacktestValidationStages(params: {
     return stages;
 }
 
+function resolveExecutionIntervalFallbackCandidates(params: {
+    strategyId: string;
+    signalInterval: string;
+    executionSelection: ExecutionIntervalOption;
+    parameterOverrides?: DeepPartial<StrategyParameterConfigMap>;
+}): string[] {
+    const resolvedIntervals = resolveStrategyBacktestIntervalsWithOverrides(
+        params.strategyId,
+        params.signalInterval,
+        params.executionSelection,
+        params.parameterOverrides,
+    );
+    return buildExecutionIntervalFallbackCandidateList({
+        preferredExecutionInterval: resolvedIntervals.executionInterval,
+        signalInterval: resolvedIntervals.signalInterval,
+    });
+}
+
 function isRetryableValidationStatus(status: number): boolean {
     return status === 408 || status === 429 || status >= 500;
 }
 
-async function probeBacktestValidationStage(symbol: string, stage: BacktestValidationStage): Promise<boolean> {
+async function probeBacktestValidationStage(symbol: string, stage: BacktestValidationStage): Promise<ProbeBacktestValidationResult> {
     for (let attempt = 0; attempt < 3; attempt += 1) {
         try {
             const response = await fetch(buildBacktestValidationUrl(symbol, stage));
@@ -393,28 +457,41 @@ async function probeBacktestValidationStage(symbol: string, stage: BacktestValid
             const count = Array.isArray(payload?.data) ? payload.data.length : 0;
 
             if (response.ok) {
-                return count >= stage.minCount;
+                return count > 0 || stage.name.startsWith('mtf-')
+                    ? { ok: true }
+                    : {
+                        ok: false,
+                        reason: `${stage.name} 没有可用 K 线`,
+                    };
             }
 
             if (shouldDeferBacktestValidationFailure(response.status, payload)) {
-                return true;
+                return { ok: true };
             }
 
             if (!isRetryableValidationStatus(response.status) || attempt === 2) {
-                return false;
+                const payloadMessage = typeof payload?.error === 'string'
+                    ? payload.error
+                    : typeof payload?.details === 'string'
+                        ? payload.details
+                        : `HTTP ${response.status}`;
+                return {
+                    ok: false,
+                    reason: `${stage.name} 请求失败：${payloadMessage}`,
+                };
             }
         } catch {
             if (attempt === 2) {
                 // Network jitter during batch preflight should not block the whole batch.
                 // The actual backtest run still performs stricter per-symbol data checks.
-                return true;
+                return { ok: true };
             }
         }
 
         await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
     }
 
-    return false;
+    return { ok: false, reason: `${stage.name} 校验未通过` };
 }
 
 function intervalToMs(interval: string): number {
@@ -556,21 +633,45 @@ async function validateBacktestSymbols(
     const invalidSymbols = symbols
         .map((symbol) => symbol.trim().toUpperCase())
         .filter((symbol) => symbol && (!isBacktestSymbolCandidate(symbol) || (strategyUniverse ? !WEI_SHEN_UNIVERSE.includes(symbol as (typeof WEI_SHEN_UNIVERSE)[number]) : false)));
+    const invalidDetails = invalidSymbols.map((symbol) => ({
+        symbol,
+        reason: strategyUniverse && !WEI_SHEN_UNIVERSE.includes(symbol as (typeof WEI_SHEN_UNIVERSE)[number])
+            ? '不在该策略允许的币池内'
+            : '币种格式不符合 U 本位回测要求',
+    }));
 
-    const validationStages = buildBacktestValidationStages(options);
+    const executionIntervalCandidates = resolveExecutionIntervalFallbackCandidates(options);
     let completedCount = 0;
     let supportedCount = 0;
     let skippedCount = 0;
 
-    const probeResults = await runWithConcurrency(
+    const probeResults = await runWithConcurrency<string, SymbolValidationProbeResult>(
         uniqueCandidates,
         SYMBOL_VALIDATION_CONCURRENCY,
         async (symbol) => {
-            for (const stage of validationStages) {
-                const ok = await probeBacktestValidationStage(symbol, stage);
-                if (!ok) {
+            let lastFailureReason = '';
+
+            for (const candidateExecutionInterval of executionIntervalCandidates) {
+                const validationStages = buildBacktestValidationStages({
+                    ...options,
+                    executionIntervalOverride: candidateExecutionInterval,
+                });
+                let candidatePassed = true;
+
+                for (const stage of validationStages) {
+                    const probe = await probeBacktestValidationStage(symbol, stage);
+                    if (!probe.ok) {
+                        candidatePassed = false;
+                        lastFailureReason = probe.reason || `${stage.name} 校验未通过`;
+                        break;
+                    }
+
+                    await new Promise((resolve) => setTimeout(resolve, 80));
+                }
+
+                if (candidatePassed) {
                     completedCount += 1;
-                    skippedCount += 1;
+                    supportedCount += 1;
                     options.onProgress?.({
                         symbol,
                         completed: completedCount,
@@ -580,15 +681,15 @@ async function validateBacktestSymbols(
                     });
                     return {
                         symbol,
-                        ok: false,
+                        ok: true,
+                        executionInterval: candidateExecutionInterval,
+                        degraded: candidateExecutionInterval !== executionIntervalCandidates[0],
                     };
                 }
-
-                await new Promise((resolve) => setTimeout(resolve, 80));
             }
 
             completedCount += 1;
-            supportedCount += 1;
+            skippedCount += 1;
             options.onProgress?.({
                 symbol,
                 completed: completedCount,
@@ -598,7 +699,8 @@ async function validateBacktestSymbols(
             });
             return {
                 symbol,
-                ok: true,
+                ok: false,
+                reason: lastFailureReason || '历史数据校验未通过',
             };
         }
     );
@@ -610,11 +712,33 @@ async function validateBacktestSymbols(
         ...invalidSymbols,
         ...probeResults.filter((result) => !result.ok).map((result) => result.symbol),
     ];
+    const skippedDetails = [
+        ...invalidDetails,
+        ...probeResults
+            .filter((result) => !result.ok)
+            .map((result) => ({
+                symbol: result.symbol,
+                reason: result.reason || '历史数据校验未通过',
+            })),
+    ];
+    const executionIntervalsBySymbol = Object.fromEntries(
+        probeResults
+            .filter((result): result is SymbolValidationSuccess => result.ok)
+            .map((result) => [result.symbol, result.executionInterval])
+    );
 
-    return { supportedSymbols, skippedSymbols };
+    return {
+        supportedSymbols,
+        skippedSymbols,
+        skippedDetails,
+        executionIntervalsBySymbol,
+    };
 }
 
-export default function BacktestPanel() {
+export default function BacktestPanel({
+    strategyParameterOverrides: controlledStrategyParameterOverrides,
+    onStrategyParameterOverridesChange,
+}: BacktestPanelProps = {}) {
     const [interval, setInterval] = useState('1h');
     const [executionInterval, setExecutionInterval] = useState<ExecutionIntervalOption>('1m');
     const [preset, setPreset] = useState<PresetRange>('30d');
@@ -629,7 +753,9 @@ export default function BacktestPanel() {
     const [customSymbols, setCustomSymbols] = useState('BTCUSDT,ETHUSDT,SOLUSDT');
     const [maxConcurrentPositions, setMaxConcurrentPositions] = useState(3);
     const [positionSizePercent, setPositionSizePercent] = useState(30);
-    const [strategyParameterOverrides, setStrategyParameterOverrides] = useState<DeepPartial<StrategyParameterConfigMap>>({});
+    const [uncontrolledStrategyParameterOverrides, setUncontrolledStrategyParameterOverrides] = useState<DeepPartial<StrategyParameterConfigMap>>({});
+    const strategyParameterOverrides = controlledStrategyParameterOverrides ?? uncontrolledStrategyParameterOverrides;
+    const setStrategyParameterOverrides = onStrategyParameterOverridesChange ?? setUncontrolledStrategyParameterOverrides;
 
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -640,6 +766,9 @@ export default function BacktestPanel() {
     const [batchResults, setBatchResults] = useState<BatchBacktestItem[]>([]);
     const [failedSymbols, setFailedSymbols] = useState<string[]>([]);
     const [skippedSymbols, setSkippedSymbols] = useState<string[]>([]);
+    const [failedDetails, setFailedDetails] = useState<SymbolIssueDetail[]>([]);
+    const [skippedDetails, setSkippedDetails] = useState<SymbolIssueDetail[]>([]);
+    const [executionIntervalsBySymbol, setExecutionIntervalsBySymbol] = useState<Record<string, string>>({});
     const [portfolioResult, setPortfolioResult] = useState<PortfolioBacktestResult | null>(null);
     const [portfolioTradePage, setPortfolioTradePage] = useState(1);
     const [detailTradePage, setDetailTradePage] = useState(1);
@@ -681,11 +810,20 @@ export default function BacktestPanel() {
             return symbols;
         }
 
-        const symbols = (await fetchSymbolsByVolume()).slice(0, topN);
-        if (symbols.length === 0) {
+        const candidateLimit = Math.max(topN * 3, topN + 20);
+        const topCandidates = (await fetchSymbolsByVolume()).slice(0, candidateLimit);
+        if (topCandidates.length === 0) {
             throw new Error('未获取到可回测币种');
         }
-        return symbols;
+        return topCandidates;
+    };
+
+    const getTargetSupportedSymbolCount = (candidateCount: number) => {
+        if (symbolSource === 'top') {
+            return Math.min(topN, candidateCount);
+        }
+
+        return candidateCount;
     };
 
     const runSingleBacktest = async (
@@ -693,7 +831,8 @@ export default function BacktestPanel() {
         strategyId: string,
         activePreset: PresetRange,
         activeInterval: string,
-        activeExecutionSelection: ExecutionIntervalOption
+        activeExecutionSelection: ExecutionIntervalOption,
+        executionIntervalOverride?: string,
     ): Promise<BacktestRunDetail> => {
         const strategy = strategies.find((item) => item.id === strategyId);
         if (!strategy) {
@@ -706,9 +845,14 @@ export default function BacktestPanel() {
             activeExecutionSelection,
             strategyParameterOverrides,
         );
-        const { startTime, endTime } = HistoricalDataFetcher.getPresetRange(activePreset);
-        const daysDiff = (endTime - startTime) / DAY_MS;
-        const archiveDateRange = getArchiveDateRange(startTime, endTime);
+        const activeExecutionInterval = executionIntervalOverride ?? resolvedExecutionInterval;
+        const requestedRange = HistoricalDataFetcher.getPresetRange(activePreset);
+        let activeStartTime = requestedRange.startTime;
+        let activeEndTime = requestedRange.endTime;
+        let rangeAdjusted = false;
+        let rangeAdjustmentReason: string | undefined;
+        const daysDiff = (requestedRange.endTime - requestedRange.startTime) / DAY_MS;
+        const archiveDateRange = getArchiveDateRange(requestedRange.startTime, requestedRange.endTime);
         const normalizedSymbol = symbol.trim().toUpperCase();
         let nextDownloadStatus = '';
 
@@ -742,28 +886,57 @@ export default function BacktestPanel() {
             }
         }
 
-        const klines = await historicalDataFetcher.fetchRangeData(
+        let klines = await historicalDataFetcher.fetchRangeData(
             normalizedSymbol,
             resolvedSignalInterval,
-            startTime,
-            endTime
+            activeStartTime,
+            activeEndTime
         );
 
-        const preflight = await runBacktestHistoryPreflight({
+        let preflight = await runBacktestHistoryPreflight({
             dataFetcher: historicalDataFetcher,
             strategyId,
             symbol: normalizedSymbol,
-            startTime,
-            endTime,
+            startTime: activeStartTime,
+            endTime: activeEndTime,
             signalInterval: resolvedSignalInterval,
-            executionInterval: resolvedExecutionInterval,
+            executionInterval: activeExecutionInterval,
             parameterOverrides: strategyParameterOverrides,
         });
 
         if (!preflight.passed) {
-            throw new Error(
-                `历史数据 preflight 未通过：${preflight.reasons[0] || `${normalizedSymbol} 关键周期覆盖不足`}`,
+            const executableRange = resolveExecutableBacktestRange(preflight);
+            if (!executableRange) {
+                throw new Error(
+                    `历史数据 preflight 未通过：${preflight.reasons[0] || `${normalizedSymbol} 关键周期覆盖不足`}`,
+                );
+            }
+
+            activeStartTime = executableRange.startTime;
+            activeEndTime = executableRange.endTime;
+            rangeAdjusted = executableRange.degraded;
+            rangeAdjustmentReason = executableRange.reason;
+            setDownloadStatus(
+                `🧭 ${normalizedSymbol} 历史数据不足以覆盖完整目标周期，已改用 ` +
+                `${new Date(activeStartTime).toLocaleDateString()} - ${new Date(activeEndTime).toLocaleDateString()} 可用区间。`
             );
+
+            klines = await historicalDataFetcher.fetchRangeData(
+                normalizedSymbol,
+                resolvedSignalInterval,
+                activeStartTime,
+                activeEndTime,
+            );
+            preflight = await runBacktestHistoryPreflight({
+                dataFetcher: historicalDataFetcher,
+                strategyId,
+                symbol: normalizedSymbol,
+                startTime: activeStartTime,
+                endTime: activeEndTime,
+                signalInterval: resolvedSignalInterval,
+                executionInterval: activeExecutionInterval,
+                parameterOverrides: strategyParameterOverrides,
+            });
         }
 
         if (klines.length === 0) {
@@ -778,8 +951,8 @@ export default function BacktestPanel() {
         const historicalTickerOverrides = await buildHistoricalTickerOverrides({
             strategyId,
             symbol: normalizedSymbol,
-            startTime,
-            endTime,
+            startTime: activeStartTime,
+            endTime: activeEndTime,
             baseInterval: resolvedSignalInterval,
             baseKlines: klines,
             parameterOverrides: strategyParameterOverrides,
@@ -843,13 +1016,13 @@ export default function BacktestPanel() {
             strategyName: strategy.name,
             symbol: normalizedSymbol,
             signalInterval: resolvedSignalInterval,
-            executionInterval: resolvedExecutionInterval,
-            simulationEndTime: endTime,
-            fetchExecutionKlines: resolvedExecutionInterval === resolvedSignalInterval
+            executionInterval: activeExecutionInterval,
+            simulationEndTime: activeEndTime,
+            fetchExecutionKlines: activeExecutionInterval === resolvedSignalInterval
                 ? undefined
                 : (nextStartTime, nextEndTime) => historicalDataFetcher.fetchRangeData(
                     normalizedSymbol,
-                    resolvedExecutionInterval,
+                    activeExecutionInterval,
                     nextStartTime,
                     nextEndTime,
                     { includeAuxiliary: false }
@@ -859,8 +1032,8 @@ export default function BacktestPanel() {
         const diagnostics = buildBacktestDiagnostics({
             strategyId: strategy.id,
             interval: resolvedSignalInterval,
-            executionInterval: resolvedExecutionInterval,
-            requestedDays: daysDiff,
+            executionInterval: activeExecutionInterval,
+            requestedDays: (activeEndTime - activeStartTime) / DAY_MS,
             dataQuality,
             hasHistoricalMultiTimeframe: historicalTickerOverrides.size > 0,
         });
@@ -871,6 +1044,8 @@ export default function BacktestPanel() {
             diagnostics,
             dataQuality,
             preflight,
+            rangeAdjusted,
+            rangeAdjustmentReason,
         };
     };
 
@@ -889,6 +1064,9 @@ export default function BacktestPanel() {
         setBatchResults([]);
         setFailedSymbols([]);
         setSkippedSymbols([]);
+        setFailedDetails([]);
+        setSkippedDetails([]);
+        setExecutionIntervalsBySymbol({});
         setPortfolioResult(null);
         setPortfolioTradePage(1);
         setDetailTradePage(1);
@@ -897,7 +1075,12 @@ export default function BacktestPanel() {
             const symbols = await resolveSymbols();
             setDownloadStatus(`🔎 已选中 ${symbols.length} 个币种，正在检查历史回测可用性...`);
 
-            const { supportedSymbols, skippedSymbols: nextSkippedSymbols } = await validateBacktestSymbols(symbols, {
+            const {
+                supportedSymbols,
+                skippedSymbols: nextSkippedSymbols,
+                skippedDetails: nextSkippedDetails,
+                executionIntervalsBySymbol: nextExecutionIntervalsBySymbol,
+            } = await validateBacktestSymbols(symbols, {
                 strategyId: selectedStrategy,
                 preset,
                 signalInterval: interval,
@@ -916,31 +1099,61 @@ export default function BacktestPanel() {
                 throw new Error('所选币池都无法通过历史数据校验，请缩小范围或改用自定义币种。');
             }
 
-            setResolvedSymbols(supportedSymbols);
+            const targetSupportedCount = getTargetSupportedSymbolCount(symbols.length);
+            const runnableSymbols = supportedSymbols.slice(0, targetSupportedCount);
+            const runnableExecutionIntervalsBySymbol = Object.fromEntries(
+                runnableSymbols.map((symbol) => [symbol, nextExecutionIntervalsBySymbol[symbol]])
+            );
+
+            setResolvedSymbols(runnableSymbols);
             setSkippedSymbols(nextSkippedSymbols);
+            setSkippedDetails(nextSkippedDetails);
+            setExecutionIntervalsBySymbol(runnableExecutionIntervalsBySymbol);
+            const preferredExecutionInterval = resolveStrategyBacktestIntervalsWithOverrides(
+                selectedStrategy,
+                interval,
+                executionInterval,
+                strategyParameterOverrides,
+            ).executionInterval;
+            const degradedSymbols = runnableSymbols.filter((symbol) =>
+                runnableExecutionIntervalsBySymbol[symbol] &&
+                runnableExecutionIntervalsBySymbol[symbol] !== preferredExecutionInterval
+            );
+            const replacementCount = symbolSource === 'top'
+                ? Math.max(0, runnableSymbols.length - Math.min(topN, symbols.slice(0, topN).filter((symbol) => supportedSymbols.includes(symbol)).length))
+                : 0;
             setDownloadStatus(
-                `🔎 历史数据校验完成：可回测 ${supportedSymbols.length} 个` +
+                `🔎 历史数据校验完成：可回测 ${runnableSymbols.length}/${targetSupportedCount} 个` +
+                (replacementCount > 0 ? `，自动补位 ${replacementCount} 个` : '') +
                 (nextSkippedSymbols.length > 0 ? `，跳过 ${nextSkippedSymbols.length} 个` : '') +
+                (degradedSymbols.length > 0 ? `，${degradedSymbols.length} 个自动降级执行周期` : '') +
                 '，开始并发回测...'
             );
 
             let finishedCount = 0;
             let successCount = 0;
             const taskResults = await runWithConcurrency<string, BacktestTaskResult>(
-                supportedSymbols,
+                runnableSymbols,
                 MAX_BACKTEST_CONCURRENCY,
                 async (symbol, index) => {
-                    setDownloadStatus(`⏳ 正在回测 ${symbol} (${index + 1}/${supportedSymbols.length})，已完成 ${finishedCount}/${supportedSymbols.length}...`);
+                    setDownloadStatus(`⏳ 正在回测 ${symbol} (${index + 1}/${runnableSymbols.length})，已完成 ${finishedCount}/${runnableSymbols.length}...`);
 
                     try {
-                        const run = await runSingleBacktest(symbol, selectedStrategy, preset, interval, executionInterval);
+                        const run = await runSingleBacktest(
+                            symbol,
+                            selectedStrategy,
+                            preset,
+                            interval,
+                            executionInterval,
+                            runnableExecutionIntervalsBySymbol[symbol],
+                        );
                         finishedCount += 1;
                         successCount += 1;
-                        setDownloadStatus(`⏳ 已完成 ${finishedCount}/${supportedSymbols.length}，成功 ${successCount} 个...`);
+                        setDownloadStatus(`⏳ 已完成 ${finishedCount}/${runnableSymbols.length}，成功 ${successCount} 个...`);
                         return { symbol, run };
                     } catch (runError) {
                         finishedCount += 1;
-                        setDownloadStatus(`⏳ 已完成 ${finishedCount}/${supportedSymbols.length}，成功 ${successCount} 个...`);
+                        setDownloadStatus(`⏳ 已完成 ${finishedCount}/${runnableSymbols.length}，成功 ${successCount} 个...`);
                         logger.error(`Backtest failed for ${symbol}`, runError as Error);
                         return {
                             symbol,
@@ -949,13 +1162,18 @@ export default function BacktestPanel() {
                     }
                 }
             );
-
             const completedRuns = taskResults
                 .filter((item): item is BacktestTaskResult & { run: BacktestRunDetail } => Boolean(item.run))
                 .map((item) => item.run);
             const failed = taskResults
                 .filter((item) => item.error)
                 .map((item) => item.symbol);
+            const nextFailedDetails = taskResults
+                .filter((item): item is BacktestTaskResult & { error: Error } => Boolean(item.error))
+                .map((item) => ({
+                    symbol: item.symbol,
+                    reason: item.error.message,
+                }));
 
             if (completedRuns.length === 0) {
                 throw new Error('批量回测失败，所有币种都未跑出结果');
@@ -988,6 +1206,7 @@ export default function BacktestPanel() {
             setDetailRun(sortedRuns[0]);
             setDetailTradePage(1);
             setFailedSymbols(failed);
+            setFailedDetails(nextFailedDetails);
             setPortfolioResult(nextPortfolioResult);
             setPortfolioTradePage(1);
 
@@ -1275,12 +1494,31 @@ export default function BacktestPanel() {
             {resolvedSymbols.length > 0 && (
                 <div className={styles.poolInfo}>
                     本次币池：{resolvedSymbols.join(', ')}
+                    {Object.keys(executionIntervalsBySymbol).length > 0 && (
+                        <div className={styles.executionMap}>
+                            执行周期：{resolvedSymbols.map((symbol) =>
+                                `${symbol}=${executionIntervalsBySymbol[symbol] || '默认'}`
+                            ).join(', ')}
+                        </div>
+                    )}
                 </div>
             )}
 
             {skippedSymbols.length > 0 && (
                 <div className={styles.info}>
                     已跳过不可回测标的：{skippedSymbols.join(', ')}
+                    {skippedDetails.length > 0 && (
+                        <ul className={styles.issueList}>
+                            {skippedDetails.slice(0, 8).map((item) => (
+                                <li key={`skipped-${item.symbol}`}>
+                                    <strong>{item.symbol}</strong>：{item.reason}
+                                </li>
+                            ))}
+                            {skippedDetails.length > 8 && (
+                                <li>还有 {skippedDetails.length - 8} 个标的被跳过。</li>
+                            )}
+                        </ul>
+                    )}
                 </div>
             )}
 
@@ -1375,6 +1613,18 @@ export default function BacktestPanel() {
                     {failedSymbols.length > 0 && (
                         <div className={styles.errorList}>
                             失败币种：{failedSymbols.join(', ')}
+                            {failedDetails.length > 0 && (
+                                <ul className={styles.issueList}>
+                                    {failedDetails.slice(0, 8).map((item) => (
+                                        <li key={`failed-${item.symbol}`}>
+                                            <strong>{item.symbol}</strong>：{item.reason}
+                                        </li>
+                                    ))}
+                                    {failedDetails.length > 8 && (
+                                        <li>还有 {failedDetails.length - 8} 个失败原因未展示。</li>
+                                    )}
+                                </ul>
+                            )}
                         </div>
                     )}
                 </div>
@@ -1569,6 +1819,9 @@ export default function BacktestPanel() {
 
                     <div className={styles.detailHint}>
                         当前展示批量结果中的详细回测。信号周期 {detailRun.result.interval}，执行周期 {detailRun.result.executionInterval}。
+                        {detailRun.rangeAdjusted && (
+                            <> 实际区间已收缩为 {new Date(detailRun.result.startTime).toLocaleDateString()} - {new Date(detailRun.result.endTime).toLocaleDateString()}：{detailRun.rangeAdjustmentReason}</>
+                        )}
                     </div>
 
                     <div className={styles.diagnosticsPanel}>

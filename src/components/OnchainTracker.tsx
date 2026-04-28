@@ -23,6 +23,8 @@ const DEFAULT_QUERY = 'PEPE';
 const MAX_QUERY_LENGTH = 64;
 const SUBMIT_COOLDOWN_MS = 2000;
 
+const normalizeQueryInput = (value: string) => value.trim().slice(0, MAX_QUERY_LENGTH) || DEFAULT_QUERY;
+
 const fetcher = async (url: string) => {
     const res = await fetch(url);
     if (!res.ok) {
@@ -62,16 +64,25 @@ export default function OnchainTracker() {
         }
     );
 
-    const selected = data?.selectedToken ?? null;
-    const metrics = data?.metrics ?? null;
-    const analysis = data?.analysis ?? null;
-    const topHolders = data?.topHolders ?? [];
-    const dataQuality = data?.dataQuality ?? null;
+    const displayData = useMemo(() => {
+        if (!data || data.query !== query || data.scope !== scope) {
+            return undefined;
+        }
 
-    const isFallback = data?.sourceMode === 'fallback';
+        return data;
+    }, [data, query, scope]);
+    const selected = displayData?.selectedToken ?? null;
+    const metrics = displayData?.metrics ?? null;
+    const analysis = displayData?.analysis ?? null;
+    const topHolders = displayData?.topHolders ?? [];
+    const dataQuality = displayData?.dataQuality ?? null;
+    const isStaleData = data !== undefined && displayData === undefined;
+
+    const isFallback = displayData?.sourceMode === 'fallback';
+    const isCandidateMapping = displayData?.mappingStatus === 'candidate';
     const fallbackMessage = useMemo(
-        () => getFallbackBannerMessage(data?.fallbackReason),
-        [data?.fallbackReason]
+        () => getFallbackBannerMessage(displayData?.fallbackReason),
+        [displayData?.fallbackReason]
     );
 
     const lastSubmitRef = useRef(0);
@@ -94,7 +105,7 @@ export default function OnchainTracker() {
             cooldownTimerRef.current = null;
         }, SUBMIT_COOLDOWN_MS);
 
-        const nextQuery = input.trim().slice(0, MAX_QUERY_LENGTH) || DEFAULT_QUERY;
+        const nextQuery = normalizeQueryInput(input);
         setQuery(nextQuery);
     }, [input]);
 
@@ -117,14 +128,14 @@ export default function OnchainTracker() {
                 subtitle: '先从币安 Alpha 官方名录定位主地址，再判断它是不是被少数地址主导、筹码是否正在扩散。',
                 badge: 'Alpha 观察',
                 emptyText: '输入一个 Alpha 币后，这里会围绕主地址展示它的控筹情况、筹码分布和持币地址变化。',
-                directText: '已按 Binance Alpha 名录优先锁定主地址进行追踪。',
+                directText: '已按 Binance Alpha 名录优先锁定主地址进行控筹分析。',
             }
             : {
                 label: '币安合约',
-                subtitle: '默认只研究你在币安合约里真正会碰到的币，并优先锁定一个主地址，再看谁在控筹、筹码落在哪一层。',
+                subtitle: '默认只研究你在币安合约里真正会碰到的币，并优先锁定一个可验证主地址，再看谁在控筹、筹码落在哪一层。',
                 badge: '合约主池',
                 emptyText: '输入一个合约币后，这里会围绕主地址展示它的控筹情况、筹码分布和持币地址变化。',
-                directText: '已按币安合约标的优先锁定单一主地址进行追踪。',
+                directText: '已按币安合约标的优先锁定可验证主地址进行控筹分析。',
             }
     ), [scope]);
 
@@ -133,8 +144,8 @@ export default function OnchainTracker() {
             <header className={styles.hero}>
                 <div className={styles.heroMain}>
                     <div className={styles.heroCopy}>
-                        <span className={styles.kicker}>Onchain Research</span>
-                        <h2 className={styles.title}>单币筹码分析台</h2>
+                        <span className={styles.kicker}>Control Analysis</span>
+                        <h2 className={styles.title}>控筹分析</h2>
                         <p className={styles.subtitle}>
                             {scopeMeta.subtitle}
                         </p>
@@ -157,6 +168,7 @@ export default function OnchainTracker() {
                                 className={`${styles.scopeButton} ${scope === 'contracts' ? styles.scopeButtonActive : ''}`}
                                 onClick={() => {
                                     setScope('contracts');
+                                    setQuery(normalizeQueryInput(input));
                                 }}
                             >
                                 币安合约
@@ -166,6 +178,7 @@ export default function OnchainTracker() {
                                 className={`${styles.scopeButton} ${scope === 'alpha' ? styles.scopeButtonActive : ''}`}
                                 onClick={() => {
                                     setScope('alpha');
+                                    setQuery(normalizeQueryInput(input));
                                 }}
                             >
                                 币安 Alpha
@@ -188,6 +201,16 @@ export default function OnchainTracker() {
                 </div>
             )}
 
+            {isCandidateMapping && (
+                <div className={styles.fallbackBanner}>
+                    候选待确认：当前合约地址来自市值、流动性、持币人数和名称匹配的二次筛选，不是官方确认地址，控筹结论请作为小山寨盯盘参考。
+                </div>
+            )}
+
+            {(isLoading || isStaleData) && (
+                <div className={styles.emptyState}>正在加载 {query} 的控筹分析…</div>
+            )}
+
             <div className={styles.singleWorkspace}>
                 <main className={styles.main}>
                     {selected && metrics && analysis ? (
@@ -199,6 +222,7 @@ export default function OnchainTracker() {
                                             <div className={styles.tokenRow}>
                                                 <h3 className={styles.tokenTitle}>{selected.symbol}</h3>
                                                 <span className={styles.scopeBadge}>{scopeMeta.badge}</span>
+                                                {isCandidateMapping && <span className={styles.chainBadge}>候选待确认</span>}
                                                 <span className={styles.chainBadge}>{selected.chainName}</span>
                                                 <span className={styles.scoreBadge}>控筹指数 {analysis.chipScore}</span>
                                             </div>
@@ -322,7 +346,7 @@ export default function OnchainTracker() {
                                     ))}
                                 </div>
                                 <div className={styles.researchFootnote}>
-                                    {data?.notes.map((note, idx) => (
+                                    {displayData?.notes.map((note, idx) => (
                                         <p key={idx}>{note}</p>
                                     ))}
                                 </div>
@@ -363,7 +387,7 @@ export default function OnchainTracker() {
                                     </div>
                                 </div>
                                 <div className={styles.researchFootnote}>
-                                    {data?.notes.map((note, idx) => (
+                                    {displayData?.notes.map((note, idx) => (
                                         <p key={idx}>{note}</p>
                                     ))}
                                 </div>

@@ -60,10 +60,24 @@ test('selectScannerSignalForSymbol prefers tradable signals and applies combo bo
 
     assert.ok(selected);
     assert.equal(selected.strategyId, 'b');
-    assert.equal(selected.confidence, 103);
+    assert.equal(selected.confidence, 100);
     assert.equal(selected.stackCount, 2);
     assert.deepEqual(selected.stackedStrategies, ['A', 'B']);
     assert.equal(selected.comboBonus, 10);
+    assert.deepEqual(selected.stackedSignalDetails?.map((detail) => detail.strategyId), ['a', 'b']);
+    assert.equal(selected.stackedSignalDetails?.[1]?.confidence, 93);
+});
+
+test('selectScannerSignalForSymbol keeps confidence inside the 100 point scale', () => {
+    const selected = selectScannerSignalForSymbol([
+        createSignal({ strategyId: 'a', strategyName: 'A', confidence: 100 }),
+        createSignal({ strategyId: 'b', strategyName: 'B', confidence: 95 }),
+        createSignal({ strategyId: 'c', strategyName: 'C', confidence: 92 }),
+    ]);
+
+    assert.ok(selected);
+    assert.equal(selected.confidence, 100);
+    assert.equal(selected.comboBonus, 20);
 });
 
 test('selectScannerSignalForSymbol falls back to highest-confidence observation when no tradable signal exists', () => {

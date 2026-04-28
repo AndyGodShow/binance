@@ -1,6 +1,24 @@
 import type { StrategySignal } from './strategyTypes.ts';
 import type { TickerData } from './types.ts';
 
+function clampConfidence(value: number): number {
+    return Math.max(0, Math.min(100, value));
+}
+
+function toStackedSignalDetail(signal: StrategySignal) {
+    return {
+        strategyId: signal.strategyId,
+        strategyName: signal.strategyName,
+        direction: signal.direction,
+        confidence: signal.confidence,
+        reason: signal.reason,
+        conditionsMet: signal.conditionsMet,
+        totalConditions: signal.totalConditions,
+        executionMode: signal.executionMode,
+        grade: signal.grade,
+    };
+}
+
 export function buildStrategyScannerTickerDigest(ticker: TickerData): string {
     return JSON.stringify({
         lastPrice: ticker.lastPrice,
@@ -60,7 +78,10 @@ export function buildStrategyScannerTickerDigest(ticker: TickerData): string {
         momentumColor: ticker.momentumColor,
         adx: ticker.adx,
         bandwidthPercentile: ticker.bandwidthPercentile,
-        strategyContexts: ticker.strategyContexts?.weiShen,
+        strategyContexts: {
+            weiShen: ticker.strategyContexts?.weiShen,
+            sentimentHotspot: ticker.strategyContexts?.sentimentHotspot,
+        },
     });
 }
 
@@ -87,9 +108,10 @@ export function selectScannerSignalForSymbol(symbolSignals: StrategySignal[]): S
 
         return {
             ...mainSignal,
-            confidence: mainSignal.confidence + comboBonus,
+            confidence: clampConfidence(mainSignal.confidence + comboBonus),
             stackCount,
             stackedStrategies: tradableSignals.map((signal) => signal.strategyName),
+            stackedSignalDetails: tradableSignals.map(toStackedSignalDetail),
             comboBonus,
         };
     }
@@ -102,6 +124,7 @@ export function selectScannerSignalForSymbol(symbolSignals: StrategySignal[]): S
         ...mainObservation,
         stackCount: 1,
         stackedStrategies: [mainObservation.strategyName],
+        stackedSignalDetails: [toStackedSignalDetail(mainObservation)],
         comboBonus: 0,
     };
 }

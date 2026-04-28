@@ -1,3 +1,5 @@
+import type { SentimentHotspotContext } from './sentimentHotspot.ts';
+
 export type WeiShenSignalGrade = 'A' | 'B' | 'C';
 export type WeiShenExecutionMode = 'trade' | 'observe';
 export type WeiShenEntryType = 'breakout' | 'pullback';
@@ -61,4 +63,5 @@ export interface WeiShenSymbolContext {
 
 export interface StrategyTickerContexts {
     weiShen?: WeiShenSymbolContext;
+    sentimentHotspot?: SentimentHotspotContext;
 }

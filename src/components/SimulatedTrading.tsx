@@ -2,8 +2,18 @@
 
 import BacktestPanel from './BacktestPanel';
 import styles from './SimulatedTrading.module.css';
+import type { DeepPartial, StrategyParameterConfigMap } from '@/lib/strategyParameters';
+import type { Dispatch, SetStateAction } from 'react';
 
-export default function SimulatedTrading() {
+interface SimulatedTradingProps {
+    strategyParameterOverrides?: DeepPartial<StrategyParameterConfigMap>;
+    onStrategyParameterOverridesChange?: Dispatch<SetStateAction<DeepPartial<StrategyParameterConfigMap>>>;
+}
+
+export default function SimulatedTrading({
+    strategyParameterOverrides,
+    onStrategyParameterOverridesChange,
+}: SimulatedTradingProps) {
     return (
         <div className={styles.container}>
             <div className={styles.header}>
@@ -12,7 +22,10 @@ export default function SimulatedTrading() {
             </div>
 
             <div className={styles.content}>
-                <BacktestPanel />
+                <BacktestPanel
+                    strategyParameterOverrides={strategyParameterOverrides}
+                    onStrategyParameterOverridesChange={onStrategyParameterOverridesChange}
+                />
             </div>
         </div>
     );

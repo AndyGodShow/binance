@@ -252,3 +252,63 @@ test('BacktestEngine honors invalidation price before the wider initial stop', a
     assert.equal(result.tradeLegs[0]?.exitReason, 'signal');
     assert.ok(Math.abs((result.tradeLegs[0]?.exitPrice || 0) - 99) < 0.001);
 });
+
+test('BacktestEngine rejects pending execution when lower timeframe bars are missing', async () => {
+    const signalKlines = Array.from({ length: 55 }, (_, index) =>
+        createKline(index, 100, 101, 99, 100)
+    );
+
+    const engine = new BacktestEngine({
+        initialCapital: 10_000,
+        commission: 0,
+        slippage: 0,
+        useStrategyRiskManagement: true,
+    });
+
+    const signalBarTime = signalKlines[50].closeTime;
+    await assert.rejects(
+        () => engine.run({
+            signalKlines,
+            strategyName: 'Missing execution data',
+            symbol: 'BTCUSDT',
+            signalInterval: '1h',
+            executionInterval: '15m',
+            fetchExecutionKlines: async () => [],
+            strategyDetector: (ticker) => {
+                if (ticker.closeTime !== signalBarTime) {
+                    return null;
+                }
+
+                return {
+                    signal: 'long',
+                    confidence: 90,
+                    risk: {
+                        stopLoss: {
+                            price: 98,
+                            percentage: 2,
+                            type: 'fixed',
+                            reason: 'test stop',
+                        },
+                        takeProfit: {
+                            targets: [],
+                            riskRewardRatio: 0,
+                        },
+                        positionSizing: {
+                            percentage: 25,
+                            leverage: 1,
+                            maxRiskAmount: 75,
+                            confidence: 90,
+                            reasoning: 'quarter size',
+                        },
+                        metrics: {
+                            entryPrice: 100,
+                            riskAmount: 75,
+                            potentialProfit: 0,
+                        },
+                    },
+                };
+            },
+        }),
+        /执行层K线缺失/
+    );
+});

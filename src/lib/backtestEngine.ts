@@ -448,6 +448,29 @@ export class BacktestEngine {
         return risk ? JSON.parse(JSON.stringify(risk)) as RiskManagement : undefined;
     }
 
+    private assertExecutionBarsAvailable(params: {
+        bars: KlineData[];
+        symbol: string;
+        executionInterval: string;
+        startExclusive: number;
+        endInclusive: number;
+        currentPosition: BacktestPosition | null;
+        pendingEntry: PendingBacktestEntry | null;
+        pendingExitReason: Trade['exitReason'] | null;
+    }) {
+        if (
+            params.bars.length > 0 ||
+            (!params.currentPosition && !params.pendingEntry && !params.pendingExitReason)
+        ) {
+            return;
+        }
+
+        throw new Error(
+            `执行层K线缺失：${params.symbol} ${params.executionInterval} ` +
+            `${new Date(params.startExclusive).toISOString()} - ${new Date(params.endInclusive).toISOString()}`
+        );
+    }
+
     private processExecutionBars(params: {
         bars: KlineData[];
         currentPosition: BacktestPosition | null;
@@ -875,6 +898,16 @@ export class BacktestEngine {
                 if (previousSignalCloseTime !== null && (currentPosition || pendingEntry || pendingExitReason)) {
                     const executionBars = await executionProvider.getBarsBetween(previousSignalCloseTime, kline.closeTime);
                     executionBarsProcessed += executionBars.length;
+                    this.assertExecutionBarsAvailable({
+                        bars: executionBars,
+                        symbol,
+                        executionInterval,
+                        startExclusive: previousSignalCloseTime,
+                        endInclusive: kline.closeTime,
+                        currentPosition,
+                        pendingEntry,
+                        pendingExitReason,
+                    });
 
                     const executionState = this.processExecutionBars({
                         bars: executionBars,
@@ -947,6 +980,16 @@ export class BacktestEngine {
             if (previousSignalCloseTime !== null && (currentPosition || pendingEntry || pendingExitReason)) {
                 const executionBars = await executionProvider.getBarsBetween(previousSignalCloseTime, simulationEndTime);
                 executionBarsProcessed += executionBars.length;
+                this.assertExecutionBarsAvailable({
+                    bars: executionBars,
+                    symbol,
+                    executionInterval,
+                    startExclusive: previousSignalCloseTime,
+                    endInclusive: simulationEndTime,
+                    currentPosition,
+                    pendingEntry,
+                    pendingExitReason,
+                });
 
                 const executionState = this.processExecutionBars({
                     bars: executionBars,

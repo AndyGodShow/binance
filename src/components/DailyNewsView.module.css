@@ -54,7 +54,7 @@
 
 .heroMeta {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 12px;
 }
 
@@ -98,6 +98,80 @@
 .emptyState span {
     color: var(--primary);
     font-family: 'Roboto Mono', monospace;
+}
+
+.briefPanel {
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr);
+    gap: 16px;
+    padding: 18px;
+    border: 1px solid rgba(252, 213, 53, 0.16);
+    border-radius: 16px;
+    background: rgba(22, 26, 30, 0.72);
+    box-shadow: var(--shadow-sm);
+}
+
+.briefMain {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.briefHeadline {
+    color: var(--text-primary);
+    font-size: 18px;
+    font-weight: 800;
+    line-height: 1.5;
+}
+
+.briefMeta,
+.briefSignals {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.briefMeta span,
+.briefSignals span {
+    display: inline-flex;
+    align-items: center;
+    min-height: 26px;
+    padding: 5px 9px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.briefMeta .briefBias {
+    border-color: rgba(252, 213, 53, 0.2);
+    background: rgba(252, 213, 53, 0.08);
+    color: var(--primary);
+}
+
+.briefMeta .risk_off {
+    border-color: rgba(246, 70, 93, 0.2);
+    background: rgba(246, 70, 93, 0.1);
+    color: #fca5a5;
+}
+
+.briefMeta .risk_on {
+    border-color: rgba(34, 197, 94, 0.2);
+    background: rgba(34, 197, 94, 0.1);
+    color: #86efac;
+}
+
+.briefSignals {
+    align-content: start;
+}
+
+.briefSignals span {
+    width: 100%;
+    justify-content: flex-start;
+    border-radius: 10px;
+    line-height: 1.45;
 }
 
 .categoryGrid {
@@ -164,9 +238,14 @@
 .newsItem {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 9px;
     padding: 16px 18px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.highImpactItem {
+    border-left: 3px solid rgba(246, 70, 93, 0.72);
+    background: linear-gradient(90deg, rgba(246, 70, 93, 0.06), transparent 42%);
 }
 
 .newsItem:last-child {
@@ -175,6 +254,7 @@
 
 .itemTopline,
 .itemMeta,
+.eventMeta,
 .tagRow {
     display: flex;
     align-items: center;
@@ -221,6 +301,46 @@
     font-size: 12px;
 }
 
+.eventMeta span {
+    display: inline-flex;
+    align-items: center;
+    min-height: 24px;
+    padding: 4px 8px;
+    border: 1px solid rgba(59, 130, 246, 0.18);
+    border-radius: 999px;
+    background: rgba(59, 130, 246, 0.08);
+    color: rgba(191, 219, 254, 0.92);
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.expandButton {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    width: fit-content;
+    min-height: 28px;
+    padding: 5px 9px;
+    border: 1px solid rgba(252, 213, 53, 0.16);
+    border-radius: 999px;
+    background: rgba(252, 213, 53, 0.06);
+    color: var(--primary);
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.expandButton:hover {
+    border-color: rgba(252, 213, 53, 0.32);
+    background: rgba(252, 213, 53, 0.1);
+}
+
+.expandedBody {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
 .itemTitle {
     display: inline-flex;
     align-items: flex-start;
@@ -246,6 +366,43 @@
     line-height: 1.65;
 }
 
+.whyItMatters {
+    padding: 10px 12px;
+    border: 1px solid rgba(252, 213, 53, 0.14);
+    border-radius: 10px;
+    background: rgba(252, 213, 53, 0.06);
+    color: rgba(255, 255, 255, 0.78);
+    font-size: 12px;
+    line-height: 1.6;
+}
+
+.watchpoints {
+    display: grid;
+    gap: 6px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.55;
+}
+
+.watchpointLabel {
+    width: fit-content;
+    color: var(--primary);
+    font-size: 11px;
+    font-weight: 800;
+}
+
+.watchpoint {
+    position: relative;
+    padding-left: 12px;
+}
+
+.watchpoint::before {
+    position: absolute;
+    left: 0;
+    content: "•";
+    color: var(--primary);
+}
+
 .tag {
     background: rgba(255, 255, 255, 0.05);
     color: var(--text-secondary);
@@ -261,12 +418,13 @@
 
 @media (max-width: 1180px) {
     .hero,
+    .briefPanel,
     .categoryGrid {
         grid-template-columns: 1fr;
     }
 
     .heroMeta {
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 }
 
@@ -290,5 +448,9 @@
 
     .itemTopline {
         justify-content: flex-start;
+    }
+
+    .briefPanel {
+        padding: 16px;
     }
 }

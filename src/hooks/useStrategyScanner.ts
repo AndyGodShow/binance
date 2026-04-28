@@ -5,21 +5,27 @@ import { TickerData } from '@/lib/types';
 import { StrategySignal, StrategySignalStatus } from '@/lib/strategyTypes';
 import { APP_CONFIG } from '@/lib/config';
 import { strategyRegistry } from '@/strategies/registry';
-import { isStrategySignalVisible } from '@/lib/strategySignalVisibility';
 import {
     buildStrategyScannerTickerDigest,
     selectScannerSignalForSymbol,
 } from '@/lib/strategyScannerSnapshot';
 import { singletonStrategyRuntimeState } from '@/lib/strategyRuntimeState';
-import { isWeiShenUniverseSymbol } from '@/lib/weiShenUniverse';
+import { evaluateSentimentHotspotExitMonitor } from '@/lib/sentimentHotspot';
+import { createDismissedSignalKey } from '@/lib/strategySignalKeys';
+import { detectVisibleStrategySignalsForTicker } from '@/lib/strategyScannerCore';
+import type { DeepPartial, StrategyParameterConfigMap } from '@/lib/strategyParameters';
 
 const MAX_SIGNAL_COUNT = APP_CONFIG.UI.MAX_ACTIVE_SIGNALS;
 const DISMISSED_SIGNALS_STORAGE_KEY = 'dismissedSignals';
 const STORED_SIGNALS_STORAGE_KEY = 'strategySignals';
 const STRONG_BREAKOUT_ID = 'strong-breakout';
+const SENTIMENT_HOTSPOT_ID = 'sentiment-hotspot';
 
 type DismissedSignalMap = Record<string, number>;
 
+interface UseStrategyScannerOptions {
+    parameterOverrides?: DeepPartial<StrategyParameterConfigMap>;
+}
 
 const STATUS_PRIORITY: Record<StrategySignalStatus, number> = {
     active: 2,
@@ -52,6 +58,63 @@ function hasStrongBreakoutReset(ticker: TickerData): boolean {
         && Number.isFinite(breakoutHigh)
         && Number.isFinite(currentPrice)
         && currentPrice <= breakoutHigh;
+}
+
+function calculatePercentChange(current: number, base: number): number {
+    return Number.isFinite(current) && Number.isFinite(base) && base > 0
+        ? ((current - base) / base) * 100
+        : 0;
+}
+
+function applySentimentHotspotExitMonitor(
+    existing: StrategySignal,
+    ticker: TickerData,
+    now: number,
+): StrategySignal {
+    if (existing.strategyId !== SENTIMENT_HOTSPOT_ID) {
+        return existing;
+    }
+
+    const hotspot = ticker.strategyContexts?.sentimentHotspot;
+    const currentPrice = parseFloat(ticker.lastPrice || '0');
+    const signalPrice = existing.price ?? 0;
+    const priceChangeSinceSignalPct = calculatePercentChange(currentPrice, signalPrice);
+    const launchZoneLow = hotspot?.entry?.launchZoneLow ?? existing.metrics.launchZoneLow;
+    const oiChangePct = hotspot?.oiChangePct ?? existing.metrics.oiChangePct ?? 0;
+    const oiRising = hotspot?.oiRising ?? false;
+    const fundingRatePct = hotspot?.fundingRatePct ?? (parseFloat(ticker.fundingRate || '0') * 100);
+    const volumeSurgeRatio = hotspot?.volumeSurgeRatio ?? existing.metrics.volumeSurgeRatio ?? 0;
+
+    const monitor = evaluateSentimentHotspotExitMonitor({
+        currentPrice,
+        launchZoneLow,
+        oiChangePct,
+        oiRising,
+        fundingRatePct,
+        volumeSurgeRatio,
+        priceChangeSinceSignalPct,
+        elapsedMs: now - existing.timestamp,
+    });
+
+    if (monitor.level === 'hold') {
+        return existing;
+    }
+
+    const exitText = monitor.level === 'exit' ? '退出监控' : '风险预警';
+    return {
+        ...existing,
+        reason: `${existing.reason} | ${exitText}: ${monitor.reasons.join('；')}`,
+        metrics: {
+            ...existing.metrics,
+            exitMonitorLevel: monitor.level === 'exit' ? 2 : 1,
+            exitReasonCount: monitor.reasons.length,
+            priceChangeSinceSignalPct,
+            currentPrice,
+            currentOiChangePct: oiChangePct,
+            currentFundingRatePct: fundingRatePct,
+            currentVolumeSurgeRatio: volumeSurgeRatio,
+        },
+    };
 }
 
 function loadDismissedSignals(): DismissedSignalMap {
@@ -148,7 +211,7 @@ function persistSignals(value: StrategySignal[]) {
     }
 }
 
-export function useStrategyScanner(data: TickerData[]) {
+export function useStrategyScanner(data: TickerData[], options: UseStrategyScannerOptions = {}) {
     const [signals, setSignals] = useState<StrategySignal[]>([]);
     const signalsRef = useRef<StrategySignal[]>([]);
     const breakoutResetRef = useRef<Map<string, boolean>>(new Map());
@@ -194,6 +257,7 @@ export function useStrategyScanner(data: TickerData[]) {
             const now = Date.now();
             lastScanTime.current.time = now;
             const enabledStrategies = strategyRegistry.getEnabled();
+            const parameterOverrides = options.parameterOverrides;
             const forceRescan = prevStrategyVersion.current !== strategyVersion;
             const isInitialScan = !hasCompletedInitialScan.current;
 
@@ -215,25 +279,13 @@ export function useStrategyScanner(data: TickerData[]) {
                 return;
             }
 
-            const symbolSignals: StrategySignal[] = [];
-            enabledStrategies.forEach(strategy => {
-                if (strategy.id === 'wei-shen-ledger' && !isWeiShenUniverseSymbol(ticker.symbol)) {
-                    return;
-                }
-
-                const signal = strategy.detect(ticker, {
-                    now,
-                    runtimeState: singletonStrategyRuntimeState,
-                });
-                if (signal) {
-                    if (!isStrategySignalVisible(signal, APP_CONFIG.STRATEGY.MIN_CONFIDENCE)) return;
-                    signal.price = parseFloat(ticker.lastPrice);
-                    symbolSignals.push({
-                        ...signal,
-                        status: 'active',
-                        lastSeenAt: now,
-                    });
-                }
+            const symbolSignals = detectVisibleStrategySignalsForTicker({
+                ticker,
+                strategies: enabledStrategies,
+                now,
+                runtimeState: singletonStrategyRuntimeState,
+                minConfidence: APP_CONFIG.STRATEGY.MIN_CONFIDENCE,
+                parameterOverrides,
             });
 
             scanResults.set(ticker.symbol, selectScannerSignalForSymbol(symbolSignals));
@@ -247,7 +299,9 @@ export function useStrategyScanner(data: TickerData[]) {
             const symbol = ticker.symbol;
             const scanResult = scanResults.get(symbol);
             const existing = existingSignalsMap.get(symbol);
-            const dismissedAt = dismissedSignalsRef.current[symbol];
+            const existingDismissedAt = existing
+                ? dismissedSignalsRef.current[createDismissedSignalKey(existing)]
+                : undefined;
             const breakoutReset = hasStrongBreakoutReset(ticker);
 
             if (breakoutReset) {
@@ -255,7 +309,7 @@ export function useStrategyScanner(data: TickerData[]) {
             }
 
             if (scanResult === undefined) {
-                if (!existing || dismissedAt === existing.timestamp) {
+                if (!existing || existingDismissedAt === existing.timestamp) {
                     return;
                 }
 
@@ -296,7 +350,8 @@ export function useStrategyScanner(data: TickerData[]) {
                     breakoutResetRef.current.set(symbol, false);
                 }
 
-                if (dismissedAt === nextSignal.timestamp) {
+                const nextDismissedAt = dismissedSignalsRef.current[createDismissedSignalKey(nextSignal)];
+                if (nextDismissedAt === nextSignal.timestamp) {
                     return;
                 }
 
@@ -308,12 +363,13 @@ export function useStrategyScanner(data: TickerData[]) {
                 return;
             }
 
-            if (dismissedAt === existing.timestamp) {
+            if (existingDismissedAt === existing.timestamp) {
                 return;
             }
 
+            const monitoredExisting = applySentimentHotspotExitMonitor(existing, ticker, now);
             updatedSignals.push({
-                ...existing,
+                ...monitoredExisting,
                 status: 'cooling',
             });
         });
@@ -340,7 +396,7 @@ export function useStrategyScanner(data: TickerData[]) {
             }, 1000 - timeSinceLastScan);
         }
 
-    }, [data, isHydrated, strategyVersion]);
+    }, [data, isHydrated, strategyVersion, options.parameterOverrides]);
 
     useEffect(() => {
         if (!isHydrated) {
@@ -360,7 +416,7 @@ export function useStrategyScanner(data: TickerData[]) {
     const dismissSignal = (signal: StrategySignal) => {
         const nextDismissedSignals = {
             ...dismissedSignalsRef.current,
-            [signal.symbol]: signal.timestamp,
+            [createDismissedSignalKey(signal)]: signal.timestamp,
         };
         dismissedSignalsRef.current = nextDismissedSignals;
         persistDismissedSignals(nextDismissedSignals);

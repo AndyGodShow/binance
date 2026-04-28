@@ -1,10 +1,16 @@
+import {
+    SENTIMENT_HOTSPOT_PARAMS,
+    type SentimentHotspotParameters,
+} from './sentimentHotspot.ts';
+
 export type StrategyId =
     | 'strong-breakout'
     | 'trend-confirmation'
     | 'capital-inflow'
     | 'rsrs-trend'
     | 'volatility-squeeze'
-    | 'wei-shen-ledger';
+    | 'wei-shen-ledger'
+    | 'sentiment-hotspot';
 
 export type DeepPartial<T> = {
     [K in keyof T]?: T[K] extends readonly unknown[]
@@ -333,6 +339,7 @@ export interface StrategyParameterConfigMap {
     'rsrs-trend': RsrsTrendParameters;
     'volatility-squeeze': VolatilitySqueezeParameters;
     'wei-shen-ledger': WeiShenLedgerParameters;
+    'sentiment-hotspot': SentimentHotspotParameters;
 }
 
 export interface StrategyParameterCandidate {
@@ -769,6 +776,7 @@ export const BASELINE_STRATEGY_PARAMETER_CONFIGS: StrategyParameterConfigMap = {
             ethExcessReturn4hMin: [0.3, 0.45, 0.6],
         },
     },
+    'sentiment-hotspot': SENTIMENT_HOTSPOT_PARAMS,
 };
 
 export const DEFAULT_STRATEGY_PARAMETER_CONFIGS = BASELINE_STRATEGY_PARAMETER_CONFIGS;
@@ -799,6 +807,7 @@ export function getAllStrategyParameterConfigs(): StrategyParameterConfigMap {
         'rsrs-trend': getStrategyParameterConfig('rsrs-trend'),
         'volatility-squeeze': getStrategyParameterConfig('volatility-squeeze'),
         'wei-shen-ledger': getStrategyParameterConfig('wei-shen-ledger'),
+        'sentiment-hotspot': getStrategyParameterConfig('sentiment-hotspot'),
     };
 }
 
@@ -950,6 +959,23 @@ export function buildStrategyParameterCandidates(strategyId: StrategyId): Strate
                                 ETHUSDT: pickRangeValue(baseline.candidateRanges.ethExcessReturn4hMin, tierIndex),
                             },
                         },
+                    },
+                },
+            }));
+        }
+
+        case 'sentiment-hotspot': {
+            const baseline = BASELINE_STRATEGY_PARAMETER_CONFIGS['sentiment-hotspot'];
+            return tiers.map((tierIndex) => ({
+                id: `sentiment-hotspot-tier-${tierIndex}`,
+                label: tierIndex === 1 ? '中等保守' : '严格保守',
+                overrides: {
+                    'sentiment-hotspot': {
+                        minHeatSourceCount: pickRangeValue([baseline.minHeatSourceCount, 2, 3], tierIndex),
+                        minVolume24h: pickRangeValue([baseline.minVolume24h, 20_000_000, 30_000_000], tierIndex),
+                        minOiUsd: pickRangeValue([baseline.minOiUsd, 8_000_000, 12_000_000], tierIndex),
+                        minOiChangePct: pickRangeValue([baseline.minOiChangePct, 10, 12], tierIndex),
+                        maxCorePriceChange24h: pickRangeValue([baseline.maxCorePriceChange24h, 22, 18], tierIndex),
                     },
                 },
             }));

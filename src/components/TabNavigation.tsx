@@ -34,7 +34,7 @@ export default function TabNavigation({ activeTab, onChange }: TabNavigationProp
                 className={`${styles.tabBtn} ${activeTab === 'news' ? styles.active : ''}`}
                 onClick={() => onChange('news')}
             >
-                🗞️ 每日新闻
+                🗞️ 重要新闻
             </button>
             <button
                 className={`${styles.tabBtn} ${activeTab === 'watchlists' ? styles.active : ''}`}
@@ -52,7 +52,7 @@ export default function TabNavigation({ activeTab, onChange }: TabNavigationProp
                 className={`${styles.tabBtn} ${activeTab === 'onchain' ? styles.active : ''}`}
                 onClick={() => onChange('onchain')}
             >
-                ⛓️ 链上追踪
+                ⛓️ 控筹分析
             </button>
             <button
                 className={`${styles.tabBtn} ${activeTab === 'strategies' ? styles.active : ''}`}

@@ -5,6 +5,7 @@ import { APP_CONFIG } from '@/lib/config';
 import { logger } from '@/lib/logger';
 import { fetchBinanceJson } from '@/lib/binanceApi';
 import { fetchOpenInterestMarketSnapshotsBatch } from '@/lib/openInterest';
+import { fetchSentimentHotspotContextMap } from '@/lib/sentimentHotspot';
 import { WEI_SHEN_UNIVERSE } from '@/lib/weiShenUniverse';
 import { buildWeiShenContext, getWeiShenTimeframes } from '@/lib/weiShenStrategy';
 
@@ -32,6 +33,7 @@ interface MarketEnhancementResources {
     wei1hKlinesMap: Awaited<ReturnType<typeof fetchKlinesBatch>>;
     wei4hKlinesMap: Awaited<ReturnType<typeof fetchKlinesBatch>>;
     wei1dKlinesMap: Awaited<ReturnType<typeof fetchKlinesBatch>>;
+    sentimentHotspotMap: Awaited<ReturnType<typeof fetchSentimentHotspotContextMap>>;
 }
 
 export async function fetchBaseMarketData(): Promise<TickerData[]> {
@@ -173,6 +175,12 @@ function attachEnhancedMarketData(
             : ticker;
 
         const weiShenContext = buildWeiShenContextForTicker(ticker, weiUniverseSet, resources);
+        const sentimentHotspotContext = resources.sentimentHotspotMap.get(ticker.symbol);
+        const strategyContexts = {
+            ...enhanced.strategyContexts,
+            ...(weiShenContext ? { weiShen: weiShenContext } : {}),
+            ...(sentimentHotspotContext ? { sentimentHotspot: sentimentHotspotContext } : {}),
+        };
 
         return {
             ...enhanced,
@@ -180,12 +188,7 @@ function attachEnhancedMarketData(
             fundingRate: enhanced.fundingRate || '0',
             openInterest: oiSnapshot?.currentOpenInterest || enhanced.openInterest,
             openInterestValue: oiSnapshot?.currentOpenInterestValue || enhanced.openInterestValue,
-            strategyContexts: weiShenContext
-                ? {
-                    ...enhanced.strategyContexts,
-                    weiShen: weiShenContext,
-                }
-                : enhanced.strategyContexts,
+            strategyContexts: Object.keys(strategyContexts).length > 0 ? strategyContexts : enhanced.strategyContexts,
         };
     });
 }
@@ -250,6 +253,8 @@ export async function buildMarketData(): Promise<TickerData[]> {
         fetchKlinesBatch(weiUniverseSymbols, APP_CONFIG.API.BATCH_SIZE, weiShenTimeframes.dailyFilterInterval, 60),
     ]);
 
+    const sentimentHotspotMap = await fetchSentimentHotspotContextMap(baseMarketData, daily1dKlinesMap, klinesMap);
+
     logEnhancementUniverse(baseMarketData.length, eligibleSymbols);
 
     const enhancedMarketData = attachEnhancedMarketData(
@@ -263,6 +268,7 @@ export async function buildMarketData(): Promise<TickerData[]> {
             wei1hKlinesMap,
             wei4hKlinesMap,
             wei1dKlinesMap,
+            sentimentHotspotMap,
         },
         weiUniverseSymbols,
     );

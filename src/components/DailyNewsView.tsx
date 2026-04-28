@@ -1,10 +1,10 @@
 "use client";
 
-import { useMemo } from 'react';
-import { ExternalLink } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { ChevronDown, ChevronUp, ExternalLink } from 'lucide-react';
 
 import { usePersistentSWR } from '@/hooks/usePersistentSWR';
-import type { DailyNewsApiResponse, DailyNewsDigest, DailyNewsItem, NewsCategory } from '@/lib/dailyNews/types';
+import type { DailyNewsApiResponse, DailyNewsBrief, DailyNewsDigest, DailyNewsItem, NewsCategory } from '@/lib/dailyNews/types';
 import styles from './DailyNewsView.module.css';
 
 const CATEGORY_CONFIG: Array<{
@@ -74,9 +74,78 @@ function getStatusLabel(digest: DailyNewsDigest, category: NewsCategory): string
     return '10 条完整';
 }
 
-function NewsItemCard({ item, timezone }: { item: DailyNewsItem; timezone: string }) {
+function getDirectionLabel(item: DailyNewsItem): string | null {
+    if (item.impactDirection === 'risk_on') return '风险偏好修复';
+    if (item.impactDirection === 'risk_off') return '风险偏好降温';
+    if (item.impactDirection === 'mixed') return '多空交织';
+    if (item.impactDirection === 'neutral') return '等待确认';
+    return null;
+}
+
+function getHorizonLabel(item: DailyNewsItem): string | null {
+    if (item.impactHorizon === 'intraday') return '盘中';
+    if (item.impactHorizon === '1-4w') return '1-4 周';
+    if (item.impactHorizon === '1-3d') return '1-3 天';
+    return null;
+}
+
+function getBriefBiasLabel(brief: DailyNewsBrief): string {
+    if (brief.riskBias === 'risk_on') return '风险偏好修复';
+    if (brief.riskBias === 'risk_off') return '风险偏好降温';
+    if (brief.riskBias === 'mixed') return '多空交织';
+    return '等待确认';
+}
+
+function NewsBriefPanel({ brief }: { brief?: DailyNewsBrief }) {
+    if (!brief) {
+        return null;
+    }
+
     return (
-        <article className={styles.newsItem}>
+        <section className={styles.briefPanel}>
+            <div className={styles.briefMain}>
+                <div className={styles.categoryEyebrow}>今日重要信号</div>
+                <h2 className={styles.briefHeadline}>{brief.headline}</h2>
+                <div className={styles.briefMeta}>
+                    <span className={`${styles.briefBias} ${styles[brief.riskBias]}`}>{getBriefBiasLabel(brief)}</span>
+                    {brief.driverTags.slice(0, 5).map((tag) => (
+                        <span key={tag}>{tag}</span>
+                    ))}
+                    {brief.affectedAssets.slice(0, 5).map((asset) => (
+                        <span key={asset}>{asset}</span>
+                    ))}
+                </div>
+            </div>
+            {brief.latestSignals.length > 0 && (
+                <div className={styles.briefSignals}>
+                    {brief.latestSignals.map((signal) => (
+                        <span key={signal}>{signal}</span>
+                    ))}
+                </div>
+            )}
+        </section>
+    );
+}
+
+function NewsItemCard({
+    item,
+    timezone,
+    expanded,
+    onToggle,
+}: {
+    item: DailyNewsItem;
+    timezone: string;
+    expanded: boolean;
+    onToggle: () => void;
+}) {
+    const directionLabel = getDirectionLabel(item);
+    const horizonLabel = getHorizonLabel(item);
+    const affectedAssets = (item.affectedAssets || []).slice(0, 4);
+    const hasEventMeta = Boolean(item.subcategory || directionLabel || horizonLabel || affectedAssets.length > 0);
+    const canExpand = Boolean(item.summary || item.whyItMatters || item.watchpoints?.length || item.tags.length > 0);
+
+    return (
+        <article className={`${styles.newsItem} ${item.importanceLevel === 'high' ? styles.highImpactItem : ''}`}>
             <div className={styles.itemTopline}>
                 <span className={`${styles.importanceBadge} ${styles[item.importanceLevel]}`}>
                     {getImportanceLabel(item)}
@@ -91,17 +160,49 @@ function NewsItemCard({ item, timezone }: { item: DailyNewsItem; timezone: strin
                 <span>{item.source}</span>
                 <span>{formatRelativeTime(item.publishedAt)}</span>
             </div>
-            <p className={styles.summary}>{item.summary}</p>
-            <div className={styles.tagRow}>
-                {item.tags.slice(0, 6).map((tag) => (
-                    <span key={tag} className={styles.tag}>{tag}</span>
-                ))}
-            </div>
+            {hasEventMeta && (
+                <div className={styles.eventMeta}>
+                    {item.subcategory && <span>{item.subcategory}</span>}
+                    {directionLabel && <span>{directionLabel}</span>}
+                    {horizonLabel && <span>{horizonLabel}</span>}
+                    {affectedAssets.map((asset) => (
+                        <span key={asset}>{asset}</span>
+                    ))}
+                </div>
+            )}
+            {canExpand && (
+                <button className={styles.expandButton} type="button" onClick={onToggle} aria-expanded={expanded}>
+                    <span>{expanded ? '收起分析' : '展开分析'}</span>
+                    {expanded ? <ChevronUp size={14} aria-hidden="true" /> : <ChevronDown size={14} aria-hidden="true" />}
+                </button>
+            )}
+            {expanded && (
+                <div className={styles.expandedBody}>
+                    <p className={styles.summary}>{item.summary}</p>
+                    {item.whyItMatters && (
+                        <p className={styles.whyItMatters}>{item.whyItMatters}</p>
+                    )}
+                    {item.watchpoints && item.watchpoints.length > 0 && (
+                        <div className={styles.watchpoints}>
+                            <span className={styles.watchpointLabel}>观察点</span>
+                            {item.watchpoints.slice(0, 3).map((point) => (
+                                <span key={point} className={styles.watchpoint}>{point}</span>
+                            ))}
+                        </div>
+                    )}
+                    <div className={styles.tagRow}>
+                        {item.tags.slice(0, 6).map((tag) => (
+                            <span key={tag} className={styles.tag}>{tag}</span>
+                        ))}
+                    </div>
+                </div>
+            )}
         </article>
     );
 }
 
 export default function DailyNewsView() {
+    const [expandedItems, setExpandedItems] = useState<Set<string>>(() => new Set());
     const { data, error, isLoading } = usePersistentSWR<DailyNewsApiResponse>(
         '/api/daily-news',
         fetcher,
@@ -111,7 +212,7 @@ export default function DailyNewsView() {
             dedupingInterval: 60 * 1000,
             storageTtlMs: 12 * 60 * 60 * 1000,
             persistIntervalMs: 5 * 60 * 1000,
-            storageKey: 'persistent-swr:v1:/api/daily-news',
+            storageKey: 'persistent-swr:v4:/api/daily-news:important-news',
         }
     );
 
@@ -120,13 +221,29 @@ export default function DailyNewsView() {
         if (!digest) return 0;
         return digest.macro.length + digest.ai.length + digest.crypto.length;
     }, [digest]);
+    const highImpactCount = useMemo(() => {
+        if (!digest) return 0;
+        return [...digest.macro, ...digest.ai, ...digest.crypto]
+            .filter((item) => item.importanceLevel === 'high').length;
+    }, [digest]);
+    const toggleExpandedItem = (itemId: string) => {
+        setExpandedItems((current) => {
+            const next = new Set(current);
+            if (next.has(itemId)) {
+                next.delete(itemId);
+            } else {
+                next.add(itemId);
+            }
+            return next;
+        });
+    };
 
     if (isLoading && !digest) {
-        return <div className={styles.placeholder}>每日新闻正在读取最新摘要…</div>;
+        return <div className={styles.placeholder}>重要新闻正在读取最新摘要…</div>;
     }
 
     if (error && !digest) {
-        return <div className={styles.placeholder}>每日新闻暂时不可用，请稍后重试。</div>;
+        return <div className={styles.placeholder}>重要新闻暂时不可用，请稍后重试。</div>;
     }
 
     if (!digest) {
@@ -134,13 +251,13 @@ export default function DailyNewsView() {
             <section className={styles.page}>
                 <header className={styles.hero}>
                     <div>
-                        <div className={styles.kicker}>每日要闻</div>
-                        <h1 className={styles.title}>每日新闻</h1>
-                        <p className={styles.subtitle}>过去 24 小时内最重要的宏观 / 人工智能 / 加密新闻。</p>
+                        <div className={styles.kicker}>重要事件</div>
+                        <h1 className={styles.title}>重要新闻</h1>
+                        <p className={styles.subtitle}>过去 24 小时内按时间线整理的宏观 / 人工智能 / 加密重要事件。</p>
                     </div>
                 </header>
                 <div className={styles.emptyState}>
-                    暂时还没有可展示的每日新闻摘要。系统会自动生成最近 24 小时的重要新闻，稍后刷新即可查看最新结果。
+                    暂时还没有可展示的重要新闻摘要。系统会自动生成最近 24 小时的重要事件，稍后刷新即可查看最新结果。
                 </div>
             </section>
         );
@@ -150,9 +267,9 @@ export default function DailyNewsView() {
         <section className={styles.page}>
             <header className={styles.hero}>
                 <div className={styles.heroCopy}>
-                    <div className={styles.kicker}>每日要闻</div>
-                    <h1 className={styles.title}>每日新闻</h1>
-                    <p className={styles.subtitle}>过去 24 小时内最重要的宏观 / 人工智能 / 加密新闻，用于开盘前快速校准风险偏好和产业叙事。</p>
+                    <div className={styles.kicker}>重要事件</div>
+                    <h1 className={styles.title}>重要新闻</h1>
+                    <p className={styles.subtitle}>按发布时间倒序整理过去 24 小时内的宏观 / 人工智能 / 加密重要事件，用于快速校准风险偏好、关联资产和后续观察点。</p>
                 </div>
                 <div className={styles.heroMeta}>
                     <div className={styles.metaBlock}>
@@ -164,13 +281,18 @@ export default function DailyNewsView() {
                         <strong>{formatWindow(digest)}</strong>
                     </div>
                     <div className={styles.metaBlock}>
-                        <span className={styles.metaLabel}>入选新闻</span>
+                        <span className={styles.metaLabel}>入选事件</span>
                         <strong>{totalCount} 条</strong>
+                    </div>
+                    <div className={styles.metaBlock}>
+                        <span className={styles.metaLabel}>高影响事件</span>
+                        <strong>{highImpactCount} 条</strong>
                     </div>
                 </div>
             </header>
 
             {data?.message && <div className={styles.notice}>{data.message}</div>}
+            <NewsBriefPanel brief={digest.brief} />
 
             <section className={styles.categoryGrid}>
                 {CATEGORY_CONFIG.map((category) => {
@@ -192,7 +314,13 @@ export default function DailyNewsView() {
                             {items.length > 0 ? (
                                 <div className={styles.newsList}>
                                     {items.map((item) => (
-                                        <NewsItemCard key={item.id} item={item} timezone={digest.timezone} />
+                                        <NewsItemCard
+                                            key={item.id}
+                                            item={item}
+                                            timezone={digest.timezone}
+                                            expanded={expandedItems.has(item.id)}
+                                            onToggle={() => toggleExpandedItem(item.id)}
+                                        />
                                     ))}
                                 </div>
                             ) : (

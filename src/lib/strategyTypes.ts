@@ -50,6 +50,18 @@ export interface StrategySignalExplain {
     grade: WeiShenSignalGrade;
 }
 
+export interface StrategySignalStackedDetail {
+    strategyId: string;
+    strategyName: string;
+    direction: 'long' | 'short';
+    confidence: number;
+    reason: string;
+    conditionsMet?: number;
+    totalConditions?: number;
+    executionMode?: WeiShenExecutionMode;
+    grade?: WeiShenSignalGrade;
+}
+
 // 策略接口
 export interface TradingStrategy {
     id: string;
@@ -84,6 +96,7 @@ export interface StrategySignal {
     // 叠加策略相关（用于共振检测）
     stackCount?: number;             // 叠加策略数量
     stackedStrategies?: string[];    // 叠加的策略名称列表
+    stackedSignalDetails?: StrategySignalStackedDetail[]; // 叠加策略详情
     comboBonus?: number;             // 叠加加成分数
 
     // 复合策略相关

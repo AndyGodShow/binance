@@ -6,6 +6,7 @@ import {
     STRATEGY_INPUT_CONTRACTS,
     toCapitalInflowStrategyInput,
     toRsrsStrategyInput,
+    toSentimentHotspotStrategyInput,
     toStrongBreakoutStrategyInput,
     toTrendConfirmationStrategyInput,
     toVolatilitySqueezeStrategyInput,
@@ -173,6 +174,19 @@ const sampleTicker: TickerData = {
                 },
             },
         },
+        sentimentHotspot: {
+            heatSourceCount: 2,
+            hasSquare: true,
+            hasCoinGecko: true,
+            hasVolSurge: true,
+            volumeSurgeRatio: 3.2,
+            oiUsd: 8_000_000,
+            oiChangePct: 12,
+            oiSegments: [5_000_000, 6_000_000, 7_000_000, 8_000_000],
+            oiRising: true,
+            oiStrong: true,
+            fundingRatePct: -0.02,
+        },
     },
 };
 
@@ -180,6 +194,7 @@ test('strategy input contracts enumerate fields for every registered strategy ad
     assert.deepEqual(Object.keys(STRATEGY_INPUT_CONTRACTS).sort(), [
         'capital-inflow',
         'rsrs-trend',
+        'sentiment-hotspot',
         'strong-breakout',
         'trend-confirmation',
         'volatility-squeeze',
@@ -215,4 +230,8 @@ test('strategy input adapters preserve the declared ticker fields', () => {
     const weiShenInput = toWeiShenStrategyInput(sampleTicker);
     assert.equal(weiShenInput.strategyContexts, sampleTicker.strategyContexts);
     assert.equal(weiShenInput.closeTime, sampleTicker.closeTime);
+
+    const sentimentHotspotInput = toSentimentHotspotStrategyInput(sampleTicker);
+    assert.equal(sentimentHotspotInput.strategyContexts, sampleTicker.strategyContexts);
+    assert.equal(sentimentHotspotInput.fundingRate, sampleTicker.fundingRate);
 });

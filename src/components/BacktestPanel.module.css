@@ -205,6 +205,11 @@
     word-break: break-word;
 }
 
+.executionMap {
+    margin-top: 8px;
+    color: var(--text-primary);
+}
+
 .resultPanel {
     background: var(--surface);
     border-radius: 12px;
@@ -549,6 +554,18 @@
     margin-top: 16px;
     font-size: 13px;
     color: var(--text-secondary);
+}
+
+.issueList {
+    margin: 10px 0 0;
+    padding-left: 18px;
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+.issueList strong {
+    color: var(--text-primary);
 }
 
 .detailHint {
