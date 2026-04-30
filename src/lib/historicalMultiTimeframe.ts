@@ -13,6 +13,12 @@ import {
     getWeiShenTimeframes,
     isWeiShenStrategy,
 } from './weiShenStrategy.ts';
+import {
+    calculateSentimentHotspotEntryContext,
+    calculateSentimentHotspotOiSignal,
+    isSentimentHotspotSquareCandidate,
+    SENTIMENT_HOTSPOT_PARAMS,
+} from './sentimentHotspot.ts';
 
 type SupportedInterval = '5m' | '15m' | '1h' | '4h' | '1d';
 
@@ -22,6 +28,7 @@ type HistoricalOverrideFields = Pick<
     | 'change1h'
     | 'change4h'
     | 'priceChangePercent'
+    | 'quoteVolume'
     | 'ema5m20'
     | 'ema5m60'
     | 'ema5m100'
@@ -64,6 +71,7 @@ const MULTIFRAME_STRATEGIES = new Set([
     'capital-inflow',
     'rsrs-trend',
     'wei-shen-ledger',
+    'sentiment-hotspot',
 ]);
 
 const TREND_STRUCTURE_STRATEGIES = new Set(['strong-breakout', 'trend-confirmation']);
@@ -82,6 +90,14 @@ function parseClose(kline: KlineData): number {
 
 function parseHigh(kline: KlineData): number {
     return Number.parseFloat(kline.high);
+}
+
+function parseQuoteVolume(kline: KlineData): number {
+    return Number.parseFloat(kline.quoteVolume);
+}
+
+function parseOptionalNumber(value: string | undefined): number {
+    return typeof value === 'string' ? Number.parseFloat(value) : NaN;
 }
 
 function buildAlignedEmaSeries(klines: KlineData[], period: number): Array<number | null> {
@@ -188,6 +204,56 @@ function sliceSeriesUpTo(
     }
 
     return sourceSeries.slice(0, index + 1);
+}
+
+function calculateRollingQuoteVolume(klines: KlineData[], timestamp: number, lookbackMs: number): number {
+    const startTime = timestamp - lookbackMs;
+    return klines.reduce((sum, kline) => {
+        if (kline.closeTime <= timestamp && kline.closeTime > startTime) {
+            const quoteVolume = parseQuoteVolume(kline);
+            return Number.isFinite(quoteVolume) ? sum + quoteVolume : sum;
+        }
+
+        return sum;
+    }, 0);
+}
+
+function calculateHistoricalVolumeSurgeRatio(
+    dailyKlines: KlineData[],
+    fallbackKlines: KlineData[],
+    timestamp: number,
+    rollingQuoteVolume24h: number,
+): number {
+    if (rollingQuoteVolume24h < SENTIMENT_HOTSPOT_PARAMS.minVolumeForSurgeCheck) {
+        return 0;
+    }
+
+    const completedDailyIndex = findLatestIndexAtOrBefore(dailyKlines, timestamp - 1);
+    if (completedDailyIndex >= 4) {
+        const previousVolumes = dailyKlines
+            .slice(Math.max(0, completedDailyIndex - 7), completedDailyIndex)
+            .map(parseQuoteVolume)
+            .filter((value) => Number.isFinite(value) && value > 0);
+
+        if (previousVolumes.length >= 4) {
+            const averagePreviousVolume = previousVolumes.reduce((sum, value) => sum + value, 0) / previousVolumes.length;
+            return averagePreviousVolume > 0 ? rollingQuoteVolume24h / averagePreviousVolume : 0;
+        }
+    }
+
+    const previousIntradayVolumes = fallbackKlines
+        .filter((kline) => kline.closeTime <= timestamp - INTERVAL_MS['1d'])
+        .slice(-24 * 7)
+        .map(parseQuoteVolume)
+        .filter((value) => Number.isFinite(value) && value > 0);
+
+    if (previousIntradayVolumes.length < 12) {
+        return 0;
+    }
+
+    const averageBarVolume = previousIntradayVolumes.reduce((sum, value) => sum + value, 0) / previousIntradayVolumes.length;
+    const estimatedPreviousDailyVolume = averageBarVolume * 24;
+    return estimatedPreviousDailyVolume > 0 ? rollingQuoteVolume24h / estimatedPreviousDailyVolume : 0;
 }
 
 export async function buildHistoricalTickerOverrides(
@@ -316,6 +382,17 @@ export async function buildHistoricalTickerOverrides(
             ).toString(),
         };
 
+        if (options.strategyId === 'sentiment-hotspot') {
+            const rollingQuoteVolume24h = calculateRollingQuoteVolume(
+                intervalData.get('1h') || options.baseKlines,
+                timestamp,
+                INTERVAL_MS['1d'],
+            );
+            if (rollingQuoteVolume24h > 0) {
+                currentOverrides.quoteVolume = rollingQuoteVolume24h.toString();
+            }
+        }
+
         if (trend5mKlines.length > 0) {
             const trendIndex = findLatestIndexAtOrBefore(trend5mKlines, timestamp);
             if (trendIndex >= 0) {
@@ -385,6 +462,63 @@ export async function buildHistoricalTickerOverrides(
             if (weiShenContext) {
                 currentOverrides.strategyContexts = {
                     weiShen: weiShenContext,
+                };
+            }
+        }
+
+        if (options.strategyId === 'sentiment-hotspot') {
+            const rollingQuoteVolume24h = Number.parseFloat(currentOverrides.quoteVolume || baseKline.quoteVolume);
+            const volumeSurgeRatio = calculateHistoricalVolumeSurgeRatio(
+                dailyKlines,
+                intervalData.get('1h') || options.baseKlines,
+                timestamp,
+                rollingQuoteVolume24h,
+            );
+            const oiSeries = (intervalData.get('1h') || options.baseKlines)
+                .filter((kline) => kline.closeTime <= timestamp)
+                .slice(-32)
+                .map((kline) => parseOptionalNumber(kline.openInterestValue));
+            const oiSignal = calculateSentimentHotspotOiSignal(oiSeries);
+            const oiUsd = parseOptionalNumber(baseKline.openInterestValue);
+            const fundingRate = parseOptionalNumber(baseKline.fundingRate);
+            const fundingRatePct = Number.isFinite(fundingRate) ? fundingRate * 100 : 0;
+            const hasVolSurge = volumeSurgeRatio >= SENTIMENT_HOTSPOT_PARAMS.volSurgeMultiple;
+            const priceChange24h = Number.parseFloat(currentOverrides.priceChangePercent || '0');
+            const hasSquare = isSentimentHotspotSquareCandidate({
+                volume24h: rollingQuoteVolume24h,
+                priceChange24h,
+                fundingRatePct,
+                oiChangePct: oiSignal.oiChangePct,
+                volumeSurgeRatio,
+            });
+            const heatSourceCount = Number(hasVolSurge) + Number(hasSquare);
+
+            if (
+                heatSourceCount > 0 &&
+                Number.isFinite(oiUsd) &&
+                oiUsd > 0 &&
+                Number.isFinite(fundingRate)
+            ) {
+                const entryKlines = intervalData.get('15m') || options.baseKlines;
+                currentOverrides.strategyContexts = {
+                    ...currentOverrides.strategyContexts,
+                    sentimentHotspot: {
+                        heatSourceCount,
+                        hasSquare,
+                        hasCoinGecko: false,
+                        hasVolSurge,
+                        volumeSurgeRatio,
+                        oiUsd,
+                        oiChangePct: oiSignal.oiChangePct,
+                        oiSegments: oiSignal.oiSegments,
+                        oiRising: oiSignal.oiRising,
+                        oiStrong: oiSignal.oiStrong,
+                        fundingRatePct,
+                        entry: calculateSentimentHotspotEntryContext(
+                            sliceSeriesUpTo(entryKlines, toOHLCSeries(entryKlines), timestamp),
+                            currentPrice,
+                        ),
+                    },
                 };
             }
         }

@@ -100,3 +100,47 @@ test('buildHistoricalTickerOverrides attaches wei-shen strategy context using BT
     assert.ok(calls.some((call) => call.symbol === 'BTCUSDT' && call.interval === '1d'));
     assert.ok('strategyContexts' in sample);
 });
+
+test('buildHistoricalTickerOverrides attaches sentiment hotspot context from historical auxiliary data', async () => {
+    const startTime = Date.UTC(2025, 0, 1);
+    const baseKlines = Array.from({ length: 80 }, (_, index) => {
+        const close = index < 55 ? 100 + index * 0.1 : 105 + (index - 55) * 0.8;
+        const kline = createKline(startTime + ((index + 1) * 60 * 60 * 1000), close, close * 1.01);
+        return {
+            ...kline,
+            quoteVolume: index < 72 ? '8000000' : '76000000',
+            openInterestValue: String(index < 48 ? 5_000_000 + index * 10_000 : 5_500_000 + (index - 48) * 80_000),
+            fundingRate: index < 70 ? '0.00003' : '-0.00036',
+        };
+    });
+    const dailyKlines = Array.from({ length: 12 }, (_, index) => ({
+        ...createKline(startTime + ((index + 1) * 24 * 60 * 60 * 1000), 100 + index),
+        quoteVolume: index < 11 ? '18000000' : '72000000',
+    }));
+
+    const overrides = await buildHistoricalTickerOverrides({
+        strategyId: 'sentiment-hotspot',
+        symbol: 'SAGAUSDT',
+        startTime,
+        endTime: baseKlines[baseKlines.length - 1].closeTime,
+        baseInterval: '1h',
+        baseKlines,
+        fetchRangeData: async (_symbol, interval) => {
+            if (interval === '1d') {
+                return dailyKlines;
+            }
+
+            return baseKlines;
+        },
+    });
+
+    const sample = overrides.get(baseKlines[baseKlines.length - 1].closeTime);
+    const sentimentHotspot = sample?.strategyContexts?.sentimentHotspot;
+
+    assert.ok(sentimentHotspot);
+    assert.equal(sentimentHotspot.hasVolSurge, true);
+    assert.equal(sentimentHotspot.hasSquare, true);
+    assert.equal(sentimentHotspot.oiRising, true);
+    assert.ok(sentimentHotspot.oiChangePct >= 8);
+    assert.ok(Math.abs(sentimentHotspot.fundingRatePct - (-0.036)) < 0.000001);
+});
