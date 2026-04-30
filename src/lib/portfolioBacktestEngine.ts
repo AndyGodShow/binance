@@ -12,6 +12,7 @@ export interface PortfolioBacktestConfig {
     positionSizePercent: number;
     strategyId?: string;
     parameterOverrides?: DeepPartial<StrategyParameterConfigMap>;
+    maxDrawdownPct?: number;
 }
 
 export interface PortfolioBacktestResult {
@@ -46,6 +47,20 @@ export interface PortfolioBacktestResult {
     minHoldingTime: number;
     equityCurve: EquityPoint[];
     trades: Trade[];
+    diagnostics?: PortfolioBacktestDiagnostics;
+}
+
+export type PortfolioSkipReason =
+    | 'sameSymbolOpen'
+    | 'maxConcurrentPositions'
+    | 'maxDrawdown'
+    | 'weiShenCooldown'
+    | 'weiShenDailyDrawdown'
+    | 'weiShenClusterRisk'
+    | 'insufficientCash';
+
+export interface PortfolioBacktestDiagnostics {
+    skipReasons: Partial<Record<PortfolioSkipReason, number>>;
 }
 
 interface CandidateTrade extends Trade {
@@ -332,6 +347,7 @@ export function runPortfolioBacktest(
     let maxDrawdown = 0;
     let skippedTrades = 0;
     let maxConcurrentPositionsUsed = 0;
+    const skipReasons: Partial<Record<PortfolioSkipReason, number>> = {};
     const weiShenState: WeiShenPortfolioState = {
         consecutiveLosses: 0,
         cooldownUntil: 0,
@@ -344,6 +360,11 @@ export function runPortfolioBacktest(
     const executedTrades: Trade[] = [];
     const tradedSymbols = new Set<string>();
     const equityCurve: EquityPoint[] = [];
+
+    const recordSkip = (reason: PortfolioSkipReason) => {
+        skippedTrades += 1;
+        skipReasons[reason] = (skipReasons[reason] ?? 0) + 1;
+    };
 
     const pushEquityPoint = (time: number) => {
         const equity = cash + activePositions.reduce((sum, position) => sum + getMarkedPositionValue(position, time), 0);
@@ -415,12 +436,25 @@ export function runPortfolioBacktest(
     candidateTrades.forEach((trade) => {
         settlePositionsUpTo(trade.entryTime);
 
+        if (
+            Number.isFinite(config.maxDrawdownPct)
+            && (config.maxDrawdownPct ?? Number.POSITIVE_INFINITY) > 0
+            && maxDrawdown >= config.maxDrawdownPct!
+        ) {
+            recordSkip('maxDrawdown');
+            return;
+        }
+
         const hasOpenSymbol = activePositions.some((position) => position.trade.symbol === trade.symbol);
         const maxConcurrentPositions = isWeiShen
             ? Math.min(config.maxConcurrentPositions, weiShenParams!.risk.maxConcurrentPositions)
             : config.maxConcurrentPositions;
-        if (hasOpenSymbol || activePositions.length >= maxConcurrentPositions) {
-            skippedTrades += 1;
+        if (hasOpenSymbol) {
+            recordSkip('sameSymbolOpen');
+            return;
+        }
+        if (activePositions.length >= maxConcurrentPositions) {
+            recordSkip('maxConcurrentPositions');
             return;
         }
 
@@ -437,7 +471,7 @@ export function runPortfolioBacktest(
             }
 
             if (trade.entryTime < weiShenState.cooldownUntil || weiShenState.dayTradingLocked) {
-                skippedTrades += 1;
+                recordSkip(trade.entryTime < weiShenState.cooldownUntil ? 'weiShenCooldown' : 'weiShenDailyDrawdown');
                 return;
             }
         }
@@ -473,7 +507,7 @@ export function runPortfolioBacktest(
                 : weiShenParams!.risk.specClusterRiskCap;
 
             if (nextClusterRisk > clusterCap) {
-                skippedTrades += 1;
+                recordSkip('weiShenClusterRisk');
                 return;
             }
         }
@@ -482,7 +516,7 @@ export function runPortfolioBacktest(
         const allocatedCapital = Math.min(cash, targetAllocation);
 
         if (allocatedCapital <= 0) {
-            skippedTrades += 1;
+            recordSkip('insufficientCash');
             return;
         }
 
@@ -538,5 +572,8 @@ export function runPortfolioBacktest(
         minHoldingTime: metrics.minHoldingTime,
         equityCurve,
         trades: executedTrades,
+        diagnostics: {
+            skipReasons,
+        },
     };
 }

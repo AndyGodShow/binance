@@ -4,6 +4,11 @@ import type { RiskManagement } from './risk/types.ts';
 import { TechnicalIndicators } from './technicalIndicators.ts';
 import { BacktestExecutionProvider } from './backtestExecutionProvider.ts';
 import { calculateEMA } from './indicators.ts';
+import {
+    adaptKlinesToBacktestDataSlice,
+    type FundingPoint,
+    type MarketBar,
+} from './backtestDataAdapter.ts';
 
 /**
  * 回测结果接口
@@ -72,6 +77,14 @@ export interface Trade {
     size: number; // 仓位比例 (0-1)
     profit: number; // 盈亏 (%)
     profitUSDT: number; // 盈亏 (USDT)
+    qty?: number;
+    margin?: number;
+    notional?: number;
+    fee?: number;
+    slippageCost?: number;
+    funding?: number;
+    pnl?: number;
+    pnlPct?: number;
     holdingTime: number; // 持仓时间(毫秒)
     exitReason: 'stop_loss' | 'take_profit' | 'signal' | 'end_of_data' | 'time_stop';
     strategyRiskPct?: number;
@@ -117,6 +130,11 @@ interface BacktestPosition {
     entryPrice: number;
     entryTime: number;
     entryCapital: number;
+    margin: number;
+    notional: number;
+    qty: number;
+    leverage: number;
+    accruedFunding: number;
     signalEntryTime: number;
     entryIndex: number;
     risk?: RiskManagement;
@@ -125,7 +143,7 @@ interface BacktestPosition {
     initialSize: number;
     remainingSize: number;
     hitTargetIndices: number[];
-    executionHistory: KlineData[];
+    executionHistory: MarketBar[];
 }
 
 interface PendingBacktestEntry {
@@ -144,20 +162,18 @@ function isMoreProtectiveStop(
         : candidateStop < currentStop;
 }
 
-function toExecutionHistoryOHLC(bars: KlineData[]) {
+function toExecutionHistoryOHLC(bars: MarketBar[]) {
     return bars.map((bar) => ({
-        time: bar.closeTime,
-        open: Number.parseFloat(bar.open),
-        high: Number.parseFloat(bar.high),
-        low: Number.parseFloat(bar.low),
-        close: Number.parseFloat(bar.close),
-        volume: Number.parseFloat(bar.volume),
-        quoteVolume: Number.parseFloat(bar.quoteVolume),
-        takerBuyQuoteVolume: Number.parseFloat(bar.takerBuyQuoteVolume),
+        time: bar.time,
+        open: bar.open,
+        high: bar.high,
+        low: bar.low,
+        close: bar.close,
+        volume: bar.volume,
     }));
 }
 
-function computeDonchianMid(bars: KlineData[], lookback: number): number | null {
+function computeDonchianMid(bars: MarketBar[], lookback: number): number | null {
     if (lookback <= 0 || bars.length < lookback) {
         return null;
     }
@@ -167,8 +183,8 @@ function computeDonchianMid(bars: KlineData[], lookback: number): number | null 
         return null;
     }
 
-    const highestHigh = Math.max(...window.map((bar) => Number.parseFloat(bar.high)));
-    const lowestLow = Math.min(...window.map((bar) => Number.parseFloat(bar.low)));
+    const highestHigh = Math.max(...window.map((bar) => bar.high));
+    const lowestLow = Math.min(...window.map((bar) => bar.low));
     if (!Number.isFinite(highestHigh) || !Number.isFinite(lowestLow)) {
         return null;
     }
@@ -178,7 +194,7 @@ function computeDonchianMid(bars: KlineData[], lookback: number): number | null 
 
 function computeDynamicTrailStop(
     direction: 'long' | 'short',
-    history: KlineData[],
+    history: MarketBar[],
     risk: RiskManagement,
 ): number | null {
     const dynamicExit = risk.dynamicExit;
@@ -228,9 +244,9 @@ export class BacktestEngine {
 
     constructor(config: Partial<BacktestConfig> = {}) {
         this.config = {
-            initialCapital: config.initialCapital || 10000,
-            commission: config.commission || 0.04,
-            slippage: config.slippage || 0.05,
+            initialCapital: config.initialCapital ?? 10000,
+            commission: config.commission ?? 0.04,
+            slippage: config.slippage ?? 0.05,
             useStrategyRiskManagement: config.useStrategyRiskManagement ?? true,
         };
     }
@@ -262,6 +278,9 @@ export class BacktestEngine {
             direction: 'long' | 'short';
             entryPrice: number;
             entryCapital: number;
+            margin: number;
+            qty: number;
+            initialSize: number;
             remainingSize: number;
         } | null,
         currentPrice: number
@@ -270,18 +289,32 @@ export class BacktestEngine {
             return cash;
         }
 
-        const floatingProfitPercent = this.calculateProfitPercent(
-            currentPosition.entryPrice,
-            currentPrice,
-            currentPosition.direction
-        ) - (this.config.commission + this.config.slippage);
-
-        const positionValue =
-            currentPosition.entryCapital *
-            currentPosition.remainingSize *
-            (1 + floatingProfitPercent / 100);
+        const remainingRatio = currentPosition.initialSize > 0
+            ? currentPosition.remainingSize / currentPosition.initialSize
+            : 0;
+        const remainingQty = currentPosition.qty * remainingRatio;
+        const marginValue = currentPosition.margin * remainingRatio;
+        const pricePnl = currentPosition.direction === 'long'
+            ? (currentPrice - currentPosition.entryPrice) * remainingQty
+            : (currentPosition.entryPrice - currentPrice) * remainingQty;
+        const exitNotional = Math.abs(currentPrice * remainingQty);
+        const estimatedExitCosts = exitNotional * ((this.config.commission + this.config.slippage) / 100);
+        const positionValue = marginValue + pricePnl - estimatedExitCosts;
 
         return cash + positionValue;
+    }
+
+    private calculateFundingCashflow(position: BacktestPosition, fundingRate: number): number {
+        if (!Number.isFinite(fundingRate) || fundingRate === 0 || position.remainingSize <= 0.0001) {
+            return 0;
+        }
+
+        const remainingRatio = position.initialSize > 0
+            ? position.remainingSize / position.initialSize
+            : 0;
+        const notional = position.notional * remainingRatio;
+        const directionalMultiplier = position.direction === 'long' ? -1 : 1;
+        return directionalMultiplier * notional * fundingRate;
     }
 
     private cloneRiskForEntry(
@@ -333,13 +366,21 @@ export class BacktestEngine {
         exitReason: Trade['exitReason']
     ): TradeSettlement {
         const normalizedSize = Math.min(size, position.remainingSize);
-        const finalProfitPercent = this.calculateProfitPercent(
-            position.entryPrice,
-            exitPrice,
-            position.direction
-        ) - (this.config.commission + this.config.slippage);
-        const allocatedCapital = position.entryCapital * normalizedSize;
-        const profitUSDT = (allocatedCapital * finalProfitPercent) / 100;
+        const sizeRatio = position.initialSize > 0 ? normalizedSize / position.initialSize : 0;
+        const margin = position.margin * sizeRatio;
+        const qty = position.qty * sizeRatio;
+        const entryNotional = Math.abs(position.entryPrice * qty);
+        const exitNotional = Math.abs(exitPrice * qty);
+        const notional = entryNotional;
+        const pricePnl = position.direction === 'long'
+            ? (exitPrice - position.entryPrice) * qty
+            : (position.entryPrice - exitPrice) * qty;
+        const fee = (entryNotional + exitNotional) * (this.config.commission / 100);
+        const slippageCost = (entryNotional + exitNotional) * (this.config.slippage / 100);
+        const funding = position.accruedFunding * sizeRatio;
+        const pnl = pricePnl + funding - fee - slippageCost;
+        const finalProfitPercent = margin > 0 ? (pnl / margin) * 100 : 0;
+        const profitUSDT = pnl;
 
         trades.push({
             symbol,
@@ -351,6 +392,14 @@ export class BacktestEngine {
             size: normalizedSize,
             profit: finalProfitPercent,
             profitUSDT,
+            qty,
+            margin,
+            notional,
+            fee,
+            slippageCost,
+            funding,
+            pnl,
+            pnlPct: finalProfitPercent,
             holdingTime: exitTime - position.entryTime,
             exitReason,
             strategyRiskPct: position.risk?.metrics.riskAmount && position.entryCapital > 0
@@ -359,9 +408,10 @@ export class BacktestEngine {
             plannedPositionPct: position.initialSize * 100,
             stopLossPct: position.risk?.stopLoss.percentage,
         });
+        position.accruedFunding -= funding;
 
         return {
-            capitalReturned: allocatedCapital + profitUSDT,
+            capitalReturned: margin + profitUSDT,
             profitUSDT,
         };
     }
@@ -423,6 +473,12 @@ export class BacktestEngine {
                     ? orderedLegs.reduce((sum, leg) => sum + (leg.exitPrice * leg.size), 0) / totalSize
                     : lastLeg.exitPrice;
                 const totalProfitUsdt = orderedLegs.reduce((sum, leg) => sum + leg.profitUSDT, 0);
+                const totalMargin = orderedLegs.reduce((sum, leg) => sum + (leg.margin ?? 0), 0);
+                const totalQty = orderedLegs.reduce((sum, leg) => sum + (leg.qty ?? 0), 0);
+                const totalNotional = orderedLegs.reduce((sum, leg) => sum + (leg.notional ?? 0), 0);
+                const totalFee = orderedLegs.reduce((sum, leg) => sum + (leg.fee ?? 0), 0);
+                const totalSlippageCost = orderedLegs.reduce((sum, leg) => sum + (leg.slippageCost ?? 0), 0);
+                const totalFunding = orderedLegs.reduce((sum, leg) => sum + (leg.funding ?? 0), 0);
 
                 return {
                     symbol: firstLeg.symbol,
@@ -434,6 +490,14 @@ export class BacktestEngine {
                     size: totalSize > 0 ? totalSize : 1,
                     profit: weightedProfit,
                     profitUSDT: totalProfitUsdt,
+                    qty: totalQty,
+                    margin: totalMargin,
+                    notional: totalNotional,
+                    fee: totalFee,
+                    slippageCost: totalSlippageCost,
+                    funding: totalFunding,
+                    pnl: totalProfitUsdt,
+                    pnlPct: totalMargin > 0 ? (totalProfitUsdt / totalMargin) * 100 : weightedProfit,
                     holdingTime: lastLeg.exitTime - firstLeg.entryTime,
                     exitReason: lastLeg.exitReason,
                     strategyRiskPct: firstLeg.strategyRiskPct,
@@ -449,7 +513,7 @@ export class BacktestEngine {
     }
 
     private assertExecutionBarsAvailable(params: {
-        bars: KlineData[];
+        bars: MarketBar[];
         symbol: string;
         executionInterval: string;
         startExclusive: number;
@@ -472,7 +536,8 @@ export class BacktestEngine {
     }
 
     private processExecutionBars(params: {
-        bars: KlineData[];
+        bars: MarketBar[];
+        fundingByTime: Map<number, FundingPoint>;
         currentPosition: BacktestPosition | null;
         pendingEntry: PendingBacktestEntry | null;
         pendingExitReason: Trade['exitReason'] | null;
@@ -480,6 +545,7 @@ export class BacktestEngine {
         symbol: string;
         cash: number;
         signalIntervalMs: number | null;
+        executionIntervalMs: number;
         isFinalSegment: boolean;
         fallbackExitTime: number;
         fallbackExitPrice: number;
@@ -493,9 +559,11 @@ export class BacktestEngine {
     } {
         const {
             bars,
+            fundingByTime,
             tradeLegs,
             symbol,
             signalIntervalMs,
+            executionIntervalMs,
             isFinalSegment,
             fallbackExitTime,
             fallbackExitPrice,
@@ -512,11 +580,12 @@ export class BacktestEngine {
         let lastProcessedPrice = fallbackExitPrice;
 
         for (let index = 0; index < bars.length; index++) {
-            const kline = bars[index];
-            const currentOpen = parseFloat(kline.open);
-            const currentClose = parseFloat(kline.close);
-            const currentHigh = parseFloat(kline.high);
-            const currentLow = parseFloat(kline.low);
+            const bar = bars[index];
+            const currentOpen = bar.open;
+            const currentClose = bar.close;
+            const currentHigh = bar.high;
+            const currentLow = bar.low;
+            const barOpenTime = bar.time - executionIntervalMs + 1;
             const hasNextBar = index < bars.length - 1;
 
             if (pendingExitReason && currentPosition && Number.isFinite(currentOpen)) {
@@ -524,7 +593,7 @@ export class BacktestEngine {
                     tradeLegs,
                     currentPosition,
                     symbol,
-                    kline.openTime,
+                    barOpenTime,
                     currentOpen,
                     currentPosition.remainingSize,
                     pendingExitReason
@@ -546,11 +615,20 @@ export class BacktestEngine {
                 }
 
                 const entryCapital = cash;
+                const leverage = Math.max(1, pendingEntry.risk?.positionSizing.leverage ?? 1);
+                const margin = entryCapital * desiredPositionSize;
+                const notional = margin * leverage;
+                const qty = currentOpen > 0 ? notional / currentOpen : 0;
                 currentPosition = {
                     direction: pendingEntry.direction,
                     entryPrice: currentOpen,
-                    entryTime: kline.openTime,
+                    entryTime: barOpenTime,
                     entryCapital,
+                    margin,
+                    notional,
+                    qty,
+                    leverage,
+                    accruedFunding: 0,
                     signalEntryTime: pendingEntry.signalTime,
                     entryIndex: index,
                     risk: this.cloneRiskForEntry(pendingEntry.risk, currentOpen, pendingEntry.direction),
@@ -569,6 +647,8 @@ export class BacktestEngine {
                 const entryPrice = currentPosition.entryPrice;
                 const direction = currentPosition.direction;
                 const strategyRisk = currentPosition.risk;
+                const fundingRate = fundingByTime.get(bar.time)?.rate ?? NaN;
+                currentPosition.accruedFunding += this.calculateFundingCashflow(currentPosition, fundingRate);
 
                 if (currentHigh > currentPosition.highestPrice) {
                     currentPosition.highestPrice = currentHigh;
@@ -695,7 +775,7 @@ export class BacktestEngine {
                                     tradeLegs,
                                     currentPosition!,
                                     symbol,
-                                    kline.closeTime,
+                                    bar.time,
                                     target.price,
                                     exitSize,
                                     'take_profit'
@@ -739,7 +819,7 @@ export class BacktestEngine {
                 }
 
                 if (!shouldExit && strategyRisk?.timeStop && signalIntervalMs) {
-                    const heldDuration = kline.closeTime - currentPosition.signalEntryTime;
+                    const heldDuration = bar.time - currentPosition.signalEntryTime;
                     const maxHoldDuration = strategyRisk.timeStop.maxHoldBars * signalIntervalMs;
                     if (heldDuration >= maxHoldDuration) {
                         const floatingProfitPercent = this.calculateProfitPercent(
@@ -766,7 +846,7 @@ export class BacktestEngine {
                         tradeLegs,
                         currentPosition,
                         symbol,
-                        kline.closeTime,
+                        bar.time,
                         exitPrice,
                         currentPosition.remainingSize,
                         exitReason
@@ -776,11 +856,11 @@ export class BacktestEngine {
                 } else if (currentPosition && currentPosition.remainingSize <= 0.0001) {
                     currentPosition = null;
                 } else if (currentPosition) {
-                    currentPosition.executionHistory.push(kline);
+                    currentPosition.executionHistory.push(bar);
                 }
             }
 
-            lastProcessedTime = kline.closeTime;
+            lastProcessedTime = bar.time;
             lastProcessedPrice = currentClose;
         }
 
@@ -897,9 +977,11 @@ export class BacktestEngine {
 
                 if (previousSignalCloseTime !== null && (currentPosition || pendingEntry || pendingExitReason)) {
                     const executionBars = await executionProvider.getBarsBetween(previousSignalCloseTime, kline.closeTime);
+                    const executionData = adaptKlinesToBacktestDataSlice(executionBars);
+                    const fundingByTime = new Map(executionData.funding.map((point) => [point.time, point]));
                     executionBarsProcessed += executionBars.length;
                     this.assertExecutionBarsAvailable({
-                        bars: executionBars,
+                        bars: executionData.bars,
                         symbol,
                         executionInterval,
                         startExclusive: previousSignalCloseTime,
@@ -910,7 +992,8 @@ export class BacktestEngine {
                     });
 
                     const executionState = this.processExecutionBars({
-                        bars: executionBars,
+                        bars: executionData.bars,
+                        fundingByTime,
                         currentPosition,
                         pendingEntry,
                         pendingExitReason,
@@ -918,6 +1001,7 @@ export class BacktestEngine {
                         symbol,
                         cash,
                         signalIntervalMs,
+                        executionIntervalMs,
                         isFinalSegment: false,
                         fallbackExitTime: kline.closeTime,
                         fallbackExitPrice: currentClose,
@@ -979,20 +1063,25 @@ export class BacktestEngine {
 
             if (previousSignalCloseTime !== null && (currentPosition || pendingEntry || pendingExitReason)) {
                 const executionBars = await executionProvider.getBarsBetween(previousSignalCloseTime, simulationEndTime);
+                const executionData = adaptKlinesToBacktestDataSlice(executionBars);
+                const fundingByTime = new Map(executionData.funding.map((point) => [point.time, point]));
                 executionBarsProcessed += executionBars.length;
-                this.assertExecutionBarsAvailable({
-                    bars: executionBars,
-                    symbol,
-                    executionInterval,
-                    startExclusive: previousSignalCloseTime,
-                    endInclusive: simulationEndTime,
-                    currentPosition,
-                    pendingEntry,
-                    pendingExitReason,
-                });
+                if (executionBars.length > 0 || simulationEndTime > previousSignalCloseTime) {
+                    this.assertExecutionBarsAvailable({
+                        bars: executionData.bars,
+                        symbol,
+                        executionInterval,
+                        startExclusive: previousSignalCloseTime,
+                        endInclusive: simulationEndTime,
+                        currentPosition,
+                        pendingEntry,
+                        pendingExitReason,
+                    });
+                }
 
                 const executionState = this.processExecutionBars({
-                    bars: executionBars,
+                    bars: executionData.bars,
+                    fundingByTime,
                     currentPosition,
                     pendingEntry,
                     pendingExitReason,
@@ -1000,6 +1089,7 @@ export class BacktestEngine {
                     symbol,
                     cash,
                     signalIntervalMs,
+                    executionIntervalMs,
                     isFinalSegment: true,
                     fallbackExitTime: finalEvaluationTime,
                     fallbackExitPrice: finalEvaluationPrice,

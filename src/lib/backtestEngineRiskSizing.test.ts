@@ -312,3 +312,311 @@ test('BacktestEngine rejects pending execution when lower timeframe bars are mis
         /执行层K线缺失/
     );
 });
+
+test('BacktestEngine records auditable quantity, margin, fee, slippage, funding, and pnl fields', async () => {
+    const signalKlines = Array.from({ length: 54 }, (_, index) => {
+        if (index === 52) {
+            return {
+                ...createKline(index, 110, 111, 109, 110),
+                fundingRate: '0.001',
+            };
+        }
+
+        return createKline(index, 100, 101, 99, 100);
+    });
+
+    const engine = new BacktestEngine({
+        initialCapital: 10_000,
+        commission: 0.04,
+        slippage: 0.05,
+        useStrategyRiskManagement: true,
+    });
+
+    const signalBarTime = signalKlines[50].closeTime;
+    const result = await engine.run({
+        signalKlines,
+        strategyName: 'Auditable settlement',
+        symbol: 'BTCUSDT',
+        signalInterval: '1h',
+        strategyDetector: (ticker) => {
+            if (ticker.closeTime !== signalBarTime) {
+                return null;
+            }
+
+            return {
+                signal: 'long',
+                confidence: 90,
+                risk: {
+                    stopLoss: {
+                        price: 90,
+                        percentage: 10,
+                        type: 'fixed',
+                        reason: 'test stop',
+                    },
+                    takeProfit: {
+                        targets: [
+                            {
+                                price: 110,
+                                percentage: 10,
+                                closePercentage: 100,
+                                reason: 'test target',
+                            },
+                        ],
+                        riskRewardRatio: 1,
+                    },
+                    positionSizing: {
+                        percentage: 50,
+                        leverage: 2,
+                        maxRiskAmount: 500,
+                        confidence: 90,
+                        reasoning: 'half margin, 2x notional',
+                    },
+                    metrics: {
+                        entryPrice: 100,
+                        riskAmount: 500,
+                        potentialProfit: 1000,
+                    },
+                },
+            };
+        },
+    });
+
+    assert.equal(result.trades.length, 1);
+    const trade = result.trades[0] as typeof result.trades[number] & {
+        qty?: number;
+        margin?: number;
+        notional?: number;
+        fee?: number;
+        slippageCost?: number;
+        funding?: number;
+        pnl?: number;
+        pnlPct?: number;
+    };
+
+    assert.equal(trade.margin, 5_000);
+    assert.equal(trade.notional, 10_000);
+    assert.equal(trade.qty, 100);
+    assert.ok(typeof trade.fee === 'number' && trade.fee > 0);
+    assert.ok(typeof trade.slippageCost === 'number' && trade.slippageCost > 0);
+    assert.ok(typeof trade.funding === 'number' && trade.funding < 0);
+    assert.ok(typeof trade.pnl === 'number' && trade.pnl > 0);
+    assert.ok(typeof trade.pnlPct === 'number' && trade.pnlPct > 0);
+});
+
+test('BacktestEngine includes funding cashflow in realized pnl for long positions', async () => {
+    const signalKlines = Array.from({ length: 54 }, (_, index) => {
+        if (index === 52) {
+            return {
+                ...createKline(index, 110, 111, 99, 110),
+                fundingRate: '0.001',
+            };
+        }
+
+        return createKline(index, 100, 101, 99, 100);
+    });
+
+    const engine = new BacktestEngine({
+        initialCapital: 10_000,
+        commission: 0,
+        slippage: 0,
+        useStrategyRiskManagement: true,
+    });
+
+    const signalBarTime = signalKlines[50].closeTime;
+    const result = await engine.run({
+        signalKlines,
+        strategyName: 'Funding settlement',
+        symbol: 'BTCUSDT',
+        signalInterval: '1h',
+        strategyDetector: (ticker) => {
+            if (ticker.closeTime !== signalBarTime) {
+                return null;
+            }
+
+            return {
+                signal: 'long',
+                confidence: 90,
+                risk: {
+                    stopLoss: {
+                        price: 90,
+                        percentage: 10,
+                        type: 'fixed',
+                        reason: 'test stop',
+                    },
+                    takeProfit: {
+                        targets: [
+                            {
+                                price: 110,
+                                percentage: 10,
+                                closePercentage: 100,
+                                reason: 'test target',
+                            },
+                        ],
+                        riskRewardRatio: 1,
+                    },
+                    positionSizing: {
+                        percentage: 50,
+                        leverage: 2,
+                        maxRiskAmount: 500,
+                        confidence: 90,
+                        reasoning: 'half margin, 2x notional',
+                    },
+                    metrics: {
+                        entryPrice: 100,
+                        riskAmount: 500,
+                        potentialProfit: 1000,
+                    },
+                },
+            };
+        },
+    });
+
+    const trade = result.trades[0] as typeof result.trades[number] & {
+        funding?: number;
+        pnl?: number;
+        pnlPct?: number;
+    };
+
+    assert.equal(trade.funding, -10);
+    assert.ok(Math.abs((trade.pnl ?? 0) - 990) < 0.000001);
+    assert.ok(Math.abs((trade.pnlPct ?? 0) - 19.8) < 0.000001);
+    assert.ok(Math.abs(result.totalProfitUSDT - 990) < 0.000001);
+});
+
+test('BacktestEngine uses leverage to derive quantity and capital usage', async () => {
+    const signalKlines = Array.from({ length: 53 }, (_, index) => {
+        if (index === 52) {
+            return createKline(index, 105, 106, 104, 105);
+        }
+
+        return createKline(index, 100, 101, 99, 100);
+    });
+
+    const engine = new BacktestEngine({
+        initialCapital: 10_000,
+        commission: 0,
+        slippage: 0,
+        useStrategyRiskManagement: true,
+    });
+
+    const signalBarTime = signalKlines[50].closeTime;
+    const result = await engine.run({
+        signalKlines,
+        strategyName: 'Leverage sizing',
+        symbol: 'ETHUSDT',
+        signalInterval: '1h',
+        strategyDetector: (ticker) => {
+            if (ticker.closeTime !== signalBarTime) {
+                return null;
+            }
+
+            return {
+                signal: 'long',
+                confidence: 90,
+                risk: {
+                    stopLoss: {
+                        price: 95,
+                        percentage: 5,
+                        type: 'fixed',
+                        reason: 'test stop',
+                    },
+                    takeProfit: {
+                        targets: [],
+                        riskRewardRatio: 0,
+                    },
+                    positionSizing: {
+                        percentage: 25,
+                        leverage: 4,
+                        maxRiskAmount: 500,
+                        confidence: 90,
+                        reasoning: 'quarter margin, 4x notional',
+                    },
+                    metrics: {
+                        entryPrice: 100,
+                        riskAmount: 500,
+                        potentialProfit: 500,
+                    },
+                },
+            };
+        },
+    });
+
+    const trade = result.trades[0] as typeof result.trades[number] & {
+        qty?: number;
+        margin?: number;
+        notional?: number;
+        pnl?: number;
+        pnlPct?: number;
+    };
+
+    assert.equal(trade.exitReason, 'end_of_data');
+    assert.equal(trade.margin, 2_500);
+    assert.equal(trade.notional, 10_000);
+    assert.equal(trade.qty, 100);
+    assert.equal(trade.pnl, 500);
+    assert.equal(trade.pnlPct, 20);
+});
+
+test('BacktestEngine force-settles open positions at simulation end with exitReason end_of_data', async () => {
+    const signalKlines = Array.from({ length: 53 }, (_, index) => {
+        if (index === 52) {
+            return createKline(index, 103, 104, 102, 103);
+        }
+
+        return createKline(index, 100, 101, 99, 100);
+    });
+
+    const engine = new BacktestEngine({
+        initialCapital: 10_000,
+        commission: 0,
+        slippage: 0,
+        useStrategyRiskManagement: true,
+    });
+
+    const signalBarTime = signalKlines[50].closeTime;
+    const result = await engine.run({
+        signalKlines,
+        strategyName: 'End of data settlement',
+        symbol: 'SOLUSDT',
+        signalInterval: '1h',
+        strategyDetector: (ticker) => {
+            if (ticker.closeTime !== signalBarTime) {
+                return null;
+            }
+
+            return {
+                signal: 'long',
+                confidence: 90,
+                risk: {
+                    stopLoss: {
+                        price: 90,
+                        percentage: 10,
+                        type: 'fixed',
+                        reason: 'wide stop',
+                    },
+                    takeProfit: {
+                        targets: [],
+                        riskRewardRatio: 0,
+                    },
+                    positionSizing: {
+                        percentage: 100,
+                        leverage: 1,
+                        maxRiskAmount: 1000,
+                        confidence: 90,
+                        reasoning: 'full spot-like margin',
+                    },
+                    metrics: {
+                        entryPrice: 100,
+                        riskAmount: 1000,
+                        potentialProfit: 300,
+                    },
+                },
+            };
+        },
+    });
+
+    assert.equal(result.trades.length, 1);
+    assert.equal(result.trades[0].exitReason, 'end_of_data');
+    assert.equal(result.trades[0].exitTime, signalKlines[52].closeTime);
+    assert.equal(result.trades[0].exitPrice, 103);
+});

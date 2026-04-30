@@ -193,3 +193,154 @@ test('runPortfolioBacktest applies wei-shen parameter overrides to portfolio coo
     assert.equal(result.executedTrades, 1);
     assert.equal(result.skippedTrades, 1);
 });
+
+test('runPortfolioBacktest blocks entries above maxConcurrentPositions and reports skip reason', () => {
+    const start = Date.UTC(2025, 1, 1);
+    const runs = [
+        { symbol: 'BTCUSDT', result: createBacktestResult('BTCUSDT', [createTrade('BTCUSDT', start, start + (3 * HOUR_MS), 5, 0.5)]) },
+        { symbol: 'ETHUSDT', result: createBacktestResult('ETHUSDT', [createTrade('ETHUSDT', start + HOUR_MS, start + (2 * HOUR_MS), 4, 0.5)]) },
+    ];
+
+    const result = runPortfolioBacktest(runs, {
+        initialCapital: 10_000,
+        maxConcurrentPositions: 1,
+        positionSizePercent: 50,
+    });
+
+    assert.equal(result.executedTrades, 1);
+    assert.equal(result.skippedTrades, 1);
+    assert.deepEqual(result.trades.map((trade) => trade.symbol), ['BTCUSDT']);
+    assert.equal(result.diagnostics?.skipReasons.maxConcurrentPositions, 1);
+});
+
+test('runPortfolioBacktest skips a same-symbol entry while the symbol is already open', () => {
+    const start = Date.UTC(2025, 1, 2);
+    const trades = [
+        createTrade('BTCUSDT', start, start + (3 * HOUR_MS), 5, 0.4),
+        createTrade('BTCUSDT', start + HOUR_MS, start + (2 * HOUR_MS), 7, 0.4),
+    ];
+
+    const result = runPortfolioBacktest([
+        { symbol: 'BTCUSDT', result: createBacktestResult('BTCUSDT', trades) },
+    ], {
+        initialCapital: 10_000,
+        maxConcurrentPositions: 3,
+        positionSizePercent: 40,
+    });
+
+    assert.equal(result.executedTrades, 1);
+    assert.equal(result.skippedTrades, 1);
+    assert.deepEqual(result.trades.map((trade) => trade.entryTime), [start]);
+    assert.equal(result.diagnostics?.skipReasons.sameSymbolOpen, 1);
+});
+
+test('runPortfolioBacktest excludes skipped trades from portfolio trades, equity curve, and metrics', () => {
+    const start = Date.UTC(2025, 1, 3);
+    const runs = [
+        { symbol: 'BTCUSDT', result: createBacktestResult('BTCUSDT', [createTrade('BTCUSDT', start, start + (3 * HOUR_MS), 10, 1)]) },
+        { symbol: 'ETHUSDT', result: createBacktestResult('ETHUSDT', [createTrade('ETHUSDT', start + HOUR_MS, start + (2 * HOUR_MS), -80, 1)]) },
+    ];
+
+    const result = runPortfolioBacktest(runs, {
+        initialCapital: 10_000,
+        maxConcurrentPositions: 1,
+        positionSizePercent: 100,
+    });
+
+    assert.equal(result.executedTrades, 1);
+    assert.equal(result.skippedTrades, 1);
+    assert.equal(result.finalCapital, 11_000);
+    assert.equal(result.totalProfitUSDT, 1_000);
+    assert.equal(result.losingTrades, 0);
+    assert.deepEqual(result.trades.map((trade) => trade.symbol), ['BTCUSDT']);
+    assert.ok(result.equityCurve.every((point) => point.equity >= 100));
+});
+
+test('runPortfolioBacktest does not let skipped wei-shen losses trigger cooldown', () => {
+    const start = Date.UTC(2025, 1, 4);
+    const runs = [
+        { symbol: 'BTCUSDT', result: createBacktestResult('BTCUSDT', [createTrade('BTCUSDT', start, start + (3 * HOUR_MS), 2, 0.5, 0.5)]) },
+        { symbol: 'XRPUSDT', result: createBacktestResult('XRPUSDT', [createTrade('XRPUSDT', start + HOUR_MS, start + (2 * HOUR_MS), -5, 0.5, 0.5)]) },
+        { symbol: 'ADAUSDT', result: createBacktestResult('ADAUSDT', [createTrade('ADAUSDT', start + (4 * HOUR_MS), start + (5 * HOUR_MS), 4, 0.5, 0.5)]) },
+    ];
+
+    const result = runPortfolioBacktest(runs, {
+        initialCapital: 10_000,
+        maxConcurrentPositions: 1,
+        positionSizePercent: 50,
+        strategyId: 'wei-shen-ledger',
+        parameterOverrides: {
+            'wei-shen-ledger': {
+                risk: {
+                    maxConsecutiveLossesBeforeCooldown: 1,
+                },
+            },
+        },
+    });
+
+    assert.equal(result.executedTrades, 2);
+    assert.equal(result.skippedTrades, 1);
+    assert.deepEqual(result.trades.map((trade) => trade.symbol), ['BTCUSDT', 'ADAUSDT']);
+    assert.equal(result.diagnostics?.skipReasons.maxConcurrentPositions, 1);
+    assert.equal(result.diagnostics?.skipReasons.weiShenCooldown ?? 0, 0);
+});
+
+test('runPortfolioBacktest stops new entries after global max drawdown breach', () => {
+    const start = Date.UTC(2025, 1, 5);
+    const runs = [
+        { symbol: 'BTCUSDT', result: createBacktestResult('BTCUSDT', [createTrade('BTCUSDT', start, start + HOUR_MS, -10, 1)]) },
+        { symbol: 'ETHUSDT', result: createBacktestResult('ETHUSDT', [createTrade('ETHUSDT', start + (2 * HOUR_MS), start + (3 * HOUR_MS), 20, 1)]) },
+    ];
+
+    const result = runPortfolioBacktest(runs, {
+        initialCapital: 10_000,
+        maxConcurrentPositions: 2,
+        positionSizePercent: 100,
+        maxDrawdownPct: 5,
+    } as Parameters<typeof runPortfolioBacktest>[1] & { maxDrawdownPct: number });
+
+    assert.equal(result.executedTrades, 1);
+    assert.equal(result.skippedTrades, 1);
+    assert.deepEqual(result.trades.map((trade) => trade.symbol), ['BTCUSDT']);
+    assert.equal(result.diagnostics?.skipReasons.maxDrawdown, 1);
+});
+
+test('runPortfolioBacktest uses stable ordering for same-timestamp candidates', () => {
+    const start = Date.UTC(2025, 1, 6);
+    const runs = [
+        { symbol: 'SOLUSDT', result: createBacktestResult('SOLUSDT', [createTrade('SOLUSDT', start, start + HOUR_MS, 3, 0.25)]) },
+        { symbol: 'ADAUSDT', result: createBacktestResult('ADAUSDT', [createTrade('ADAUSDT', start, start + HOUR_MS, 3, 0.25)]) },
+        { symbol: 'BTCUSDT', result: createBacktestResult('BTCUSDT', [createTrade('BTCUSDT', start, start + HOUR_MS, 3, 0.25)]) },
+    ];
+
+    const result = runPortfolioBacktest(runs, {
+        initialCapital: 10_000,
+        maxConcurrentPositions: 3,
+        positionSizePercent: 25,
+    });
+
+    assert.deepEqual(result.trades.map((trade) => trade.symbol), ['ADAUSDT', 'BTCUSDT', 'SOLUSDT']);
+});
+
+test('runPortfolioBacktest recalculates profitUSDT, size, and finalCapital from actual allocated capital', () => {
+    const start = Date.UTC(2025, 1, 7);
+    const runs = [
+        { symbol: 'BTCUSDT', result: createBacktestResult('BTCUSDT', [createTrade('BTCUSDT', start, start + HOUR_MS, 10, 0.8)]) },
+        { symbol: 'ETHUSDT', result: createBacktestResult('ETHUSDT', [createTrade('ETHUSDT', start, start + HOUR_MS, 20, 0.8)]) },
+    ];
+
+    const result = runPortfolioBacktest(runs, {
+        initialCapital: 10_000,
+        maxConcurrentPositions: 2,
+        positionSizePercent: 80,
+    });
+
+    assert.equal(result.executedTrades, 2);
+    assert.equal(result.trades[0]?.symbol, 'BTCUSDT');
+    assert.equal(result.trades[0]?.profitUSDT, 800);
+    assert.equal(result.trades[0]?.size, 0.8);
+    assert.equal(result.trades[1]?.symbol, 'ETHUSDT');
+    assert.equal(result.trades[1]?.profitUSDT, 400);
+    assert.equal(result.trades[1]?.size, 0.2);
+    assert.equal(result.finalCapital, 11_200);
+});
