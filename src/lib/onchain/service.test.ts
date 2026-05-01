@@ -264,6 +264,29 @@ test('matchOfficialAlphaTokens ignores name-only lookalikes that are not the cex
     );
 });
 
+test('matchOfficialAlphaTokens can match official alpha-only symbols without cexCoinName', () => {
+    const matched = matchOfficialAlphaTokens(
+        [
+            {
+                chainId: '56',
+                chainName: 'BSC',
+                contractAddress: '0xbsc-opg',
+                name: 'OpenGradient',
+                symbol: 'OPG',
+                alphaId: 'ALPHA_931',
+                cexCoinName: '',
+            },
+        ],
+        ['OPG'],
+        'OPG'
+    );
+
+    assert.deepEqual(
+        matched.map((item) => item.contractAddress),
+        ['0xbsc-opg']
+    );
+});
+
 test('resolveOnchainMappingStatus does not mark unverified alpha fallback candidates as confirmed', () => {
     assert.equal(
         resolveOnchainMappingStatus('alpha', {

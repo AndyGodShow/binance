@@ -590,8 +590,13 @@ export function matchOfficialAlphaTokens(
 
     return universe.filter((item) => {
         const cexCoin = normalizeAssetTerm(item.cexCoinName || '');
+        const symbol = normalizeAssetTerm(item.symbol || '');
+        const isOfficialAlphaOnly = Boolean(item.alphaId) && cexCoin.length === 0;
 
-        return cexCoin.length > 0 && Array.from(officialTerms).some((term) => cexCoin === term);
+        return Array.from(officialTerms).some((term) => (
+            (cexCoin.length > 0 && cexCoin === term)
+            || (isOfficialAlphaOnly && symbol.length > 0 && symbol === term)
+        ));
     }).sort((a, b) => {
         const aMeta = mapAlphaChain(a.chainId, a.chainName);
         const bMeta = mapAlphaChain(b.chainId, b.chainName);
