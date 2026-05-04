@@ -4,6 +4,8 @@ export type CategoryStatus = 'ok' | 'partial' | 'failed';
 export type ImpactDirection = 'risk_on' | 'risk_off' | 'mixed' | 'neutral';
 export type ImpactHorizon = 'intraday' | '1-3d' | '1-4w';
 export type NewsRiskBias = ImpactDirection;
+export type NewsSourceTier = 'official' | 'major' | 'specialist' | 'aggregated' | 'unknown';
+export type NewsConfirmationLevel = 'official' | 'multi_source' | 'single_authoritative' | 'single_source';
 
 export const NEWS_CATEGORIES: NewsCategory[] = ['macro', 'ai', 'crypto'];
 
@@ -46,6 +48,9 @@ export interface DailyNewsItem {
     impactHorizon?: ImpactHorizon;
     whyItMatters?: string;
     watchpoints?: string[];
+    sourceTier?: NewsSourceTier;
+    confirmationLevel?: NewsConfirmationLevel;
+    editorialReason?: string;
 }
 
 export interface DailyNewsCategoryStatus {
@@ -55,6 +60,7 @@ export interface DailyNewsCategoryStatus {
     dropped: {
         outsideWindow: number;
         irrelevant: number;
+        unimportant: number;
         duplicates: number;
         invalidDate: number;
         invalidUrl: number;

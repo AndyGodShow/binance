@@ -181,6 +181,96 @@ test('dedupeAndRankCandidates uses importance score as a tie breaker for same-ti
     assert.ok(result.items[0].importanceScore > result.items[1].importanceScore);
 });
 
+test('dedupeAndRankCandidates rejects routine small-project and price-only noise', () => {
+    const result = dedupeAndRankCandidates('crypto', [
+        candidate({
+            category: 'crypto',
+            title: 'Tiny token announces community AMA and airdrop campaign',
+            summary: 'A small token community plans an AMA, giveaway and roadmap update.',
+            source: 'Example',
+            domain: 'example.com',
+            url: 'https://example.com/tiny-token-ama-airdrop',
+            publishedAt: '2026-04-17T18:00:00.000Z',
+            tags: ['token', 'airdrop', 'AMA'],
+            rawSnippet: '',
+        }),
+        candidate({
+            category: 'crypto',
+            title: 'Meme coin jumps 8% as trader predicts more upside',
+            summary: 'A trader said the token could rally further after a short-term price move.',
+            source: 'Example',
+            domain: 'example.com',
+            url: 'https://example.com/meme-coin-price-prediction',
+            publishedAt: '2026-04-17T19:00:00.000Z',
+            tags: ['crypto', 'token'],
+            rawSnippet: '',
+        }),
+        candidate({
+            category: 'crypto',
+            title: 'SEC charges major crypto exchange over stablecoin reserve disclosures',
+            summary: 'The enforcement action can change compliance expectations for exchanges and stablecoin issuers.',
+            source: 'Reuters',
+            domain: 'reuters.com',
+            url: 'https://www.reuters.com/technology/sec-crypto-exchange-stablecoin-charges-2026-04-17/',
+            publishedAt: '2026-04-17T20:00:00.000Z',
+            tags: ['SEC', 'stablecoin', 'exchange'],
+            rawSnippet: '',
+        }),
+    ], WINDOW, 10);
+
+    assert.equal(result.items.length, 1);
+    assert.match(result.items[0].title, /SEC charges/i);
+    assert.equal(result.dropped.unimportant, 2);
+});
+
+test('dedupeAndRankCandidates annotates source confidence and editorial reason', () => {
+    const result = dedupeAndRankCandidates('crypto', [
+        candidate({
+            category: 'crypto',
+            title: 'Binance publishes proof-of-reserves update for major crypto assets',
+            summary: 'The official reserve update affects exchange transparency and asset custody expectations.',
+            source: 'Binance',
+            domain: 'binance.com',
+            url: 'https://www.binance.com/en/proof-of-reserves/update-2026-04-17',
+            publishedAt: '2026-04-17T18:00:00.000Z',
+            tags: ['Binance', 'reserve', 'BTC', 'ETH'],
+            rawSnippet: '',
+        }),
+        candidate({
+            category: 'crypto',
+            title: 'SEC delays decision on spot Ethereum ETF staking proposal',
+            summary: 'The delay keeps staking yield out of US spot ETH ETF products for now.',
+            source: 'Reuters',
+            domain: 'reuters.com',
+            url: 'https://www.reuters.com/technology/sec-delays-eth-staking-etf-2026-04-17/',
+            publishedAt: '2026-04-17T17:00:00.000Z',
+            tags: ['SEC', 'ETF', 'ETH'],
+            rawSnippet: '',
+        }),
+        candidate({
+            category: 'crypto',
+            title: 'SEC delays decision on Ethereum ETF staking plan',
+            summary: 'The regulator postponed its decision on staking inside spot ether funds.',
+            source: 'Bloomberg',
+            domain: 'bloomberg.com',
+            url: 'https://www.bloomberg.com/news/articles/2026-04-17/sec-delays-ethereum-etf-staking-plan',
+            publishedAt: '2026-04-17T17:05:00.000Z',
+            tags: ['SEC', 'ETF', 'ETH'],
+            rawSnippet: '',
+        }),
+    ], WINDOW, 10);
+
+    const officialItem = result.items.find((item) => item.source === 'Binance');
+    const multiSourceItem = result.items.find((item) => /Ethereum ETF staking/i.test(item.title));
+
+    assert.equal(officialItem?.sourceTier, 'official');
+    assert.equal(officialItem?.confirmationLevel, 'official');
+    assert.match(officialItem?.editorialReason || '', /官方来源|储备|交易所/);
+    assert.equal(multiSourceItem?.sourceTier, 'major');
+    assert.equal(multiSourceItem?.confirmationLevel, 'multi_source');
+    assert.match(multiSourceItem?.editorialReason || '', /多家来源|ETF|监管/);
+});
+
 test('dedupeAndRankCandidates enriches news with event context fields', () => {
     const result = dedupeAndRankCandidates('crypto', [
         candidate({
@@ -201,7 +291,7 @@ test('dedupeAndRankCandidates enriches news with event context fields', () => {
     assert.deepEqual(item.affectedAssets, ['BTC', 'ETH']);
     assert.equal(item.impactDirection, 'risk_on');
     assert.equal(item.impactHorizon, '1-3d');
-    assert.match(item.whyItMatters || '', /ETF|流动性|风险偏好/);
+    assert.match(item.whyItMatters || '', /ETF|流动性|监管预期|行业叙事/);
     assert.ok((item.watchpoints || []).length >= 2);
 });
 
@@ -317,11 +407,41 @@ test('buildDailyNewsDigestFromResults creates an important signal brief from eve
     ], WINDOW);
 
     assert.equal(digest.brief?.riskBias, 'risk_off');
-    assert.match(digest.brief?.headline || '', /风险偏好降温|risk-off/);
+    assert.match(digest.brief?.headline || '', /过去 24 小时|大事/);
+    assert.doesNotMatch(digest.brief?.headline || '', /风险偏好|多空|交易/);
     assert.ok(digest.brief?.driverTags.includes('通胀'));
     assert.equal(digest.brief?.driverTags.includes('聚合'), false);
     assert.ok(digest.brief?.affectedAssets.includes('BTC'));
     assert.ok((digest.brief?.latestSignals || []).length >= 2);
+});
+
+test('buildDailyNewsDigestFromResults summarizes the 24 hour brief without trading language', () => {
+    const digest = buildDailyNewsDigestFromResults([
+        {
+            category: 'crypto',
+            ok: true,
+            candidates: [
+                candidate({
+                    category: 'crypto',
+                    title: 'SEC approves spot Ethereum ETF staking proposal',
+                    summary: 'The approval may reshape ETF product design and institutional access to ETH staking yield.',
+                    source: 'Reuters',
+                    domain: 'reuters.com',
+                    url: 'https://www.reuters.com/technology/sec-approves-ethereum-etf-staking-2026-04-17/',
+                    publishedAt: '2026-04-17T18:00:00.000Z',
+                    tags: ['SEC', 'ETF', 'ETH'],
+                    rawSnippet: '',
+                }),
+            ],
+        },
+        { category: 'macro', ok: true, candidates: [] },
+        { category: 'ai', ok: true, candidates: [] },
+    ], WINDOW);
+
+    assert.match(digest.brief?.headline || '', /过去 24 小时|大事/);
+    assert.doesNotMatch(digest.brief?.headline || '', /风险偏好|多空|price|交易/);
+    assert.doesNotMatch(digest.crypto[0].whyItMatters || '', /交易者|风险偏好|盘中/);
+    assert.ok((digest.crypto[0].watchpoints || []).some((point) => /后续|确认|规则|披露/.test(point)));
 });
 
 test('file storage saves latest digest and reuses an existing same-window digest', async () => {

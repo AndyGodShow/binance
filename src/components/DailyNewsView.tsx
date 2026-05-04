@@ -61,39 +61,57 @@ function formatWindow(digest: DailyNewsDigest): string {
 }
 
 function getImportanceLabel(item: DailyNewsItem): string {
-    if (item.importanceLevel === 'high') return `高 · ${item.importanceScore}`;
-    if (item.importanceLevel === 'medium') return `中 · ${item.importanceScore}`;
-    return `低 · ${item.importanceScore}`;
+    if (item.importanceLevel === 'high') return `重大 · ${item.importanceScore}`;
+    if (item.importanceLevel === 'medium') return `重要 · ${item.importanceScore}`;
+    return `观察 · ${item.importanceScore}`;
 }
 
 function getStatusLabel(digest: DailyNewsDigest, category: NewsCategory): string {
     const status = digest.categoryStatus[category];
     if (!status) return '状态未知';
     if (status.status === 'failed') return '抓取失败';
-    if (status.status === 'partial') return `实际 ${status.returned} 条`;
-    return '10 条完整';
+    const filtered = status.dropped.unimportant ?? 0;
+    const filteredText = filtered > 0 ? ` / 过滤 ${filtered}` : '';
+    return `入选 ${status.returned}${filteredText}`;
 }
 
 function getDirectionLabel(item: DailyNewsItem): string | null {
-    if (item.impactDirection === 'risk_on') return '风险偏好修复';
-    if (item.impactDirection === 'risk_off') return '风险偏好降温';
-    if (item.impactDirection === 'mixed') return '多空交织';
-    if (item.impactDirection === 'neutral') return '等待确认';
+    if (item.impactDirection === 'risk_on') return '进展型';
+    if (item.impactDirection === 'risk_off') return '约束型';
+    if (item.impactDirection === 'mixed') return '进展与风险并存';
+    if (item.impactDirection === 'neutral') return '待确认';
     return null;
 }
 
 function getHorizonLabel(item: DailyNewsItem): string | null {
-    if (item.impactHorizon === 'intraday') return '盘中';
-    if (item.impactHorizon === '1-4w') return '1-4 周';
-    if (item.impactHorizon === '1-3d') return '1-3 天';
+    if (item.impactHorizon === 'intraday') return '短期进展';
+    if (item.impactHorizon === '1-4w') return '数周影响';
+    if (item.impactHorizon === '1-3d') return '近期影响';
     return null;
 }
 
 function getBriefBiasLabel(brief: DailyNewsBrief): string {
-    if (brief.riskBias === 'risk_on') return '风险偏好修复';
-    if (brief.riskBias === 'risk_off') return '风险偏好降温';
-    if (brief.riskBias === 'mixed') return '多空交织';
-    return '等待确认';
+    if (brief.riskBias === 'risk_on') return '进展较多';
+    if (brief.riskBias === 'risk_off') return '约束更突出';
+    if (brief.riskBias === 'mixed') return '进展与风险并存';
+    return '方向有限';
+}
+
+function getSourceTierLabel(item: DailyNewsItem): string | null {
+    if (item.sourceTier === 'official') return '官方来源';
+    if (item.sourceTier === 'major') return '主流媒体';
+    if (item.sourceTier === 'specialist') return '专业媒体';
+    if (item.sourceTier === 'aggregated') return '聚合来源';
+    if (item.sourceTier === 'unknown') return '普通来源';
+    return null;
+}
+
+function getConfirmationLabel(item: DailyNewsItem): string | null {
+    if (item.confirmationLevel === 'official') return '官方确认';
+    if (item.confirmationLevel === 'multi_source') return '多源交叉';
+    if (item.confirmationLevel === 'single_authoritative') return '权威单源';
+    if (item.confirmationLevel === 'single_source') return '单源待复核';
+    return null;
 }
 
 function NewsBriefPanel({ brief }: { brief?: DailyNewsBrief }) {
@@ -104,7 +122,7 @@ function NewsBriefPanel({ brief }: { brief?: DailyNewsBrief }) {
     return (
         <section className={styles.briefPanel}>
             <div className={styles.briefMain}>
-                <div className={styles.categoryEyebrow}>今日重要信号</div>
+                <div className={styles.categoryEyebrow}>24 小时大事摘记</div>
                 <h2 className={styles.briefHeadline}>{brief.headline}</h2>
                 <div className={styles.briefMeta}>
                     <span className={`${styles.briefBias} ${styles[brief.riskBias]}`}>{getBriefBiasLabel(brief)}</span>
@@ -140,6 +158,8 @@ function NewsItemCard({
 }) {
     const directionLabel = getDirectionLabel(item);
     const horizonLabel = getHorizonLabel(item);
+    const sourceTierLabel = getSourceTierLabel(item);
+    const confirmationLabel = getConfirmationLabel(item);
     const affectedAssets = (item.affectedAssets || []).slice(0, 4);
     const hasEventMeta = Boolean(item.subcategory || directionLabel || horizonLabel || affectedAssets.length > 0);
     const canExpand = Boolean(item.summary || item.whyItMatters || item.watchpoints?.length || item.tags.length > 0);
@@ -159,6 +179,8 @@ function NewsItemCard({
             <div className={styles.itemMeta}>
                 <span>{item.source}</span>
                 <span>{formatRelativeTime(item.publishedAt)}</span>
+                {sourceTierLabel && <span className={styles.sourcePill}>{sourceTierLabel}</span>}
+                {confirmationLabel && <span className={styles.sourcePill}>{confirmationLabel}</span>}
             </div>
             {hasEventMeta && (
                 <div className={styles.eventMeta}>
@@ -172,7 +194,7 @@ function NewsItemCard({
             )}
             {canExpand && (
                 <button className={styles.expandButton} type="button" onClick={onToggle} aria-expanded={expanded}>
-                    <span>{expanded ? '收起分析' : '展开分析'}</span>
+                    <span>{expanded ? '收起背景' : '查看背景'}</span>
                     {expanded ? <ChevronUp size={14} aria-hidden="true" /> : <ChevronDown size={14} aria-hidden="true" />}
                 </button>
             )}
@@ -182,9 +204,12 @@ function NewsItemCard({
                     {item.whyItMatters && (
                         <p className={styles.whyItMatters}>{item.whyItMatters}</p>
                     )}
+                    {item.editorialReason && (
+                        <p className={styles.editorialReason}>{item.editorialReason}</p>
+                    )}
                     {item.watchpoints && item.watchpoints.length > 0 && (
                         <div className={styles.watchpoints}>
-                            <span className={styles.watchpointLabel}>观察点</span>
+                            <span className={styles.watchpointLabel}>后续看点</span>
                             {item.watchpoints.slice(0, 3).map((point) => (
                                 <span key={point} className={styles.watchpoint}>{point}</span>
                             ))}
@@ -253,7 +278,7 @@ export default function DailyNewsView() {
                     <div>
                         <div className={styles.kicker}>重要事件</div>
                         <h1 className={styles.title}>重要新闻</h1>
-                        <p className={styles.subtitle}>过去 24 小时内按时间线整理的宏观 / 人工智能 / 加密重要事件。</p>
+                        <p className={styles.subtitle}>过去 24 小时内经过筛选的宏观 / 人工智能 / 加密大事，只保留会改变行业认知的信息。</p>
                     </div>
                 </header>
                 <div className={styles.emptyState}>
@@ -269,7 +294,7 @@ export default function DailyNewsView() {
                 <div className={styles.heroCopy}>
                     <div className={styles.kicker}>重要事件</div>
                     <h1 className={styles.title}>重要新闻</h1>
-                    <p className={styles.subtitle}>按发布时间倒序整理过去 24 小时内的宏观 / 人工智能 / 加密重要事件，用于快速校准风险偏好、关联资产和后续观察点。</p>
+                    <p className={styles.subtitle}>按发布时间倒序整理过去 24 小时内真正值得了解的宏观 / 人工智能 / 加密事件，过滤普通合作、KOL 预测、短线涨跌和重复搬运。</p>
                 </div>
                 <div className={styles.heroMeta}>
                     <div className={styles.metaBlock}>
@@ -285,7 +310,7 @@ export default function DailyNewsView() {
                         <strong>{totalCount} 条</strong>
                     </div>
                     <div className={styles.metaBlock}>
-                        <span className={styles.metaLabel}>高影响事件</span>
+                        <span className={styles.metaLabel}>重大事件</span>
                         <strong>{highImpactCount} 条</strong>
                     </div>
                 </div>

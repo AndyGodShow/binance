@@ -301,6 +301,19 @@
     font-size: 12px;
 }
 
+.sourcePill {
+    display: inline-flex;
+    align-items: center;
+    min-height: 22px;
+    padding: 3px 7px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.04);
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 11px;
+    font-weight: 700;
+}
+
 .eventMeta span {
     display: inline-flex;
     align-items: center;
@@ -372,6 +385,16 @@
     border-radius: 10px;
     background: rgba(252, 213, 53, 0.06);
     color: rgba(255, 255, 255, 0.78);
+    font-size: 12px;
+    line-height: 1.6;
+}
+
+.editorialReason {
+    padding: 10px 12px;
+    border: 1px solid rgba(59, 130, 246, 0.14);
+    border-radius: 10px;
+    background: rgba(59, 130, 246, 0.06);
+    color: rgba(219, 234, 254, 0.86);
     font-size: 12px;
     line-height: 1.6;
 }
