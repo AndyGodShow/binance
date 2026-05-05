@@ -59,6 +59,11 @@ const IMPACT_TERMS = [
     'cut', 'hike', 'inflation', 'payrolls', 'cpi', 'sanctions', 'tariff', 'war', 'etf',
     'liquidation', 'default', 'bankruptcy', 'guidance', 'forecast',
 ];
+const SCORE_PENALTY_TERMS = [
+    'presale', 'price prediction', 'best crypto to buy', 'buy now', 'token sale',
+    'moonshot', '100x', 'trader predicts', 'trader says', 'analyst says',
+    'influencer claims', 'scott melker',
+];
 
 const ORIGINAL_SOURCE_TERMS = [
     'federalreserve.gov', 'ecb.europa.eu', 'boj.or.jp', 'pbc.gov.cn', 'sec.gov',
@@ -157,6 +162,8 @@ export function scoreNewsCandidate(candidate: NewsCandidate, context: ScoreConte
     }
 
     score += getRecencyScore(candidate, context.windowEndMs);
+
+    score -= Math.min(35, countTermHits(text, SCORE_PENALTY_TERMS) * 12);
 
     return Math.max(0, Math.min(100, Math.round(score)));
 }

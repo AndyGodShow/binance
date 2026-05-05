@@ -99,6 +99,24 @@ const ROUTINE_NOISE_TERMS = [
     'lists on', 'new listing', 'integration', 'integrates with', 'testnet', 'nft event',
     'staking campaign', 'marketing campaign', 'opinion', 'columnist', 'rumor',
 ];
+const HARD_MARKETING_NOISE_TERMS = [
+    'presale', 'pre-sale', 'price prediction', 'best crypto to buy', 'best crypto presale',
+    'buy now', 'token sale', 'moonshot', '100x', 'next 100x', 'hidden gem', 'crypto gem',
+    'giveaway', 'airdrop',
+];
+const KOL_OPINION_NOISE_TERMS = [
+    'analyst says', 'analyst predicts', 'trader says', 'trader predicts', 'influencer claims',
+    'influencer says', 'kol', 'opinion', 'scott melker',
+];
+const PRICE_MOVE_TERMS = [
+    'crosses', 'breaks', 'hits', 'reaches', 'jumps', 'surges', 'drops', 'falls',
+    'rally', 'rallies', 'pullback', 'new high',
+];
+const MAJOR_EVENT_ANCHOR_TERMS = [
+    'sec', 'cftc', 'etf', 'stablecoin', 'depeg', 'hack', 'exploit', 'binance',
+    'coinbase', 'kraken', 'okx', 'outage', 'upgrade', 'lawsuit', 'charges',
+    'settlement', 'fed', 'federal reserve', 'cpi', 'nvidia', 'openai', 'anthropic',
+];
 const SYSTEMIC_IMPORTANCE_TERMS = [
     'sec', 'cftc', 'federal reserve', 'fed', 'ecb', 'boj', 'pboc', 'cpi', 'ppi',
     'nonfarm', 'payrolls', 'etf', 'stablecoin', 'hack', 'exploit', 'breach',
@@ -154,6 +172,7 @@ const CATEGORY_WEIGHT_TERMS: Record<string, string[]> = {
     macro: ['fed', 'federal reserve', 'cpi', 'inflation', 'rates', 'dollar', 'treasury', 'central bank'],
     aiInfrastructure: ['nvidia', 'gpu', 'chip', 'semiconductor', 'data center', 'compute', 'frontier model'],
 };
+const BANNED_CHINESE_STYLE_TERMS = ['暴涨', '起飞', '必买', '利好', '利空', '看涨', '看跌'];
 
 function includesTerm(text: string, term: string): boolean {
     const escaped = term.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -383,6 +402,46 @@ function extractTags(candidate: NewsCandidate, category: NewsCategory): string[]
 
 function candidateText(candidate: NewsCandidate, tags: string[] = []): string {
     return candidateFullText(candidate, tags);
+}
+
+function hasAnyTerm(text: string, terms: string[]): boolean {
+    return terms.some((term) => includesTerm(text, term));
+}
+
+function hasCjkText(value: string): boolean {
+    return /[\u3400-\u9FFF]/.test(value);
+}
+
+function newsText(value: NewsCandidate | DailyNewsItem): string {
+    const tags = 'tags' in value && Array.isArray(value.tags) ? value.tags : [];
+    const extra = 'summarySections' in value && value.summarySections
+        ? [
+            value.summarySections.whatHappened,
+            value.summarySections.whyImportant,
+            value.summarySections.whatToWatch,
+            value.summarySections.sourceAndConfirmation,
+            value.subcategory || '',
+        ]
+        : ['rawSnippet' in value ? value.rawSnippet || '' : ''];
+
+    return `${value.title} ${value.summary || ''} ${tags.join(' ')} ${extra.join(' ')}`.toLowerCase();
+}
+
+export function isHardMarketingNoise(value: NewsCandidate | DailyNewsItem): boolean {
+    return hasAnyTerm(newsText(value), HARD_MARKETING_NOISE_TERMS);
+}
+
+export function isKolOpinionNoise(value: NewsCandidate | DailyNewsItem): boolean {
+    return hasAnyTerm(newsText(value), KOL_OPINION_NOISE_TERMS);
+}
+
+function hasMajorEventAnchor(value: NewsCandidate | DailyNewsItem): boolean {
+    return hasAnyTerm(newsText(value), MAJOR_EVENT_ANCHOR_TERMS);
+}
+
+export function isPurePriceMove(value: NewsCandidate | DailyNewsItem): boolean {
+    const text = newsText(value);
+    return hasAnyTerm(text, PRICE_MOVE_TERMS) && !hasMajorEventAnchor(value);
 }
 
 function inferSubcategory(candidate: NewsCandidate, category: NewsCategory, tags: string[]): string {
@@ -661,6 +720,108 @@ function buildSummarySections(
     };
 }
 
+function cleanChineseStyle(value: string): string {
+    return BANNED_CHINESE_STYLE_TERMS.reduce(
+        (text, banned) => text.replaceAll(banned, '中性影响'),
+        value
+    );
+}
+
+function entityDisplayName(entity: string): string {
+    const names: Record<string, string> = {
+        ETH: '以太坊',
+        BTC: '比特币',
+        SOL: 'Solana',
+        FED: '美联储',
+        SEC: 'SEC',
+        CFTC: 'CFTC',
+        ETF: 'ETF',
+        USDT: 'USDT',
+        USDC: 'USDC',
+        BINANCE: 'Binance',
+        COINBASE: 'Coinbase',
+        KRAKEN: 'Kraken',
+        OKX: 'OKX',
+        OPENAI: 'OpenAI',
+        ANTHROPIC: 'Anthropic',
+        NVIDIA: 'Nvidia',
+        GOOGLE: 'Google',
+    };
+    return names[entity] || entity;
+}
+
+function buildObjectiveChineseTitle(item: DailyNewsItem): string {
+    if (hasCjkText(item.title)) {
+        return cleanChineseStyle(item.title.trim());
+    }
+
+    const text = newsText(item);
+    const entities = (item.coreEntities || item.affectedAssets || [])
+        .map(entityDisplayName)
+        .filter(Boolean);
+    const subject = entities.length > 0
+        ? [...new Set(entities)].slice(0, 2).join('、')
+        : item.subcategory || CATEGORY_LABELS[item.category];
+
+    if (includesTerm(text, 'reject') || includesTerm(text, 'rejected') || includesTerm(text, 'delay') || includesTerm(text, 'delays')) {
+        return `${subject}相关${item.subcategory || CATEGORY_LABELS[item.category]}事项出现监管进展`;
+    }
+    if (includesTerm(text, 'approve') || includesTerm(text, 'approval') || includesTerm(text, 'approved')) {
+        return `${subject}相关${item.subcategory || CATEGORY_LABELS[item.category]}事项获得批准`;
+    }
+    if (includesTerm(text, 'launch') || includesTerm(text, 'release') || includesTerm(text, 'rollout')) {
+        return `${subject}相关${item.subcategory || CATEGORY_LABELS[item.category]}事项启动推进`;
+    }
+    if (includesTerm(text, 'hack') || includesTerm(text, 'exploit') || includesTerm(text, 'breach')) {
+        return `${subject}相关安全事件披露新进展`;
+    }
+    if (includesTerm(text, 'lawsuit') || includesTerm(text, 'charges') || includesTerm(text, 'settlement')) {
+        return `${subject}相关监管或法律事项披露新进展`;
+    }
+
+    return `${subject}相关${item.subcategory || CATEGORY_LABELS[item.category]}事项披露新进展`;
+}
+
+function buildObjectiveChineseSummary(item: DailyNewsItem, title: string): string {
+    if (hasCjkText(item.summary)) {
+        return cleanChineseStyle(item.summary.trim());
+    }
+
+    if (item.summary && item.summary.trim()) {
+        return `报道显示，${title}。`;
+    }
+
+    return `${title}，具体细节未公开。`;
+}
+
+export function normalizeToChinese(item: DailyNewsItem): DailyNewsItem {
+    const title = buildObjectiveChineseTitle(item);
+    const summary = buildObjectiveChineseSummary(item, title);
+    const normalized: DailyNewsItem = {
+        ...item,
+        title,
+        summary,
+    };
+
+    normalized.summarySections = buildSummarySections({
+        ...normalized,
+        summary,
+        title,
+    });
+
+    return {
+        ...normalized,
+        title: cleanChineseStyle(normalized.title),
+        summary: cleanChineseStyle(normalized.summary),
+        summarySections: {
+            whatHappened: cleanChineseStyle(normalized.summarySections.whatHappened),
+            whyImportant: cleanChineseStyle(normalized.summarySections.whyImportant),
+            whatToWatch: cleanChineseStyle(normalized.summarySections.whatToWatch),
+            sourceAndConfirmation: cleanChineseStyle(normalized.summarySections.sourceAndConfirmation),
+        },
+    };
+}
+
 function buildSummary(candidate: NewsCandidate, category: NewsCategory, tags: string[]): string {
     if (candidate.summary && candidate.summary.trim().length > 24) {
         return candidate.summary.trim();
@@ -842,6 +1003,10 @@ function isEditoriallyImportant(item: DailyNewsItem): boolean {
     const hasLowValueAiSignal = item.category === 'ai' && LOW_VALUE_AI_TERMS.some((term) => includesTerm(text, term));
     const hasLowValueCryptoSignal = item.category === 'crypto' && LOW_VALUE_CRYPTO_TERMS.some((term) => includesTerm(text, term));
 
+    if (isHardMarketingNoise(item) || isKolOpinionNoise(item) || isPurePriceMove(item)) {
+        return false;
+    }
+
     if (hasSocialRumorSource && item.confirmationLevel === 'single_source') {
         return false;
     }
@@ -851,6 +1016,14 @@ function isEditoriallyImportant(item: DailyNewsItem): boolean {
     }
 
     return item.importanceScore >= MIN_EDITORIAL_IMPORTANCE_SCORE || hasSystemicSignal;
+}
+
+export function isTopStoryEligible(item: DailyNewsItem): boolean {
+    if (item.importanceScore < TOP_STORY_MIN_SCORE) {
+        return false;
+    }
+
+    return !isHardMarketingNoise(item) && !isKolOpinionNoise(item) && !isPurePriceMove(item);
 }
 
 function buildDailyNewsBrief(digest: DailyNewsDigest): DailyNewsBrief {
@@ -875,7 +1048,7 @@ function buildDailyNewsBrief(digest: DailyNewsDigest): DailyNewsBrief {
 
 function buildTopStories(digest: DailyNewsDigest): DailyNewsTopStory[] {
     return allDigestItems(digest)
-        .filter((item) => item.importanceScore >= TOP_STORY_MIN_SCORE)
+        .filter(isTopStoryEligible)
         .sort((a, b) => {
             if (b.importanceScore !== a.importanceScore) {
                 return b.importanceScore - a.importanceScore;
@@ -1047,7 +1220,7 @@ export function buildDailyNewsDigestFromResults(
         }
 
         const ranked = dedupeAndRankCandidates(category, result.candidates, window, limit);
-        digest[category] = ranked.items;
+        digest[category] = ranked.items.map(normalizeToChinese);
         digest.categoryStatus[category] = {
             status: ranked.items.length >= limit ? 'ok' : 'partial',
             requested: result.candidates.length,

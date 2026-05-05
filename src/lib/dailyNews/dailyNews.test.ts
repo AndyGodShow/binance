@@ -223,6 +223,59 @@ test('dedupeAndRankCandidates rejects routine small-project and price-only noise
     assert.equal(result.dropped.unimportant, 2);
 });
 
+test('dedupeAndRankCandidates rejects price crossing marketing and KOL opinion noise', () => {
+    const result = dedupeAndRankCandidates('crypto', [
+        candidate({
+            category: 'crypto',
+            title: 'Bitcoin crosses $81,000, ETH, SOL, DOGE steady as options desks bid on further price jump',
+            summary: 'The article describes a short-term price crossing without a new regulatory or infrastructure fact.',
+            source: 'CoinDesk',
+            domain: 'coindesk.com',
+            url: 'https://www.coindesk.com/markets/2026/04/17/bitcoin-crosses-81000/',
+            publishedAt: '2026-04-17T18:00:00.000Z',
+            tags: ['BTC', 'ETH', 'SOL'],
+            rawSnippet: '',
+        }),
+        candidate({
+            category: 'crypto',
+            title: 'Pepeto price prediction: best crypto presale to buy now before token sale',
+            summary: 'A sponsored article says the token could be the next moonshot gem with 100x potential.',
+            source: 'FinanceFeeds',
+            domain: 'financefeeds.com',
+            url: 'https://example.com/pepeto-price-prediction-best-crypto-presale',
+            publishedAt: '2026-04-17T19:00:00.000Z',
+            tags: ['crypto', 'token'],
+            rawSnippet: '',
+        }),
+        candidate({
+            category: 'crypto',
+            title: 'Scott Melker says SEC and CFTC may clarify crypto rules soon',
+            summary: 'The trader predicts regulators could act soon without citing a filing.',
+            source: 'Traders Union',
+            domain: 'tradersunion.com',
+            url: 'https://example.com/scott-melker-sec-cftc-crypto-rules',
+            publishedAt: '2026-04-17T20:00:00.000Z',
+            tags: ['SEC', 'CFTC'],
+            rawSnippet: '',
+        }),
+        candidate({
+            category: 'crypto',
+            title: 'SEC rejects spot Bitcoin ETF rule change, BTC falls after decision',
+            summary: 'The regulator rejected a filing for a spot Bitcoin ETF rule change.',
+            source: 'Reuters',
+            domain: 'reuters.com',
+            url: 'https://www.reuters.com/technology/sec-rejects-bitcoin-etf-rule-change-2026-04-17/',
+            publishedAt: '2026-04-17T21:00:00.000Z',
+            tags: ['SEC', 'ETF', 'BTC'],
+            rawSnippet: '',
+        }),
+    ], WINDOW, 10);
+
+    assert.equal(result.items.length, 1);
+    assert.match(result.items[0].title, /SEC rejects/i);
+    assert.equal(result.dropped.unimportant, 3);
+});
+
 test('dedupeAndRankCandidates filters routine financing partnership listing and activity noise', () => {
     const result = dedupeAndRankCandidates('crypto', [
         candidate({
@@ -664,6 +717,46 @@ test('buildDailyNewsDigestFromResults does not pad top stories when fewer major 
     assert.equal(digest.topStories?.length, 1);
 });
 
+test('buildDailyNewsDigestFromResults excludes price-only stories from top stories without padding', () => {
+    const digest = buildDailyNewsDigestFromResults([
+        {
+            category: 'crypto',
+            ok: true,
+            candidates: [
+                candidate({
+                    category: 'crypto',
+                    title: 'Bitcoin crosses $81,000 as ETH and SOL rally to new high',
+                    summary: 'The article only describes short-term price action across large crypto assets.',
+                    source: 'CoinDesk',
+                    domain: 'coindesk.com',
+                    url: 'https://www.coindesk.com/markets/2026/04/17/bitcoin-crosses-81000-eth-sol-rally/',
+                    publishedAt: '2026-04-17T18:00:00.000Z',
+                    tags: ['BTC', 'ETH', 'SOL'],
+                    rawSnippet: '',
+                }),
+                candidate({
+                    category: 'crypto',
+                    title: 'SEC rejects spot Bitcoin ETF rule change, BTC falls after decision',
+                    summary: 'The regulator rejected a filing for a spot Bitcoin ETF rule change.',
+                    source: 'Reuters',
+                    domain: 'reuters.com',
+                    url: 'https://www.reuters.com/technology/sec-rejects-bitcoin-etf-rule-change-2026-04-17/',
+                    publishedAt: '2026-04-17T21:00:00.000Z',
+                    tags: ['SEC', 'ETF', 'BTC'],
+                    rawSnippet: '',
+                }),
+            ],
+        },
+        { category: 'macro', ok: true, candidates: [] },
+        { category: 'ai', ok: true, candidates: [] },
+    ], WINDOW);
+
+    assert.equal(digest.crypto.length, 1);
+    assert.equal(digest.topStories?.length, 1);
+    assert.match(digest.topStories?.[0].headline || '', /SEC|ETF|监管/);
+    assert.doesNotMatch(digest.topStories?.[0].headline || '', /crosses|rally|new high/i);
+});
+
 test('daily news items expose fixed summary sections', () => {
     const digest = buildDailyNewsDigestFromResults([
         {
@@ -693,6 +786,50 @@ test('daily news items expose fixed summary sections', () => {
     assert.match(item.summarySections?.whyImportant || '', /重要|影响|改变|监管|结构|基础设施|预期/);
     assert.match(item.summarySections?.whatToWatch || '', /后续|确认|文件|监管|官方|细节/);
     assert.match(item.summarySections?.sourceAndConfirmation || '', /来源|确认|单源|多源|官方|Reuters/);
+});
+
+test('daily news output uses simplified Chinese formal wording without banned promotional terms', () => {
+    const digest = buildDailyNewsDigestFromResults([
+        {
+            category: 'crypto',
+            ok: true,
+            candidates: [
+                candidate({
+                    category: 'crypto',
+                    title: 'SEC approves spot Ethereum ETF staking proposal',
+                    summary: 'The approval may reshape ETF product design and institutional access to ETH staking yield.',
+                    source: 'Reuters',
+                    domain: 'reuters.com',
+                    url: 'https://www.reuters.com/technology/sec-approves-ethereum-etf-staking-2026-04-17/',
+                    publishedAt: '2026-04-17T18:00:00.000Z',
+                    tags: ['SEC', 'ETF', 'ETH'],
+                    rawSnippet: '',
+                }),
+            ],
+        },
+        { category: 'macro', ok: true, candidates: [] },
+        { category: 'ai', ok: true, candidates: [] },
+    ], WINDOW);
+
+    const item = digest.crypto[0];
+    const combined = [
+        item.title,
+        item.summary,
+        item.summarySections?.whatHappened,
+        item.summarySections?.whyImportant,
+        item.summarySections?.whatToWatch,
+        item.summarySections?.sourceAndConfirmation,
+        digest.topStories?.[0].headline,
+        ...(digest.brief?.latestSignals || []),
+    ].join('\n');
+
+    assert.match(combined, /[\u3400-\u9FFF]/);
+    assert.doesNotMatch(combined, /SEC approves spot Ethereum ETF staking proposal|The approval may reshape/i);
+    assert.doesNotMatch(combined, /暴涨|起飞|必买|利好|利空|看涨|看跌/);
+    assert.match(item.summarySections?.whatHappened || '', /^发生了什么：/);
+    assert.match(item.summarySections?.whyImportant || '', /^为什么重要：/);
+    assert.match(item.summarySections?.whatToWatch || '', /^后续看什么：/);
+    assert.match(item.summarySections?.sourceAndConfirmation || '', /^来源与确认度：/);
 });
 
 test('buildDailyNewsDigestFromResults summarizes the 24 hour brief without trading language', () => {

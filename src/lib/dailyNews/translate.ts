@@ -1,5 +1,6 @@
 import { logger } from '../logger.ts';
 
+import { normalizeToChinese } from './pipeline.ts';
 import { NEWS_CATEGORIES, type DailyNewsDigest, type DailyNewsItem } from './types.ts';
 
 const TRANSLATE_ENDPOINT = 'https://translate.googleapis.com/translate_a/single';
@@ -64,7 +65,7 @@ async function translateItem(item: DailyNewsItem): Promise<DailyNewsItem> {
     const needsSummary = shouldTranslateText(item.summary);
 
     if (!needsTitle && !needsSummary) {
-        return item;
+        return normalizeToChinese(item);
     }
 
     try {
@@ -73,17 +74,17 @@ async function translateItem(item: DailyNewsItem): Promise<DailyNewsItem> {
             needsSummary ? fetchTranslation(item.summary) : Promise.resolve(item.summary),
         ]);
 
-        return {
+        return normalizeToChinese({
             ...item,
             title: needsTitle ? (translatedTitle?.trim() || item.title) : item.title,
             summary: needsSummary ? (translatedSummary?.trim() || item.summary) : item.summary,
-        };
+        });
     } catch (error) {
         logger.warn('Daily news translation failed; using original text', {
             id: item.id,
             error: error instanceof Error ? error.message : String(error),
         });
-        return item;
+        return normalizeToChinese(item);
     }
 }
 
@@ -103,6 +104,35 @@ export async function translateDailyNewsDigest(digest: DailyNewsDigest): Promise
 
     for (const category of NEWS_CATEGORIES) {
         translated[category] = await translateItems(digest[category]);
+    }
+
+    const topStoryItems = NEWS_CATEGORIES.flatMap((category) => translated[category])
+        .filter((item) => translated.topStories?.some((story) => story.id === item.id));
+
+    translated.topStories = translated.topStories?.map((story) => {
+        const item = topStoryItems.find((candidate) => candidate.id === story.id);
+        return {
+            ...story,
+            headline: item?.title || story.headline,
+            whyImportant: item?.summarySections?.whyImportant || story.whyImportant,
+        };
+    });
+
+    if (translated.brief?.latestSignals && translated.brief.latestSignals.some((signal) => shouldTranslateText(signal))) {
+        const items = NEWS_CATEGORIES.flatMap((category) => translated[category])
+            .sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime())
+            .slice(0, translated.brief.latestSignals.length);
+        translated.brief = {
+            ...translated.brief,
+            latestSignals: translated.brief.latestSignals.map((signal, index) => {
+                const item = items[index];
+                if (!item) return signal;
+                const assetText = item.affectedAssets && item.affectedAssets.length > 0
+                    ? `，涉及 ${item.affectedAssets.slice(0, 2).join('、')}`
+                    : '';
+                return `${item.subcategory || '事件'}：${item.title}${assetText}`;
+            }),
+        };
     }
 
     return translated;
