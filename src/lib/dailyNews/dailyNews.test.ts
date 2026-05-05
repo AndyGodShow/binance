@@ -223,6 +223,91 @@ test('dedupeAndRankCandidates rejects routine small-project and price-only noise
     assert.equal(result.dropped.unimportant, 2);
 });
 
+test('dedupeAndRankCandidates filters routine financing partnership listing and activity noise', () => {
+    const result = dedupeAndRankCandidates('crypto', [
+        candidate({
+            category: 'crypto',
+            title: 'Small DeFi token raises seed round and teases roadmap update',
+            summary: 'A low market cap project announced financing and future staking plans.',
+            source: 'Example',
+            domain: 'example.com',
+            url: 'https://example.com/small-defi-seed-roadmap',
+            publishedAt: '2026-04-17T12:00:00.000Z',
+            tags: ['DeFi', 'funding', 'staking'],
+            rawSnippet: '',
+        }),
+        candidate({
+            category: 'crypto',
+            title: 'Altcoin project announces integration partnership and NFT testnet event',
+            summary: 'The team said it will run an NFT activity and testnet campaign.',
+            source: 'Example',
+            domain: 'example.com',
+            url: 'https://example.com/altcoin-integration-nft-testnet',
+            publishedAt: '2026-04-17T13:00:00.000Z',
+            tags: ['partnership', 'NFT', 'testnet'],
+            rawSnippet: '',
+        }),
+        candidate({
+            category: 'crypto',
+            title: 'Binance reports wallet incident affecting exchange withdrawal infrastructure',
+            summary: 'The exchange said it paused withdrawals while investigating a wallet security incident.',
+            source: 'Binance',
+            domain: 'binance.com',
+            url: 'https://www.binance.com/en/support/announcement/wallet-security-incident-2026-04-17',
+            publishedAt: '2026-04-17T14:00:00.000Z',
+            tags: ['Binance', 'wallet', 'security'],
+            rawSnippet: '',
+        }),
+    ], WINDOW, 10);
+
+    assert.equal(result.items.length, 1);
+    assert.match(result.items[0].title, /wallet incident/i);
+    assert.equal(result.dropped.unimportant, 2);
+});
+
+test('dedupeAndRankCandidates keeps systemic crypto events that should not be overfiltered', () => {
+    const result = dedupeAndRankCandidates('crypto', [
+        candidate({
+            category: 'crypto',
+            title: 'Major DeFi bridge exploit drains $180 million in crypto assets',
+            summary: 'Security researchers said the bridge exploit affected multiple chains and user funds.',
+            source: 'The Block',
+            domain: 'theblock.co',
+            url: 'https://www.theblock.co/post/bridge-exploit-180m-2026-04-17',
+            publishedAt: '2026-04-17T11:00:00.000Z',
+            tags: ['hack', 'exploit', 'DeFi'],
+            rawSnippet: '',
+        }),
+        candidate({
+            category: 'crypto',
+            title: 'USDC briefly depegs after reserve disclosure prompts regulatory review',
+            summary: 'Circle said it is working with regulators after a reserve disclosure raised questions.',
+            source: 'Reuters',
+            domain: 'reuters.com',
+            url: 'https://www.reuters.com/technology/usdc-depeg-reserve-disclosure-2026-04-17/',
+            publishedAt: '2026-04-17T12:00:00.000Z',
+            tags: ['USDC', 'stablecoin', 'regulation'],
+            rawSnippet: '',
+        }),
+        candidate({
+            category: 'crypto',
+            title: 'Coinbase discloses security incident involving institutional custody system',
+            summary: 'The exchange said it contained a security issue in institutional custody infrastructure.',
+            source: 'Coinbase',
+            domain: 'coinbase.com',
+            url: 'https://www.coinbase.com/blog/custody-security-incident-2026-04-17',
+            publishedAt: '2026-04-17T13:00:00.000Z',
+            tags: ['Coinbase', 'security', 'custody'],
+            rawSnippet: '',
+        }),
+    ], WINDOW, 10);
+
+    assert.equal(result.items.length, 3);
+    assert.ok(result.items.some((item) => /bridge exploit/i.test(item.title)));
+    assert.ok(result.items.some((item) => /USDC/i.test(item.title)));
+    assert.ok(result.items.some((item) => /Coinbase/i.test(item.title)));
+});
+
 test('dedupeAndRankCandidates annotates source confidence and editorial reason', () => {
     const result = dedupeAndRankCandidates('crypto', [
         candidate({
@@ -269,6 +354,72 @@ test('dedupeAndRankCandidates annotates source confidence and editorial reason',
     assert.equal(multiSourceItem?.sourceTier, 'major');
     assert.equal(multiSourceItem?.confirmationLevel, 'multi_source');
     assert.match(multiSourceItem?.editorialReason || '', /多家来源|ETF|监管/);
+});
+
+test('dedupeAndRankCandidates aggregates same event by entities and builds a timeline', () => {
+    const result = dedupeAndRankCandidates('crypto', [
+        candidate({
+            category: 'crypto',
+            title: 'Reuters: SEC delays Ethereum ETF staking decision',
+            summary: 'The regulator delayed a decision on allowing staking in spot ETH ETF products.',
+            source: 'Reuters',
+            domain: 'reuters.com',
+            url: 'https://www.reuters.com/technology/sec-eth-etf-staking-delay-2026-04-17/',
+            publishedAt: '2026-04-17T10:00:00.000Z',
+            tags: ['SEC', 'ETH', 'ETF'],
+            rawSnippet: '',
+        }),
+        candidate({
+            category: 'crypto',
+            title: 'Bloomberg says SEC postpones decision on Ether fund staking',
+            summary: 'A later report said the SEC pushed back the staking decision for spot ether ETFs.',
+            source: 'Bloomberg',
+            domain: 'bloomberg.com',
+            url: 'https://www.bloomberg.com/news/articles/2026-04-17/sec-postpones-ether-fund-staking',
+            publishedAt: '2026-04-17T10:30:00.000Z',
+            tags: ['SEC', 'ETH', 'ETF'],
+            rawSnippet: '',
+        }),
+        candidate({
+            category: 'crypto',
+            title: 'SEC filing confirms delay on Ethereum ETF staking proposal',
+            summary: 'An SEC filing confirmed the agency delayed its decision on the Ethereum ETF staking proposal.',
+            source: 'SEC',
+            domain: 'sec.gov',
+            url: 'https://www.sec.gov/files/eth-etf-staking-delay-2026-04-17.pdf',
+            publishedAt: '2026-04-17T12:00:00.000Z',
+            tags: ['SEC', 'ETH', 'ETF'],
+            rawSnippet: '',
+        }),
+    ], WINDOW, 10);
+
+    assert.equal(result.items.length, 1);
+    const item = result.items[0];
+    assert.equal(item.eventStatus, 'confirmed');
+    assert.equal(item.earliestSource?.source, 'Reuters');
+    assert.equal(item.latestSource?.source, 'SEC');
+    assert.equal(item.officialSource?.source, 'SEC');
+    assert.equal(item.timeline?.length, 3);
+    assert.deepEqual(item.coreEntities?.sort(), ['ETF', 'ETH', 'SEC']);
+});
+
+test('dedupeAndRankCandidates marks single social rumors as single source and does not keep them', () => {
+    const result = dedupeAndRankCandidates('crypto', [
+        candidate({
+            category: 'crypto',
+            title: 'Influencer claims SEC may approve a tiny token ETF next week',
+            summary: 'A single social media account speculated about an ETF approval without documents.',
+            source: 'X',
+            domain: 'x.com',
+            url: 'https://x.com/random/status/123',
+            publishedAt: '2026-04-17T16:00:00.000Z',
+            tags: ['SEC', 'ETF', 'rumor'],
+            rawSnippet: '',
+        }),
+    ], WINDOW, 10);
+
+    assert.equal(result.items.length, 0);
+    assert.equal(result.dropped.unimportant, 1);
 });
 
 test('dedupeAndRankCandidates enriches news with event context fields', () => {
@@ -413,6 +564,135 @@ test('buildDailyNewsDigestFromResults creates an important signal brief from eve
     assert.equal(digest.brief?.driverTags.includes('聚合'), false);
     assert.ok(digest.brief?.affectedAssets.includes('BTC'));
     assert.ok((digest.brief?.latestSignals || []).length >= 2);
+});
+
+test('buildDailyNewsDigestFromResults creates top stories sorted by importance without padding', () => {
+    const digest = buildDailyNewsDigestFromResults([
+        {
+            category: 'crypto',
+            ok: true,
+            candidates: [
+                candidate({
+                    category: 'crypto',
+                    title: 'Binance discloses major wallet security incident and withdrawal pause',
+                    summary: 'Binance said it paused withdrawals after detecting a wallet infrastructure security incident.',
+                    source: 'Binance',
+                    domain: 'binance.com',
+                    url: 'https://www.binance.com/en/support/announcement/wallet-security-incident-2026-04-17',
+                    publishedAt: '2026-04-17T10:00:00.000Z',
+                    tags: ['Binance', 'security', 'wallet'],
+                    rawSnippet: '',
+                }),
+                candidate({
+                    category: 'crypto',
+                    title: 'SEC delays decision on spot Ethereum ETF staking proposal',
+                    summary: 'The delay affects the structure of US spot ETH ETF products.',
+                    source: 'Reuters',
+                    domain: 'reuters.com',
+                    url: 'https://www.reuters.com/technology/sec-delays-eth-staking-etf-2026-04-17/',
+                    publishedAt: '2026-04-17T20:00:00.000Z',
+                    tags: ['SEC', 'ETH', 'ETF'],
+                    rawSnippet: '',
+                }),
+            ],
+        },
+        {
+            category: 'macro',
+            ok: true,
+            candidates: [
+                candidate({
+                    category: 'macro',
+                    title: 'Federal Reserve signals fewer rate cuts after hotter CPI inflation data',
+                    summary: 'The Fed signal can reshape rate expectations and dollar liquidity conditions.',
+                    source: 'Reuters',
+                    domain: 'reuters.com',
+                    url: 'https://www.reuters.com/markets/fed-cpi-rate-cuts-2026-04-17/',
+                    publishedAt: '2026-04-17T21:00:00.000Z',
+                    tags: ['Fed', 'CPI', 'rates'],
+                    rawSnippet: '',
+                }),
+            ],
+        },
+        {
+            category: 'ai',
+            ok: true,
+            candidates: [
+                candidate({
+                    category: 'ai',
+                    title: 'Local AI startup announces small funding round for chatbot app',
+                    summary: 'The startup raised a small seed round for a consumer chatbot.',
+                    source: 'Example',
+                    domain: 'example.com',
+                    url: 'https://example.com/local-ai-startup-small-funding',
+                    publishedAt: '2026-04-17T22:00:00.000Z',
+                    tags: ['AI', 'funding'],
+                    rawSnippet: '',
+                }),
+            ],
+        },
+    ], WINDOW);
+
+    assert.equal(digest.topStories?.length, 3);
+    assert.match(digest.topStories?.[0].headline || '', /Binance|wallet/i);
+    assert.ok((digest.topStories?.[0].importanceScore || 0) >= (digest.topStories?.[1].importanceScore || 0));
+    assert.equal(digest.ai.length, 0);
+});
+
+test('buildDailyNewsDigestFromResults does not pad top stories when fewer major events exist', () => {
+    const digest = buildDailyNewsDigestFromResults([
+        {
+            category: 'crypto',
+            ok: true,
+            candidates: [
+                candidate({
+                    category: 'crypto',
+                    title: 'SEC charges major crypto exchange over stablecoin reserve disclosures',
+                    summary: 'The enforcement action can change compliance expectations for exchanges and stablecoin issuers.',
+                    source: 'Reuters',
+                    domain: 'reuters.com',
+                    url: 'https://www.reuters.com/technology/sec-crypto-exchange-stablecoin-charges-2026-04-17/',
+                    publishedAt: '2026-04-17T20:00:00.000Z',
+                    tags: ['SEC', 'stablecoin', 'exchange'],
+                    rawSnippet: '',
+                }),
+            ],
+        },
+        { category: 'macro', ok: true, candidates: [] },
+        { category: 'ai', ok: true, candidates: [] },
+    ], WINDOW);
+
+    assert.equal(digest.topStories?.length, 1);
+});
+
+test('daily news items expose fixed summary sections', () => {
+    const digest = buildDailyNewsDigestFromResults([
+        {
+            category: 'crypto',
+            ok: true,
+            candidates: [
+                candidate({
+                    category: 'crypto',
+                    title: 'SEC approves spot Ethereum ETF staking proposal',
+                    summary: 'The approval may reshape ETF product design and institutional access to ETH staking yield.',
+                    source: 'Reuters',
+                    domain: 'reuters.com',
+                    url: 'https://www.reuters.com/technology/sec-approves-ethereum-etf-staking-2026-04-17/',
+                    publishedAt: '2026-04-17T18:00:00.000Z',
+                    tags: ['SEC', 'ETF', 'ETH'],
+                    rawSnippet: '',
+                }),
+            ],
+        },
+        { category: 'macro', ok: true, candidates: [] },
+        { category: 'ai', ok: true, candidates: [] },
+    ], WINDOW);
+
+    const item = digest.crypto[0];
+    assert.ok(item.summarySections);
+    assert.match(item.summarySections?.whatHappened || '', /发生|报道|宣布|确认|批准|延迟|披露|SEC/i);
+    assert.match(item.summarySections?.whyImportant || '', /重要|影响|改变|监管|结构|基础设施|预期/);
+    assert.match(item.summarySections?.whatToWatch || '', /后续|确认|文件|监管|官方|细节/);
+    assert.match(item.summarySections?.sourceAndConfirmation || '', /来源|确认|单源|多源|官方|Reuters/);
 });
 
 test('buildDailyNewsDigestFromResults summarizes the 24 hour brief without trading language', () => {

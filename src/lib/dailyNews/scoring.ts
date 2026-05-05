@@ -48,7 +48,7 @@ const CATEGORY_TERMS: Record<NewsCategory, string[]> = {
     ],
     crypto: [
         'bitcoin', 'btc', 'ethereum', 'eth', 'crypto', 'stablecoin', 'defi', 'blockchain',
-        'token', 'solana', 'sol', 'etf', 'sec', 'binance', 'coinbase', 'tether', 'usdt',
+        'token', 'altcoin', 'solana', 'sol', 'etf', 'sec', 'binance', 'coinbase', 'tether', 'usdt',
         'circle', 'usdc', 'hack', 'exploit', 'wallet', 'miner', 'mining', 'liquidation',
     ],
 };

@@ -6,13 +6,20 @@ import {
     type CategoryCollectionResult,
     type DailyNewsBrief,
     type DailyNewsDigest,
+    type DailyNewsEventSource,
     type DailyNewsItem,
+    type DailyNewsScoreBreakdown,
+    type DailyNewsSummarySections,
+    type DailyNewsTimelineEntry,
+    type DailyNewsTopStory,
     type DailyNewsWindow,
+    type ImportanceLevel,
     type ImpactDirection,
     type ImpactHorizon,
     type NewsCandidate,
     type NewsCategory,
     type NewsConfirmationLevel,
+    type NewsEventStatus,
     type NewsRiskBias,
     type NewsSourceTier,
 } from './types.ts';
@@ -21,6 +28,8 @@ const DEFAULT_TIMEZONE = 'Asia/Shanghai';
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_CATEGORY_LIMIT = 10;
 const MIN_EDITORIAL_IMPORTANCE_SCORE = 58;
+const TOP_STORY_MIN_SCORE = 62;
+const EVENT_GROUP_WINDOW_MS = 8 * 60 * 60 * 1000;
 
 const STOP_WORDS = new Set([
     'the', 'and', 'for', 'with', 'from', 'that', 'this', 'after', 'into', 'over', 'under',
@@ -86,6 +95,9 @@ const ROUTINE_NOISE_TERMS = [
     'ama', 'airdrop', 'giveaway', 'community event', 'community campaign', 'roadmap update',
     'partnership', 'collaboration', 'listing rumor', 'price prediction', 'analyst predicts',
     'trader predicts', 'jumps', 'surges', 'rallies', 'drops', 'falls',
+    'seed round', 'small funding', 'small financing', 'chatbot app', 'ordinary listing',
+    'lists on', 'new listing', 'integration', 'integrates with', 'testnet', 'nft event',
+    'staking campaign', 'marketing campaign', 'opinion', 'columnist', 'rumor',
 ];
 const SYSTEMIC_IMPORTANCE_TERMS = [
     'sec', 'cftc', 'federal reserve', 'fed', 'ecb', 'boj', 'pboc', 'cpi', 'ppi',
@@ -93,7 +105,11 @@ const SYSTEMIC_IMPORTANCE_TERMS = [
     'lawsuit', 'charges', 'settlement', 'ban', 'approve', 'approval', 'reserve',
     'reserves', 'bankruptcy', 'default', 'acquisition', 'merger', 'tariff', 'sanction',
     'binance', 'coinbase', 'tether', 'circle', 'openai', 'anthropic', 'nvidia',
+    'kraken', 'okx', 'solana', 'outage', 'depeg', 'custody', 'withdrawal', 'wallet security',
 ];
+const SOCIAL_RUMOR_DOMAINS = ['x.com', 'twitter.com', 't.me', 'telegram.org', 'reddit.com'];
+const LOW_VALUE_AI_TERMS = ['small funding', 'seed round', 'chatbot app', 'startup announces'];
+const LOW_VALUE_CRYPTO_TERMS = ['small defi', 'low market cap', 'tiny token', 'altcoin project'];
 const OFFICIAL_SOURCE_DOMAINS = [
     'federalreserve.gov', 'ecb.europa.eu', 'boj.or.jp', 'pbc.gov.cn', 'sec.gov',
     'treasury.gov', 'whitehouse.gov', 'openai.com', 'anthropic.com', 'nvidia.com',
@@ -107,6 +123,37 @@ const MAJOR_SOURCE_DOMAINS = [
 const SPECIALIST_SOURCE_DOMAINS = [
     'coindesk.com', 'theblock.co', 'decrypt.co', 'cointelegraph.com', 'bitcoinmagazine.com',
 ];
+const CORE_ENTITY_RULES: Array<[string, string[]]> = [
+    ['BTC', ['bitcoin', 'btc']],
+    ['ETH', ['ethereum', 'ether', 'eth']],
+    ['SOL', ['solana', 'sol']],
+    ['SEC', ['sec', 'securities and exchange commission']],
+    ['CFTC', ['cftc']],
+    ['FED', ['fed', 'federal reserve']],
+    ['ECB', ['ecb']],
+    ['PBOC', ['pboc']],
+    ['ETF', ['etf', 'exchange-traded fund', 'exchange traded fund']],
+    ['USDT', ['usdt', 'tether']],
+    ['USDC', ['usdc', 'circle']],
+    ['BINANCE', ['binance']],
+    ['COINBASE', ['coinbase']],
+    ['KRAKEN', ['kraken']],
+    ['OKX', ['okx']],
+    ['OPENAI', ['openai']],
+    ['ANTHROPIC', ['anthropic']],
+    ['GOOGLE', ['google', 'gemini', 'deepmind']],
+    ['META', ['meta', 'llama']],
+    ['NVIDIA', ['nvidia', 'gpu']],
+];
+const CATEGORY_WEIGHT_TERMS: Record<string, string[]> = {
+    regulation: ['sec', 'cftc', 'lawsuit', 'charges', 'settlement', 'ban', 'regulation', 'regulator'],
+    etf: ['etf'],
+    stablecoin: ['stablecoin', 'usdt', 'usdc', 'tether', 'circle', 'depeg', 'reserve'],
+    exchange: ['binance', 'coinbase', 'kraken', 'okx', 'exchange', 'withdrawal', 'custody'],
+    security: ['hack', 'exploit', 'breach', 'security incident', 'wallet incident'],
+    macro: ['fed', 'federal reserve', 'cpi', 'inflation', 'rates', 'dollar', 'treasury', 'central bank'],
+    aiInfrastructure: ['nvidia', 'gpu', 'chip', 'semiconductor', 'data center', 'compute', 'frontier model'],
+};
 
 function includesTerm(text: string, term: string): boolean {
     const escaped = term.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -131,6 +178,9 @@ interface CandidateGroup {
     titleTokens: Set<string>;
     candidates: NewsCandidate[];
     sources: Set<string>;
+    coreEntities: Set<string>;
+    firstPublishedAtMs: number;
+    latestPublishedAtMs: number;
 }
 
 export function calculateDailyNewsWindow(now: Date = new Date(), timezone = DEFAULT_TIMEZONE): DailyNewsWindow {
@@ -246,6 +296,48 @@ function titleSimilarity(a: Set<string>, b: Set<string>): number {
     return intersection / Math.min(a.size, b.size);
 }
 
+function candidateFullText(candidate: NewsCandidate, extra: string[] = []): string {
+    return `${candidate.title} ${candidate.summary || ''} ${candidate.rawSnippet || ''} ${(candidate.tags || []).join(' ')} ${extra.join(' ')}`.toLowerCase();
+}
+
+function extractCoreEntities(candidate: NewsCandidate, tags: string[] = []): string[] {
+    const text = candidateFullText(candidate, tags);
+    return CORE_ENTITY_RULES
+        .filter(([, terms]) => terms.some((term) => includesTerm(text, term)))
+        .map(([entity]) => entity);
+}
+
+function sharedEntityCount(a: Set<string>, b: Set<string>): number {
+    let count = 0;
+    a.forEach((value) => {
+        if (b.has(value)) count += 1;
+    });
+    return count;
+}
+
+function groupTimeDistanceMs(group: CandidateGroup, publishedAtMs: number): number {
+    if (!Number.isFinite(group.firstPublishedAtMs) || !Number.isFinite(group.latestPublishedAtMs)) {
+        return 0;
+    }
+
+    if (publishedAtMs < group.firstPublishedAtMs) return group.firstPublishedAtMs - publishedAtMs;
+    if (publishedAtMs > group.latestPublishedAtMs) return publishedAtMs - group.latestPublishedAtMs;
+    return 0;
+}
+
+function isSameEventGroup(group: CandidateGroup, canonicalUrl: string, titleTokens: Set<string>, coreEntities: Set<string>, publishedAtMs: number): boolean {
+    if (group.canonicalUrl === canonicalUrl) {
+        return true;
+    }
+
+    if (titleSimilarity(group.titleTokens, titleTokens) >= 0.62) {
+        return true;
+    }
+
+    const sharedEntities = sharedEntityCount(group.coreEntities, coreEntities);
+    return sharedEntities >= 2 && groupTimeDistanceMs(group, publishedAtMs) <= EVENT_GROUP_WINDOW_MS;
+}
+
 export function isNewsCandidateRelevant(candidate: NewsCandidate, category: NewsCategory): boolean {
     const text = `${candidate.title} ${candidate.summary || ''} ${candidate.rawSnippet || ''} ${(candidate.tags || []).join(' ')}`.toLowerCase();
     const terms = getCategoryTerms(category);
@@ -273,6 +365,9 @@ function extractTags(candidate: NewsCandidate, category: NewsCategory): string[]
         ['SEC', ['sec']],
         ['安全事件', ['hack', 'exploit', 'breach']],
         ['稳定币', ['stablecoin', 'usdt', 'usdc', 'tether', 'circle']],
+        ['交易所', ['binance', 'coinbase', 'kraken', 'okx', 'exchange']],
+        ['托管安全', ['custody', 'withdrawal', 'wallet', 'security incident']],
+        ['脱锚', ['depeg', 'depegs']],
     ];
 
     tagRules.forEach(([tag, terms]) => {
@@ -287,7 +382,7 @@ function extractTags(candidate: NewsCandidate, category: NewsCategory): string[]
 }
 
 function candidateText(candidate: NewsCandidate, tags: string[] = []): string {
-    return `${candidate.title} ${candidate.summary || ''} ${candidate.rawSnippet || ''} ${(candidate.tags || []).join(' ')} ${tags.join(' ')}`.toLowerCase();
+    return candidateFullText(candidate, tags);
 }
 
 function inferSubcategory(candidate: NewsCandidate, category: NewsCategory, tags: string[]): string {
@@ -324,6 +419,70 @@ function inferImpactHorizon(candidate: NewsCandidate, category: NewsCategory, ta
         return '1-4w';
     }
     return '1-3d';
+}
+
+function sourceWeight(sourceTier: NewsSourceTier): number {
+    if (sourceTier === 'official') return 22;
+    if (sourceTier === 'major') return 18;
+    if (sourceTier === 'specialist') return 14;
+    if (sourceTier === 'aggregated') return 8;
+    return 5;
+}
+
+function confirmationWeight(confirmationLevel: NewsConfirmationLevel): number {
+    if (confirmationLevel === 'official') return 18;
+    if (confirmationLevel === 'multi_source') return 15;
+    if (confirmationLevel === 'single_authoritative') return 10;
+    return 3;
+}
+
+function categoryWeight(category: NewsCategory, text: string): number {
+    let weight = 0;
+    if (CATEGORY_WEIGHT_TERMS.regulation.some((term) => includesTerm(text, term))) weight += 12;
+    if (CATEGORY_WEIGHT_TERMS.etf.some((term) => includesTerm(text, term))) weight += 12;
+    if (CATEGORY_WEIGHT_TERMS.stablecoin.some((term) => includesTerm(text, term))) weight += 13;
+    if (CATEGORY_WEIGHT_TERMS.exchange.some((term) => includesTerm(text, term))) weight += 12;
+    if (CATEGORY_WEIGHT_TERMS.security.some((term) => includesTerm(text, term))) weight += 16;
+    if (category === 'macro' && CATEGORY_WEIGHT_TERMS.macro.some((term) => includesTerm(text, term))) weight += 12;
+    if (category === 'ai' && CATEGORY_WEIGHT_TERMS.aiInfrastructure.some((term) => includesTerm(text, term))) weight += 12;
+    if (category === 'crypto') weight += 6;
+    return Math.min(22, weight);
+}
+
+function impactWeight(text: string, coreEntities: string[]): number {
+    let weight = 0;
+    if (coreEntities.length >= 2) weight += 6;
+    if (['BTC', 'ETH', 'SOL', 'SEC', 'CFTC', 'FED', 'BINANCE', 'COINBASE', 'USDT', 'USDC', 'OPENAI', 'NVIDIA'].some((entity) => coreEntities.includes(entity))) {
+        weight += 8;
+    }
+    if (['hack', 'exploit', 'breach', 'security incident', 'depeg', 'withdrawal', 'reserve', 'lawsuit', 'charges', 'approval', 'approve', 'ban'].some((term) => includesTerm(text, term))) {
+        weight += 10;
+    }
+    if (['infrastructure', 'custody', 'stablecoin', 'exchange', 'central bank', 'rates', 'chip', 'gpu', 'data center'].some((term) => includesTerm(text, term))) {
+        weight += 6;
+    }
+    return Math.min(22, weight);
+}
+
+function noveltyWeight(sourceCount: number, hasRoutineNoise: boolean): number {
+    if (hasRoutineNoise) return 2;
+    if (sourceCount > 1) return 9;
+    return 7;
+}
+
+function scoreFromBreakdown(breakdown: DailyNewsScoreBreakdown): number {
+    return Math.max(0, Math.min(100, Math.round(
+        breakdown.entityWeight
+        + breakdown.sourceWeight
+        + breakdown.confirmationWeight
+        + breakdown.categoryWeight
+        + breakdown.noveltyWeight
+        + breakdown.impactWeight
+    )));
+}
+
+function toImportanceLevelFromScore(score: number): ImportanceLevel {
+    return toImportanceLevel(score);
 }
 
 function buildWhyItMatters(category: NewsCategory, subcategory: string, assets: string[], direction: ImpactDirection): string {
@@ -384,6 +543,16 @@ function inferSourceTier(candidate: NewsCandidate): NewsSourceTier {
     return 'unknown';
 }
 
+function toEventSource(candidate: NewsCandidate): DailyNewsEventSource {
+    return {
+        source: candidate.source || normalizeDomain(candidate.domain, candidate.url) || 'Unknown',
+        domain: normalizeDomain(candidate.domain, candidate.url),
+        url: candidate.url,
+        publishedAt: resolvePublishedAt(candidate) || candidate.collectedAt,
+        sourceTier: inferSourceTier(candidate),
+    };
+}
+
 function inferConfirmationLevel(sourceTier: NewsSourceTier, sourceCount: number): NewsConfirmationLevel {
     if (sourceTier === 'official') return 'official';
     if (sourceCount > 1) return 'multi_source';
@@ -391,8 +560,50 @@ function inferConfirmationLevel(sourceTier: NewsSourceTier, sourceCount: number)
     return 'single_source';
 }
 
+function inferEventStatus(candidates: NewsCandidate[], confirmationLevel: NewsConfirmationLevel): NewsEventStatus {
+    const text = candidates.map((candidate) => candidateFullText(candidate)).join(' ');
+    if (['retract', 'retracted', 'false', 'not true', 'reversal', 'walks back'].some((term) => includesTerm(text, term))) {
+        return 'reversed';
+    }
+    if (['dispute', 'disputed', 'denies', 'denied', 'conflicting'].some((term) => includesTerm(text, term))) {
+        return 'disputed';
+    }
+    if (confirmationLevel === 'official' || confirmationLevel === 'multi_source') {
+        return 'confirmed';
+    }
+    return 'pending';
+}
+
+function buildTimeline(candidates: NewsCandidate[]): DailyNewsTimelineEntry[] {
+    const sorted = [...candidates].sort((a, b) => {
+        const aTime = new Date(resolvePublishedAt(a) || a.collectedAt).getTime();
+        const bTime = new Date(resolvePublishedAt(b) || b.collectedAt).getTime();
+        return aTime - bTime;
+    });
+    let hasFollowUp = false;
+
+    return sorted.map((candidate, index) => {
+        const sourceTier = inferSourceTier(candidate);
+        let label: DailyNewsTimelineEntry['label'] = '后续更新';
+        if (index === 0) {
+            label = '首次报道';
+        } else if (sourceTier === 'official') {
+            label = '官方确认';
+        } else if (!hasFollowUp) {
+            label = '多源跟进';
+            hasFollowUp = true;
+        }
+
+        return {
+            ...toEventSource(candidate),
+            label,
+            title: candidate.title,
+        };
+    }).slice(0, 5);
+}
+
 function buildEditorialReason(
-    item: Pick<DailyNewsItem, 'subcategory' | 'tags' | 'sourceTier' | 'confirmationLevel'>,
+    item: Pick<DailyNewsItem, 'subcategory' | 'tags' | 'sourceTier' | 'confirmationLevel' | 'scoreBreakdown'>,
     category: NewsCategory,
     sourceCount: number
 ): string {
@@ -412,8 +623,42 @@ function buildEditorialReason(
         .filter((tag) => !GENERIC_DRIVER_TAGS.has(tag))
         .slice(0, 2);
     const tagText = strongTags.length > 0 ? `，关联 ${strongTags.join('、')}` : '';
+    const scoreText = item.scoreBreakdown
+        ? `评分由实体 ${item.scoreBreakdown.entityWeight}、来源 ${item.scoreBreakdown.sourceWeight}、确认 ${item.scoreBreakdown.confirmationWeight}、类别 ${item.scoreBreakdown.categoryWeight}、新信息 ${item.scoreBreakdown.noveltyWeight}、影响 ${item.scoreBreakdown.impactWeight} 组成`
+        : '';
 
-    return `${sourceText[item.confirmationLevel || 'single_source']}，属于${categoryText[category]}中的${topic}事件${tagText}。`;
+    return `${sourceText[item.confirmationLevel || 'single_source']}，属于${categoryText[category]}中的${topic}事件${tagText}。${scoreText ? ` ${scoreText}。` : ''}`;
+}
+
+function buildSummarySections(
+    item: Pick<DailyNewsItem, 'title' | 'summary' | 'category' | 'source' | 'sourceTier' | 'confirmationLevel' | 'whyItMatters' | 'watchpoints' | 'eventStatus'>
+): DailyNewsSummarySections {
+    const confirmationText: Record<NewsConfirmationLevel, string> = {
+        official: '官方确认',
+        multi_source: '多源交叉',
+        single_authoritative: '权威单源',
+        single_source: '单源待复核',
+    };
+    const sourceTierText: Record<NewsSourceTier, string> = {
+        official: '官方来源',
+        major: '主流媒体',
+        specialist: '专业媒体',
+        aggregated: '聚合来源',
+        unknown: '普通来源',
+    };
+    const statusText: Record<NewsEventStatus, string> = {
+        pending: '待确认',
+        confirmed: '已确认',
+        disputed: '有争议',
+        reversed: '已反转',
+    };
+
+    return {
+        whatHappened: `发生了什么：${item.summary || item.title}`,
+        whyImportant: `为什么重要：${item.whyItMatters || '这会影响相关行业结构或政策预期。'}`,
+        whatToWatch: `后续看什么：${item.watchpoints?.[0] || '后续看官方文件、数据修正和更多来源是否确认。'}`,
+        sourceAndConfirmation: `来源与确认度：${item.source}，${sourceTierText[item.sourceTier || 'unknown']}，${confirmationText[item.confirmationLevel || 'single_source']}，当前状态${statusText[item.eventStatus || 'pending']}。`,
+    };
 }
 
 function buildSummary(candidate: NewsCandidate, category: NewsCategory, tags: string[]): string {
@@ -443,24 +688,41 @@ function buildStableId(category: NewsCategory, canonicalUrl: string, title: stri
     return `${category}-${hash}`;
 }
 
-function toItem(candidate: NewsCandidate, category: NewsCategory, window: DailyNewsWindow, sourceCount: number): DailyNewsItem {
+function toItem(candidate: NewsCandidate, category: NewsCategory, window: DailyNewsWindow, sourceCount: number, groupCandidates: NewsCandidate[] = [candidate]): DailyNewsItem {
     const canonicalUrl = canonicalizeUrl(candidate.url) || candidate.url;
     const tags = extractTags(candidate, category);
     if (sourceCount > 1) {
         tags.push(`${sourceCount} 家来源`);
     }
-    const score = scoreNewsCandidate(candidate, { category, windowEndMs: window.windowEndMs, sourceCount });
     const subcategory = inferSubcategory(candidate, category, tags);
     const affectedAssets = extractAffectedAssets(candidate, tags);
     const impactDirection = inferImpactDirection(candidate, tags);
     const impactHorizon = inferImpactHorizon(candidate, category, tags);
     const sourceTier = inferSourceTier(candidate);
     const confirmationLevel = inferConfirmationLevel(sourceTier, sourceCount);
+    const eventStatus = inferEventStatus(groupCandidates, confirmationLevel);
+    const timeline = buildTimeline(groupCandidates);
+    const earliestSource = timeline[0];
+    const latestSource = timeline[timeline.length - 1];
+    const officialSource = timeline.find((entry) => entry.sourceTier === 'official');
+    const coreEntities = [...new Set(groupCandidates.flatMap((groupCandidate) => extractCoreEntities(groupCandidate, tags)))].slice(0, 8);
+    const text = candidateText(candidate, tags);
+    const hasRoutineNoise = ROUTINE_NOISE_TERMS.some((term) => includesTerm(text, term));
+    const scoreBreakdown: DailyNewsScoreBreakdown = {
+        entityWeight: Math.min(16, coreEntities.length * 4),
+        sourceWeight: sourceWeight(sourceTier),
+        confirmationWeight: confirmationWeight(confirmationLevel),
+        categoryWeight: categoryWeight(category, text),
+        noveltyWeight: noveltyWeight(sourceCount, hasRoutineNoise),
+        impactWeight: impactWeight(text, coreEntities),
+    };
+    const score = scoreFromBreakdown(scoreBreakdown);
     const editorialSeed = {
         subcategory,
         tags,
         sourceTier,
         confirmationLevel,
+        scoreBreakdown,
     };
 
     const item: DailyNewsItem = {
@@ -473,7 +735,7 @@ function toItem(candidate: NewsCandidate, category: NewsCategory, window: DailyN
         publishedAt: resolvePublishedAt(candidate) || candidate.collectedAt,
         collectedAt: candidate.collectedAt,
         importanceScore: score,
-        importanceLevel: toImportanceLevel(score),
+        importanceLevel: toImportanceLevelFromScore(score),
         tags,
         subcategory,
         affectedAssets,
@@ -484,7 +746,15 @@ function toItem(candidate: NewsCandidate, category: NewsCategory, window: DailyN
         sourceTier,
         confirmationLevel,
         editorialReason: buildEditorialReason(editorialSeed, category, sourceCount),
+        eventStatus,
+        earliestSource,
+        latestSource,
+        officialSource,
+        timeline,
+        coreEntities,
+        scoreBreakdown,
     };
+    item.summarySections = buildSummarySections(item);
 
     return item;
 }
@@ -532,7 +802,7 @@ function inferDigestRiskBias(items: DailyNewsItem[]): NewsRiskBias {
     const riskOffCount = items.filter((item) => item.impactDirection === 'risk_off').length;
     const mixedCount = items.filter((item) => item.impactDirection === 'mixed').length;
 
-    if (riskOffCount >= riskOnCount + 1 && riskOffCount > 0) return 'risk_off';
+    if (riskOffCount >= riskOnCount && riskOffCount > 0) return 'risk_off';
     if (riskOnCount >= riskOffCount + 1 && riskOnCount > 0) return 'risk_on';
     if (mixedCount > 0 || (riskOnCount > 0 && riskOffCount > 0)) return 'mixed';
     return 'neutral';
@@ -566,8 +836,17 @@ function isEditoriallyImportant(item: DailyNewsItem): boolean {
     const text = `${item.title} ${item.summary} ${item.tags.join(' ')} ${item.subcategory || ''}`.toLowerCase();
     const hasSystemicSignal = SYSTEMIC_IMPORTANCE_TERMS.some((term) => includesTerm(text, term));
     const hasRoutineNoise = ROUTINE_NOISE_TERMS.some((term) => includesTerm(text, term));
+    const hasSocialRumorSource = item.earliestSource?.domain
+        ? domainMatches(item.earliestSource.domain, SOCIAL_RUMOR_DOMAINS)
+        : false;
+    const hasLowValueAiSignal = item.category === 'ai' && LOW_VALUE_AI_TERMS.some((term) => includesTerm(text, term));
+    const hasLowValueCryptoSignal = item.category === 'crypto' && LOW_VALUE_CRYPTO_TERMS.some((term) => includesTerm(text, term));
 
-    if (hasRoutineNoise && !hasSystemicSignal) {
+    if (hasSocialRumorSource && item.confirmationLevel === 'single_source') {
+        return false;
+    }
+
+    if ((hasRoutineNoise || hasLowValueAiSignal || hasLowValueCryptoSignal) && !hasSystemicSignal) {
         return false;
     }
 
@@ -592,6 +871,30 @@ function buildDailyNewsBrief(digest: DailyNewsDigest): DailyNewsBrief {
         highImpactCount: items.filter((item) => item.importanceLevel === 'high').length,
         latestSignals: buildLatestSignals(items),
     };
+}
+
+function buildTopStories(digest: DailyNewsDigest): DailyNewsTopStory[] {
+    return allDigestItems(digest)
+        .filter((item) => item.importanceScore >= TOP_STORY_MIN_SCORE)
+        .sort((a, b) => {
+            if (b.importanceScore !== a.importanceScore) {
+                return b.importanceScore - a.importanceScore;
+            }
+            if (a.category !== b.category) {
+                return a.category === 'crypto' ? -1 : b.category === 'crypto' ? 1 : a.category.localeCompare(b.category);
+            }
+            return new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime();
+        })
+        .slice(0, 3)
+        .map((item) => ({
+            id: item.id,
+            headline: item.title,
+            whyImportant: item.summarySections?.whyImportant || item.whyItMatters || item.summary,
+            category: item.category,
+            confirmationLevel: item.confirmationLevel,
+            sourceTier: item.sourceTier,
+            importanceScore: item.importanceScore,
+        }));
 }
 
 export function dedupeAndRankCandidates(
@@ -641,13 +944,21 @@ export function dedupeAndRankCandidates(
             publishedAt,
         };
         const titleTokens = tokenizeTitle(candidate.title);
-        const existingGroup = groups.find((group) => (
-            group.canonicalUrl === canonicalUrl || titleSimilarity(group.titleTokens, titleTokens) >= 0.62
+        const coreEntities = new Set(extractCoreEntities(normalizedCandidate));
+        const existingGroup = groups.find((group) => isSameEventGroup(
+            group,
+            canonicalUrl,
+            titleTokens,
+            coreEntities,
+            publishedAtMs
         ));
 
         if (existingGroup) {
             existingGroup.candidates.push(normalizedCandidate);
             existingGroup.sources.add(normalizedCandidate.source || normalizedCandidate.domain || canonicalUrl);
+            coreEntities.forEach((entity) => existingGroup.coreEntities.add(entity));
+            existingGroup.firstPublishedAtMs = Math.min(existingGroup.firstPublishedAtMs, publishedAtMs);
+            existingGroup.latestPublishedAtMs = Math.max(existingGroup.latestPublishedAtMs, publishedAtMs);
             dropped.duplicates += 1;
         } else {
             groups.push({
@@ -655,6 +966,9 @@ export function dedupeAndRankCandidates(
                 titleTokens,
                 candidates: [normalizedCandidate],
                 sources: new Set([normalizedCandidate.source || normalizedCandidate.domain || canonicalUrl]),
+                coreEntities,
+                firstPublishedAtMs: publishedAtMs,
+                latestPublishedAtMs: publishedAtMs,
             });
         }
     }
@@ -666,7 +980,7 @@ export function dedupeAndRankCandidates(
             - scoreNewsCandidate(a, { category, windowEndMs: window.windowEndMs, sourceCount })
         ))[0];
 
-        return toItem(bestCandidate, category, window, sourceCount);
+        return toItem(bestCandidate, category, window, sourceCount, group.candidates);
     });
 
     const items = rankedItems
@@ -743,6 +1057,7 @@ export function buildDailyNewsDigestFromResults(
     });
 
     digest.brief = buildDailyNewsBrief(digest);
+    digest.topStories = buildTopStories(digest);
 
     return digest;
 }

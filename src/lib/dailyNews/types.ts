@@ -6,6 +6,36 @@ export type ImpactHorizon = 'intraday' | '1-3d' | '1-4w';
 export type NewsRiskBias = ImpactDirection;
 export type NewsSourceTier = 'official' | 'major' | 'specialist' | 'aggregated' | 'unknown';
 export type NewsConfirmationLevel = 'official' | 'multi_source' | 'single_authoritative' | 'single_source';
+export type NewsEventStatus = 'pending' | 'confirmed' | 'disputed' | 'reversed';
+
+export interface DailyNewsEventSource {
+    source: string;
+    domain?: string;
+    url: string;
+    publishedAt: string;
+    sourceTier?: NewsSourceTier;
+}
+
+export interface DailyNewsTimelineEntry extends DailyNewsEventSource {
+    label: '首次报道' | '多源跟进' | '官方确认' | '后续更新';
+    title: string;
+}
+
+export interface DailyNewsSummarySections {
+    whatHappened: string;
+    whyImportant: string;
+    whatToWatch: string;
+    sourceAndConfirmation: string;
+}
+
+export interface DailyNewsScoreBreakdown {
+    entityWeight: number;
+    sourceWeight: number;
+    confirmationWeight: number;
+    categoryWeight: number;
+    noveltyWeight: number;
+    impactWeight: number;
+}
 
 export const NEWS_CATEGORIES: NewsCategory[] = ['macro', 'ai', 'crypto'];
 
@@ -51,6 +81,14 @@ export interface DailyNewsItem {
     sourceTier?: NewsSourceTier;
     confirmationLevel?: NewsConfirmationLevel;
     editorialReason?: string;
+    eventStatus?: NewsEventStatus;
+    earliestSource?: DailyNewsEventSource;
+    latestSource?: DailyNewsEventSource;
+    officialSource?: DailyNewsEventSource;
+    timeline?: DailyNewsTimelineEntry[];
+    coreEntities?: string[];
+    summarySections?: DailyNewsSummarySections;
+    scoreBreakdown?: DailyNewsScoreBreakdown;
 }
 
 export interface DailyNewsCategoryStatus {
@@ -77,6 +115,16 @@ export interface DailyNewsBrief {
     latestSignals: string[];
 }
 
+export interface DailyNewsTopStory {
+    id: string;
+    headline: string;
+    whyImportant: string;
+    category: NewsCategory;
+    confirmationLevel?: NewsConfirmationLevel;
+    sourceTier?: NewsSourceTier;
+    importanceScore: number;
+}
+
 export interface DailyNewsDigest {
     generatedAt: string;
     windowStart: string;
@@ -87,6 +135,7 @@ export interface DailyNewsDigest {
     crypto: DailyNewsItem[];
     categoryStatus: Record<NewsCategory, DailyNewsCategoryStatus>;
     brief?: DailyNewsBrief;
+    topStories?: DailyNewsTopStory[];
 }
 
 export interface CategoryCollectionResult {

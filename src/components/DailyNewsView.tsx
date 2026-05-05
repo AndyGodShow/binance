@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 import { ChevronDown, ChevronUp, ExternalLink } from 'lucide-react';
 
 import { usePersistentSWR } from '@/hooks/usePersistentSWR';
-import type { DailyNewsApiResponse, DailyNewsBrief, DailyNewsDigest, DailyNewsItem, NewsCategory } from '@/lib/dailyNews/types';
+import type { DailyNewsApiResponse, DailyNewsBrief, DailyNewsDigest, DailyNewsItem, DailyNewsTopStory, NewsCategory } from '@/lib/dailyNews/types';
 import styles from './DailyNewsView.module.css';
 
 const CATEGORY_CONFIG: Array<{
@@ -12,9 +12,9 @@ const CATEGORY_CONFIG: Array<{
     title: string;
     subtitle: string;
 }> = [
+    { key: 'crypto', title: '加密主栏', subtitle: '监管、ETF、稳定币、交易所、安全与主流网络' },
     { key: 'macro', title: '宏观新闻', subtitle: '央行、利率、通胀、地缘与大类资产' },
     { key: 'ai', title: '人工智能新闻', subtitle: '模型、芯片、产品、融资与监管' },
-    { key: 'crypto', title: '加密新闻', subtitle: 'BTC/ETH、ETF、监管、交易所与链上安全' },
 ];
 
 const fetcher = async (url: string) => {
@@ -114,6 +114,27 @@ function getConfirmationLabel(item: DailyNewsItem): string | null {
     return null;
 }
 
+function getTopStoryConfirmationLabel(story: DailyNewsTopStory): string {
+    if (story.confirmationLevel === 'official') return '官方确认';
+    if (story.confirmationLevel === 'multi_source') return '多源交叉';
+    if (story.confirmationLevel === 'single_authoritative') return '权威单源';
+    return '单源待复核';
+}
+
+function getTopStorySourceLabel(story: DailyNewsTopStory): string {
+    if (story.sourceTier === 'official') return '官方来源';
+    if (story.sourceTier === 'major') return '主流媒体';
+    if (story.sourceTier === 'specialist') return '专业媒体';
+    if (story.sourceTier === 'aggregated') return '聚合来源';
+    return '普通来源';
+}
+
+function getCategoryLabel(category: NewsCategory): string {
+    if (category === 'crypto') return '加密';
+    if (category === 'macro') return '宏观';
+    return 'AI';
+}
+
 function NewsBriefPanel({ brief }: { brief?: DailyNewsBrief }) {
     if (!brief) {
         return null;
@@ -145,6 +166,41 @@ function NewsBriefPanel({ brief }: { brief?: DailyNewsBrief }) {
     );
 }
 
+function TopStoriesPanel({ stories }: { stories?: DailyNewsTopStory[] }) {
+    if (!stories || stories.length === 0) {
+        return null;
+    }
+
+    return (
+        <section className={styles.topStoriesPanel}>
+            <div className={styles.sectionHeader}>
+                <div>
+                    <div className={styles.categoryEyebrow}>每日三件大事</div>
+                    <h2 className={styles.sectionTitle}>过去 24 小时最重要的事件</h2>
+                </div>
+                <span className={styles.countBadge}>按重要性排序</span>
+            </div>
+            <div className={styles.topStoryList}>
+                {stories.map((story, index) => (
+                    <article key={story.id} className={styles.topStoryItem}>
+                        <div className={styles.topStoryRank}>{index + 1}</div>
+                        <div className={styles.topStoryBody}>
+                            <h3>{story.headline}</h3>
+                            <p>{story.whyImportant}</p>
+                            <div className={styles.briefMeta}>
+                                <span>{getCategoryLabel(story.category)}</span>
+                                <span>{getTopStoryConfirmationLabel(story)}</span>
+                                <span>{getTopStorySourceLabel(story)}</span>
+                                <span>{story.importanceScore}</span>
+                            </div>
+                        </div>
+                    </article>
+                ))}
+            </div>
+        </section>
+    );
+}
+
 function NewsItemCard({
     item,
     timezone,
@@ -162,7 +218,7 @@ function NewsItemCard({
     const confirmationLabel = getConfirmationLabel(item);
     const affectedAssets = (item.affectedAssets || []).slice(0, 4);
     const hasEventMeta = Boolean(item.subcategory || directionLabel || horizonLabel || affectedAssets.length > 0);
-    const canExpand = Boolean(item.summary || item.whyItMatters || item.watchpoints?.length || item.tags.length > 0);
+    const canExpand = Boolean(item.summarySections || item.summary || item.whyItMatters || item.watchpoints?.length || item.tags.length > 0);
 
     return (
         <article className={`${styles.newsItem} ${item.importanceLevel === 'high' ? styles.highImpactItem : ''}`}>
@@ -200,12 +256,42 @@ function NewsItemCard({
             )}
             {expanded && (
                 <div className={styles.expandedBody}>
-                    <p className={styles.summary}>{item.summary}</p>
-                    {item.whyItMatters && (
-                        <p className={styles.whyItMatters}>{item.whyItMatters}</p>
+                    {item.summarySections ? (
+                        <div className={styles.summarySections}>
+                            <div>
+                                <span>发生了什么</span>
+                                <p>{item.summarySections.whatHappened.replace(/^发生了什么：/, '')}</p>
+                            </div>
+                            <div>
+                                <span>为什么重要</span>
+                                <p>{item.summarySections.whyImportant.replace(/^为什么重要：/, '')}</p>
+                            </div>
+                            <div>
+                                <span>后续看什么</span>
+                                <p>{item.summarySections.whatToWatch.replace(/^后续看什么：/, '')}</p>
+                            </div>
+                            <div>
+                                <span>来源与确认度</span>
+                                <p>{item.summarySections.sourceAndConfirmation.replace(/^来源与确认度：/, '')}</p>
+                            </div>
+                        </div>
+                    ) : (
+                        <p className={styles.summary}>{item.summary}</p>
                     )}
                     {item.editorialReason && (
                         <p className={styles.editorialReason}>{item.editorialReason}</p>
+                    )}
+                    {item.timeline && item.timeline.length > 0 && (
+                        <div className={styles.timeline}>
+                            <span className={styles.watchpointLabel}>事件时间线</span>
+                            {item.timeline.map((entry) => (
+                                <a key={`${entry.label}-${entry.url}`} href={entry.url} target="_blank" rel="noreferrer" className={styles.timelineEntry}>
+                                    <span>{entry.label}</span>
+                                    <strong>{entry.source}</strong>
+                                    <em>{formatInTimeZone(entry.publishedAt, timezone)}</em>
+                                </a>
+                            ))}
+                        </div>
                     )}
                     {item.watchpoints && item.watchpoints.length > 0 && (
                         <div className={styles.watchpoints}>
@@ -278,7 +364,7 @@ export default function DailyNewsView() {
                     <div>
                         <div className={styles.kicker}>重要事件</div>
                         <h1 className={styles.title}>重要新闻</h1>
-                        <p className={styles.subtitle}>过去 24 小时内经过筛选的宏观 / 人工智能 / 加密大事，只保留会改变行业认知的信息。</p>
+                    <p className={styles.subtitle}>过去 24 小时内经过筛选的加密 / 宏观 / AI 大事，只保留会改变行业认知的信息。</p>
                     </div>
                 </header>
                 <div className={styles.emptyState}>
@@ -294,7 +380,7 @@ export default function DailyNewsView() {
                 <div className={styles.heroCopy}>
                     <div className={styles.kicker}>重要事件</div>
                     <h1 className={styles.title}>重要新闻</h1>
-                    <p className={styles.subtitle}>按发布时间倒序整理过去 24 小时内真正值得了解的宏观 / 人工智能 / 加密事件，过滤普通合作、KOL 预测、短线涨跌和重复搬运。</p>
+                    <p className={styles.subtitle}>以加密大事为主，宏观和 AI 只保留会影响流动性、监管环境、产业格局或基础设施的重大事件。</p>
                 </div>
                 <div className={styles.heroMeta}>
                     <div className={styles.metaBlock}>
@@ -317,6 +403,7 @@ export default function DailyNewsView() {
             </header>
 
             {data?.message && <div className={styles.notice}>{data.message}</div>}
+            <TopStoriesPanel stories={digest.topStories} />
             <NewsBriefPanel brief={digest.brief} />
 
             <section className={styles.categoryGrid}>
