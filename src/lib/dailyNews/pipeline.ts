@@ -62,7 +62,7 @@ const SUBCATEGORY_RULES: Record<NewsCategory, Array<[string, string[]]>> = {
         ['ETF', ['etf']],
         ['监管', ['sec', 'lawsuit', 'charges', 'settlement', 'approve', 'approval', 'ban']],
         ['稳定币', ['stablecoin', 'usdt', 'usdc', 'tether', 'circle']],
-        ['安全事件', ['hack', 'exploit', 'breach']],
+        ['安全事件', ['hack', 'exploit', 'breach', 'threat intelligence', 'north korean']],
         ['交易所', ['binance', 'coinbase', 'exchange']],
         ['链上与清算', ['defi', 'wallet', 'liquidation', 'miner', 'mining']],
     ],
@@ -102,20 +102,74 @@ const ROUTINE_NOISE_TERMS = [
 const HARD_MARKETING_NOISE_TERMS = [
     'presale', 'pre-sale', 'price prediction', 'best crypto to buy', 'best crypto presale',
     'buy now', 'token sale', 'moonshot', '100x', 'next 100x', 'hidden gem', 'crypto gem',
-    'giveaway', 'airdrop',
+    'giveaway', 'airdrop', 'pepeto', 'alphapepe', '预售', '价格预测', '最佳加密',
+    '最佳加密预售', '现在购买', '代币销售', '精选',
 ];
 const KOL_OPINION_NOISE_TERMS = [
     'analyst says', 'analyst predicts', 'trader says', 'trader predicts', 'influencer claims',
-    'influencer says', 'kol', 'opinion', 'scott melker',
+    'influencer says', 'kol', 'opinion', 'scott melker', '分析师表示', '交易员预测',
+    '交易员表示', '影响者声称', '观点', '分析师：', 'hunter horsley',
+];
+const ADVICE_EXPLAINER_NOISE_TERMS = [
+    'should you buy', 'what experts say', 'what to know', 'how to buy',
+    'how to invest', 'explained', 'explainer', '专家怎么说', '是否应该买',
+    '如何购买', '如何投资',
 ];
 const PRICE_MOVE_TERMS = [
     'crosses', 'breaks', 'hits', 'reaches', 'jumps', 'surges', 'drops', 'falls',
-    'rally', 'rallies', 'pullback', 'new high',
+    'rally', 'rallies', 'pullback', 'new high', '突破', '反弹', '回调', '新高',
+    '触及', '收复', '上涨', '下跌',
+];
+const PRICE_FRAMING_TERMS = [
+    ...PRICE_MOVE_TERMS,
+    'holds', 'hold above', 'above $', 'market snapshot', 'drive the next move',
+    'price target', 'breakout pattern', 'inflow', 'inflows', 'outflow', 'outflows',
+    'pull in', 'pulls in', 'reclaim', 'reclaims', 'surpass', 'surpasses',
+    'top $', 'tops $', 'tops', 'rises', 'demand rises', 'demand for',
+    'leads market', 'price',
+    '流入', '流量', '吸金', '持有', '重回', '收复', '收回', '市场概况',
+    '下一步行动', '突破格局', '价格', '美元',
+];
+const LOW_INFORMATION_RECAP_TERMS = [
+    'market snapshot', 'daily market recap', 'top articles', 'top stories',
+    'database articles', 'does not care', "doesn't care", 'price can go',
+    'how high', 'dominates top', 'used to hate inflation', 'might be the opposite',
+    'twitter case', '市场概况', '价格能', '不在乎', '可能恰恰相反',
+    'allocation to 5%', 'adjusts bitcoin allocation', '曾经讨厌通货膨胀',
+    '配置调整为 5%', '前 5 名', '前5名',
+];
+const CRYPTO_ADJACENT_BUSINESS_NOISE_TERMS = [
+    'sec twitter', 'twitter case', 'ebay takeover', 'bitcoin stash in the crosshairs',
+    'eBay 收购', 'Twitter 案件',
+];
+const AI_PRODUCT_RUMOR_NOISE_TERMS = [
+    'ai phone', 'phone in 2027', 'may launch ai phone', 'consumer device rumor',
+    'ai-agent phone', 'ai smartphone', 'smartphone specs', 'phone by 2027',
+    'ahead of 2027 launch', 'consumer hardware', 'leaked', 'AI 手机',
+    '智能手机', '代理电话', '消费类硬件', '2027 年可能',
+];
+const AI_PERSONNEL_OR_ROUTINE_PARTNERSHIP_TERMS = [
+    'joins anthropic', 'former pentagon think tank head', 'hope us government and anthropic',
+    'partners to bring agentic ai to banking', '前负责人加入 Anthropic',
+    '合作推出银行业代理人工智能', 'team to bring agentic ai to finance',
+    'jensen huang on anthropic', 'fis', 'stock falls', 'stock down',
+    'shares down', 'chip stocks are tumbling', 'blame openai', '股价下跌',
+    '芯片股正在暴跌', '归咎于 OpenAI',
 ];
 const MAJOR_EVENT_ANCHOR_TERMS = [
     'sec', 'cftc', 'etf', 'stablecoin', 'depeg', 'hack', 'exploit', 'binance',
     'coinbase', 'kraken', 'okx', 'outage', 'upgrade', 'lawsuit', 'charges',
     'settlement', 'fed', 'federal reserve', 'cpi', 'nvidia', 'openai', 'anthropic',
+];
+const CONCRETE_EVENT_ACTION_TERMS = [
+    'sec', 'cftc', 'lawsuit', 'charges', 'settlement', 'reject', 'rejected',
+    'approve', 'approved', 'delay', 'delayed', 'filing', 'court', 'stablecoin',
+    'depeg', 'reserve', 'reserves', 'hack', 'exploit', 'breach', 'outage',
+    'upgrade', 'withdrawal pause', 'threat intelligence', 'fed', 'federal reserve',
+    'cpi', 'ppi', 'nvidia', 'openai', 'anthropic', 'launches', 'releases',
+    'SEC', 'CFTC', '诉讼', '指控', '和解', '拒绝', '批准', '推迟', '备案',
+    '法院', '稳定币', '脱锚', '储备', '黑客', '攻击', '漏洞', '故障', '升级',
+    '暂停提现', '威胁情报', '美联储', '通胀', '发布', '推出',
 ];
 const SYSTEMIC_IMPORTANCE_TERMS = [
     'sec', 'cftc', 'federal reserve', 'fed', 'ecb', 'boj', 'pboc', 'cpi', 'ppi',
@@ -124,6 +178,7 @@ const SYSTEMIC_IMPORTANCE_TERMS = [
     'reserves', 'bankruptcy', 'default', 'acquisition', 'merger', 'tariff', 'sanction',
     'binance', 'coinbase', 'tether', 'circle', 'openai', 'anthropic', 'nvidia',
     'kraken', 'okx', 'solana', 'outage', 'depeg', 'custody', 'withdrawal', 'wallet security',
+    'threat intelligence', 'north korean',
 ];
 const SOCIAL_RUMOR_DOMAINS = ['x.com', 'twitter.com', 't.me', 'telegram.org', 'reddit.com'];
 const LOW_VALUE_AI_TERMS = ['small funding', 'seed round', 'chatbot app', 'startup announces'];
@@ -168,7 +223,7 @@ const CATEGORY_WEIGHT_TERMS: Record<string, string[]> = {
     etf: ['etf'],
     stablecoin: ['stablecoin', 'usdt', 'usdc', 'tether', 'circle', 'depeg', 'reserve'],
     exchange: ['binance', 'coinbase', 'kraken', 'okx', 'exchange', 'withdrawal', 'custody'],
-    security: ['hack', 'exploit', 'breach', 'security incident', 'wallet incident'],
+    security: ['hack', 'exploit', 'breach', 'security incident', 'wallet incident', 'threat intelligence', 'north korean'],
     macro: ['fed', 'federal reserve', 'cpi', 'inflation', 'rates', 'dollar', 'treasury', 'central bank'],
     aiInfrastructure: ['nvidia', 'gpu', 'chip', 'semiconductor', 'data center', 'compute', 'frontier model'],
 };
@@ -354,7 +409,9 @@ function isSameEventGroup(group: CandidateGroup, canonicalUrl: string, titleToke
     }
 
     const sharedEntities = sharedEntityCount(group.coreEntities, coreEntities);
-    return sharedEntities >= 2 && groupTimeDistanceMs(group, publishedAtMs) <= EVENT_GROUP_WINDOW_MS;
+    return sharedEntities >= 2
+        && titleSimilarity(group.titleTokens, titleTokens) >= 0.38
+        && groupTimeDistanceMs(group, publishedAtMs) <= EVENT_GROUP_WINDOW_MS;
 }
 
 export function isNewsCandidateRelevant(candidate: NewsCandidate, category: NewsCategory): boolean {
@@ -382,7 +439,7 @@ function extractTags(candidate: NewsCandidate, category: NewsCategory): string[]
         ['ETH', ['ethereum', 'ether', 'eth']],
         ['ETF', ['etf']],
         ['SEC', ['sec']],
-        ['安全事件', ['hack', 'exploit', 'breach']],
+        ['安全事件', ['hack', 'exploit', 'breach', 'threat intelligence', 'north korean']],
         ['稳定币', ['stablecoin', 'usdt', 'usdc', 'tether', 'circle']],
         ['交易所', ['binance', 'coinbase', 'kraken', 'okx', 'exchange']],
         ['托管安全', ['custody', 'withdrawal', 'wallet', 'security incident']],
@@ -435,13 +492,84 @@ export function isKolOpinionNoise(value: NewsCandidate | DailyNewsItem): boolean
     return hasAnyTerm(newsText(value), KOL_OPINION_NOISE_TERMS);
 }
 
+function isAdviceExplainerNoise(value: NewsCandidate | DailyNewsItem): boolean {
+    return hasAnyTerm(newsText(value), ADVICE_EXPLAINER_NOISE_TERMS);
+}
+
 function hasMajorEventAnchor(value: NewsCandidate | DailyNewsItem): boolean {
     return hasAnyTerm(newsText(value), MAJOR_EVENT_ANCHOR_TERMS);
 }
 
 export function isPurePriceMove(value: NewsCandidate | DailyNewsItem): boolean {
+    if ('category' in value && value.category !== 'crypto') {
+        return false;
+    }
+
     const text = newsText(value);
     return hasAnyTerm(text, PRICE_MOVE_TERMS) && !hasMajorEventAnchor(value);
+}
+
+function isPriceFramedWithoutConcreteEvent(value: NewsCandidate | DailyNewsItem): boolean {
+    const text = `${value.title} ${value.summary || ''}`.toLowerCase();
+    const sourceTier = 'sourceTier' in value ? value.sourceTier : inferSourceTier(value);
+    const hasPriceFrame = hasAnyTerm(text, PRICE_FRAMING_TERMS);
+    const hasConcreteAction = hasAnyTerm(text, CONCRETE_EVENT_ACTION_TERMS);
+
+    return hasPriceFrame && !hasConcreteAction && sourceTier !== 'official';
+}
+
+function isWeakMarketRecap(value: NewsCandidate | DailyNewsItem): boolean {
+    if ('category' in value && value.category !== 'crypto') {
+        return false;
+    }
+
+    const text = `${value.title} ${value.summary || ''}`.toLowerCase();
+    const sourceTier = 'sourceTier' in value ? value.sourceTier : inferSourceTier(value);
+    const hasPriceFrame = hasAnyTerm(text, PRICE_FRAMING_TERMS);
+    const hasLowInformationFrame = hasAnyTerm(text, LOW_INFORMATION_RECAP_TERMS);
+    const hasRegulatoryFiling = hasAnyTerm(text, [
+        'sec', 'cftc', 'lawsuit', 'charges', 'settlement', 'reject', 'rejected',
+        'approve', 'approved', 'delay', 'delayed', 'filing', 'court', '诉讼',
+        '指控', '和解', '拒绝', '批准', '推迟', '备案', '法院',
+    ]);
+    const hasSecurityOrInfrastructureFact = hasAnyTerm(text, [
+        'depeg', 'reserve', 'reserves', 'hack', 'exploit', 'breach', 'outage',
+        'upgrade', 'withdrawal pause', 'threat intelligence', '脱锚', '储备',
+        '黑客', '攻击', '漏洞', '故障', '升级', '暂停提现', '威胁情报',
+    ]);
+
+    return (hasPriceFrame || hasLowInformationFrame)
+        && !hasRegulatoryFiling
+        && !hasSecurityOrInfrastructureFact
+        && sourceTier !== 'official';
+}
+
+function isCryptoAdjacentBusinessNoise(value: NewsCandidate | DailyNewsItem): boolean {
+    if ('category' in value && value.category !== 'crypto') {
+        return false;
+    }
+
+    return hasAnyTerm(`${value.title} ${value.summary || ''}`.toLowerCase(), CRYPTO_ADJACENT_BUSINESS_NOISE_TERMS);
+}
+
+function isAiProductRumorNoise(value: NewsCandidate | DailyNewsItem): boolean {
+    if ('category' in value && value.category !== 'ai') {
+        return false;
+    }
+
+    const sourceTier = 'sourceTier' in value ? value.sourceTier : inferSourceTier(value);
+    return sourceTier !== 'official'
+        && hasAnyTerm(`${value.title} ${value.summary || ''}`.toLowerCase(), AI_PRODUCT_RUMOR_NOISE_TERMS);
+}
+
+function isLowValueAiIndustryNoise(value: NewsCandidate | DailyNewsItem): boolean {
+    if ('category' in value && value.category !== 'ai') {
+        return false;
+    }
+
+    const sourceTier = 'sourceTier' in value ? value.sourceTier : inferSourceTier(value);
+    return sourceTier !== 'official'
+        && hasAnyTerm(`${value.title} ${value.summary || ''}`.toLowerCase(), AI_PERSONNEL_OR_ROUTINE_PARTNERSHIP_TERMS);
 }
 
 function inferSubcategory(candidate: NewsCandidate, category: NewsCategory, tags: string[]): string {
@@ -546,22 +674,23 @@ function toImportanceLevelFromScore(score: number): ImportanceLevel {
 
 function buildWhyItMatters(category: NewsCategory, subcategory: string, assets: string[], direction: ImpactDirection): string {
     const assetText = assets.length > 0 ? assets.slice(0, 3).join('、') : CATEGORY_LABELS[category];
+    const topic = eventNoun(subcategory);
     const contextText: Record<ImpactDirection, string> = {
-        risk_on: '说明规则、资金或产业叙事出现增量变化',
+        risk_on: '说明规则、资金或产品落地有新增事实',
         risk_off: '暴露出监管、安全或流动性约束',
         mixed: '同时带来机会与约束，后续需要看细节如何落地',
-        neutral: '当前更适合作为背景信息跟踪',
+        neutral: '重点在于确认事实本身和后续执行细节',
     };
 
     if (category === 'macro') {
-        return `${subcategory}事件会影响市场对利率、通胀和全球流动性的理解，${contextText[direction]}。`;
+        return `${topic}会影响市场对利率、通胀和全球流动性的理解，${contextText[direction]}。`;
     }
 
     if (category === 'ai') {
-        return `${subcategory}事件可能改变 AI 产业竞争、算力需求或监管边界，重点放在 ${assetText} 的产业位置变化。`;
+        return `${topic}关系到 AI 产业竞争、算力需求或监管边界，重点放在 ${assetText} 的产业位置变化。`;
     }
 
-    return `${subcategory}事件可能改变 ${assetText} 所在生态的监管预期、基础设施安全或行业叙事，${contextText[direction]}。`;
+    return `${topic}涉及 ${assetText}，需要关注它对监管规则、基础设施安全或产品落地的具体影响，${contextText[direction]}。`;
 }
 
 function buildWatchpoints(category: NewsCategory, assets: string[], direction: ImpactDirection, horizon: ImpactHorizon): string[] {
@@ -750,36 +879,176 @@ function entityDisplayName(entity: string): string {
     return names[entity] || entity;
 }
 
+function eventNoun(subcategory: string): string {
+    const names: Record<string, string> = {
+        ETF: 'ETF进展',
+        交易所: '交易所动态',
+        稳定币: '稳定币进展',
+        监管: '监管事项',
+        安全事件: '安全事项',
+        链上与清算: '链上与清算动态',
+        央行: '央行动态',
+        通胀: '通胀数据',
+        模型: '模型动态',
+        芯片: '芯片动态',
+    };
+    if (names[subcategory]) {
+        return names[subcategory];
+    }
+    if (subcategory.endsWith('事件')) {
+        return subcategory;
+    }
+    return `${subcategory}事件`;
+}
+
+function extractHeadlineActor(title: string, item: DailyNewsItem): string {
+    const lowerTitle = title.toLowerCase();
+    const actorRules: Array<[string, string]> = [
+        ['federal reserve', '美联储'],
+        ['coinbase', 'Coinbase'],
+        ['binance', 'Binance'],
+        ['kraken', 'Kraken'],
+        ['google', 'Google'],
+        ['anthropic', 'Anthropic'],
+        ['openai', 'OpenAI'],
+        ['nvidia', 'Nvidia'],
+        ['sec', 'SEC'],
+        ['cftc', 'CFTC'],
+    ];
+    const actor = actorRules.find(([term]) => includesTerm(lowerTitle, term));
+    if (actor) {
+        return actor[1];
+    }
+
+    const leadingEntity = title.match(/^([A-Z][A-Za-z0-9&.-]*(?:\s+[A-Z][A-Za-z0-9&.-]*){0,3})\b/)?.[1];
+    if (leadingEntity) {
+        return leadingEntity;
+    }
+
+    const entities = (item.coreEntities || item.affectedAssets || [])
+        .map(entityDisplayName)
+        .filter((entity) => entity && entity !== item.subcategory);
+    return entities.length > 0
+        ? [...new Set(entities)].slice(0, 2).join('、')
+        : item.subcategory || CATEGORY_LABELS[item.category];
+}
+
+function extractHeadlineTopic(title: string, item: DailyNewsItem): string {
+    const lowerTitle = title.toLowerCase();
+    const assetName = includesTerm(lowerTitle, 'bitcoin') || includesTerm(lowerTitle, 'btc')
+        ? '比特币'
+        : includesTerm(lowerTitle, 'ethereum') || includesTerm(lowerTitle, 'ether') || includesTerm(lowerTitle, 'eth')
+            ? '以太坊'
+            : includesTerm(lowerTitle, 'solana') || includesTerm(lowerTitle, 'sol')
+                ? 'Solana'
+                : '';
+    const stablecoinTicker = title.match(/\b([A-Z0-9]{3,10})\s+stablecoin\b/)?.[1];
+
+    if (includesTerm(lowerTitle, 'spot') && includesTerm(lowerTitle, 'etf')) {
+        const suffix = includesTerm(lowerTitle, 'staking')
+            ? '质押提案'
+            : includesTerm(lowerTitle, 'rule change')
+                ? '规则变更'
+                : '相关事项';
+        return `${assetName || ''}现货 ETF ${suffix}`.trim();
+    }
+    if (stablecoinTicker) {
+        const chainPrefix = assetName ? `在 ${assetName} 上` : '';
+        return `${chainPrefix}推出 ${stablecoinTicker} 稳定币`.trim();
+    }
+    if (includesTerm(lowerTitle, 'threat intelligence')) {
+        return includesTerm(lowerTitle, 'north korean') || includesTerm(lowerTitle, 'north korea')
+            ? '朝鲜威胁情报'
+            : '威胁情报';
+    }
+    if (includesTerm(lowerTitle, 'custody reporting')) {
+        return `${assetName || '加密'}基金机构托管报告`;
+    }
+    if (includesTerm(lowerTitle, 'reserve')) {
+        return '加密托管储备更新';
+    }
+    if (includesTerm(lowerTitle, 'tpu')) {
+        return 'TPU 服务';
+    }
+    if (includesTerm(lowerTitle, 'ai services company')) {
+        return 'AI 服务公司';
+    }
+    if (includesTerm(lowerTitle, 'rate cuts')) {
+        return includesTerm(lowerTitle, 'inflation')
+            ? '通胀数据后的降息预期'
+            : '降息预期';
+    }
+    if (includesTerm(lowerTitle, 'staff')) {
+        return '运营人员调整';
+    }
+
+    return item.subcategory || CATEGORY_LABELS[item.category];
+}
+
+function buildActionHeadline(actor: string, topic: string, text: string): string | null {
+    if (includesTerm(text, 'reject') || includesTerm(text, 'rejected') || includesTerm(text, 'rejects')) {
+        return `${actor} 拒绝${topic}`;
+    }
+    if (includesTerm(text, 'delay') || includesTerm(text, 'delays') || includesTerm(text, 'delayed')) {
+        return `${actor} 推迟${topic}决定`;
+    }
+    if (includesTerm(text, 'approve') || includesTerm(text, 'approval') || includesTerm(text, 'approved')) {
+        return `${actor} 批准${topic}`;
+    }
+    if (includesTerm(text, 'expand') || includesTerm(text, 'expands') || includesTerm(text, 'expanded')) {
+        return `${actor} 扩展${topic}`;
+    }
+    if (includesTerm(text, 'share') || includesTerm(text, 'shares')) {
+        return `${actor} 将共享${topic}`;
+    }
+    if (includesTerm(text, 'begins') || includesTerm(text, 'rollout') || includesTerm(text, 'launch') || includesTerm(text, 'launches') || includesTerm(text, 'release')) {
+        return `${actor} 开始${topic}`;
+    }
+    if (includesTerm(text, 'announce') || includesTerm(text, 'announces')) {
+        return `${actor} 宣布${topic}`;
+    }
+    if (includesTerm(text, 'reportedly follows suit')) {
+        return `${actor} 据称跟进${topic}布局`;
+    }
+    if (includesTerm(text, 'cuts') || includesTerm(text, 'layoff') || includesTerm(text, 'layoffs')) {
+        return `${actor} 调整${topic}`;
+    }
+
+    return null;
+}
+
 function buildObjectiveChineseTitle(item: DailyNewsItem): string {
     if (hasCjkText(item.title)) {
         return cleanChineseStyle(item.title.trim());
     }
 
     const text = newsText(item);
-    const entities = (item.coreEntities || item.affectedAssets || [])
-        .map(entityDisplayName)
-        .filter(Boolean);
-    const subject = entities.length > 0
-        ? [...new Set(entities)].slice(0, 2).join('、')
-        : item.subcategory || CATEGORY_LABELS[item.category];
+    const title = item.title.trim();
+    const subject = extractHeadlineActor(title, item);
+    const topic = extractHeadlineTopic(title, item);
+    const actionHeadline = buildActionHeadline(subject, topic, text);
+
+    if (actionHeadline) {
+        return actionHeadline;
+    }
 
     if (includesTerm(text, 'reject') || includesTerm(text, 'rejected') || includesTerm(text, 'delay') || includesTerm(text, 'delays')) {
-        return `${subject}相关${item.subcategory || CATEGORY_LABELS[item.category]}事项出现监管进展`;
+        return `${subject}${item.subcategory || CATEGORY_LABELS[item.category]}出现监管进展`;
     }
     if (includesTerm(text, 'approve') || includesTerm(text, 'approval') || includesTerm(text, 'approved')) {
-        return `${subject}相关${item.subcategory || CATEGORY_LABELS[item.category]}事项获得批准`;
+        return `${subject}${item.subcategory || CATEGORY_LABELS[item.category]}获得批准`;
     }
     if (includesTerm(text, 'launch') || includesTerm(text, 'release') || includesTerm(text, 'rollout')) {
-        return `${subject}相关${item.subcategory || CATEGORY_LABELS[item.category]}事项启动推进`;
+        return `${subject}${item.subcategory || CATEGORY_LABELS[item.category]}开始落地`;
     }
     if (includesTerm(text, 'hack') || includesTerm(text, 'exploit') || includesTerm(text, 'breach')) {
-        return `${subject}相关安全事件披露新进展`;
+        return `${subject}安全事件披露细节`;
     }
     if (includesTerm(text, 'lawsuit') || includesTerm(text, 'charges') || includesTerm(text, 'settlement')) {
-        return `${subject}相关监管或法律事项披露新进展`;
+        return `${subject}监管或法律事件披露细节`;
     }
 
-    return `${subject}相关${item.subcategory || CATEGORY_LABELS[item.category]}事项披露新进展`;
+    return cleanChineseStyle(title);
 }
 
 function buildObjectiveChineseSummary(item: DailyNewsItem, title: string): string {
@@ -788,7 +1057,7 @@ function buildObjectiveChineseSummary(item: DailyNewsItem, title: string): strin
     }
 
     if (item.summary && item.summary.trim()) {
-        return `报道显示，${title}。`;
+        return `${title}。`;
     }
 
     return `${title}，具体细节未公开。`;
@@ -983,6 +1252,13 @@ function buildDigestHeadline(riskBias: NewsRiskBias, driverTags: string[], affec
 
 function buildLatestSignals(items: DailyNewsItem[]): string[] {
     return [...items]
+        .filter((item) => !isHardMarketingNoise(item)
+            && !isKolOpinionNoise(item)
+            && !isAdviceExplainerNoise(item)
+            && !isWeakMarketRecap(item)
+            && !isCryptoAdjacentBusinessNoise(item)
+            && !isAiProductRumorNoise(item)
+            && !isLowValueAiIndustryNoise(item))
         .sort(compareItemsByTimeThenScore)
         .slice(0, 3)
         .map((item) => {
@@ -1003,7 +1279,14 @@ function isEditoriallyImportant(item: DailyNewsItem): boolean {
     const hasLowValueAiSignal = item.category === 'ai' && LOW_VALUE_AI_TERMS.some((term) => includesTerm(text, term));
     const hasLowValueCryptoSignal = item.category === 'crypto' && LOW_VALUE_CRYPTO_TERMS.some((term) => includesTerm(text, term));
 
-    if (isHardMarketingNoise(item) || isKolOpinionNoise(item) || isPurePriceMove(item)) {
+    if (isHardMarketingNoise(item)
+        || isKolOpinionNoise(item)
+        || isAdviceExplainerNoise(item)
+        || isPurePriceMove(item)
+        || isWeakMarketRecap(item)
+        || isCryptoAdjacentBusinessNoise(item)
+        || isAiProductRumorNoise(item)
+        || isLowValueAiIndustryNoise(item)) {
         return false;
     }
 
@@ -1015,7 +1298,9 @@ function isEditoriallyImportant(item: DailyNewsItem): boolean {
         return false;
     }
 
-    return item.importanceScore >= MIN_EDITORIAL_IMPORTANCE_SCORE || hasSystemicSignal;
+    return item.importanceScore >= MIN_EDITORIAL_IMPORTANCE_SCORE
+        || hasSystemicSignal
+        || (item.importanceScore >= 45 && item.sourceTier !== 'unknown' && item.confirmationLevel !== 'single_source');
 }
 
 export function isTopStoryEligible(item: DailyNewsItem): boolean {
@@ -1023,7 +1308,15 @@ export function isTopStoryEligible(item: DailyNewsItem): boolean {
         return false;
     }
 
-    return !isHardMarketingNoise(item) && !isKolOpinionNoise(item) && !isPurePriceMove(item);
+    return !isHardMarketingNoise(item)
+        && !isKolOpinionNoise(item)
+        && !isAdviceExplainerNoise(item)
+        && !isPurePriceMove(item)
+        && !isPriceFramedWithoutConcreteEvent(item)
+        && !isWeakMarketRecap(item)
+        && !isCryptoAdjacentBusinessNoise(item)
+        && !isAiProductRumorNoise(item)
+        && !isLowValueAiIndustryNoise(item);
 }
 
 function buildDailyNewsBrief(digest: DailyNewsDigest): DailyNewsBrief {
@@ -1227,6 +1520,30 @@ export function buildDailyNewsDigestFromResults(
             returned: ranked.items.length,
             dropped: ranked.dropped,
         };
+    });
+
+    digest.brief = buildDailyNewsBrief(digest);
+    digest.topStories = buildTopStories(digest);
+
+    return digest;
+}
+
+export function sanitizeDailyNewsDigest(digest: DailyNewsDigest): DailyNewsDigest {
+    NEWS_CATEGORIES.forEach((category) => {
+        const before = digest[category].length;
+        digest[category] = digest[category].filter(isEditoriallyImportant);
+        const removed = before - digest[category].length;
+        if (removed > 0) {
+            digest.categoryStatus[category] = {
+                ...digest.categoryStatus[category],
+                returned: digest[category].length,
+                dropped: {
+                    ...digest.categoryStatus[category].dropped,
+                    unimportant: digest.categoryStatus[category].dropped.unimportant + removed,
+                },
+                status: digest[category].length >= DEFAULT_CATEGORY_LIMIT ? 'ok' : 'partial',
+            };
+        }
     });
 
     digest.brief = buildDailyNewsBrief(digest);

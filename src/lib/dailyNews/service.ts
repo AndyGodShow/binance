@@ -5,6 +5,7 @@ import {
     buildDailyNewsDigestFromResults,
     calculateDailyNewsWindow,
     hasAnyDailyNewsItems,
+    sanitizeDailyNewsDigest,
 } from './pipeline.ts';
 import { fetchRssNewsCandidates } from './rss.ts';
 import { createDailyNewsStorage } from './storage.ts';
@@ -82,7 +83,7 @@ async function generateDailyNewsDigestInner(options: GenerateOptions = {}): Prom
 
     const previousDigest = await storage.readLatestDigest();
     const results = await Promise.all(NEWS_CATEGORIES.map((category) => collectCategory(category, window)));
-    const digest = await translateDailyNewsDigest(buildDailyNewsDigestFromResults(results, window));
+    const digest = sanitizeDailyNewsDigest(await translateDailyNewsDigest(buildDailyNewsDigestFromResults(results, window)));
 
     if (!hasAnyDailyNewsItems(digest)) {
         if (previousDigest) {

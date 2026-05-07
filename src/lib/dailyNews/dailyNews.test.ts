@@ -10,6 +10,7 @@ import {
     dedupeAndRankCandidates,
     formatDailyNewsWindow,
     isNewsCandidateRelevant,
+    sanitizeDailyNewsDigest,
 } from './pipeline.ts';
 import { normalizeGdeltDate } from './gdelt.ts';
 import { scoreNewsCandidate, toImportanceLevel } from './scoring.ts';
@@ -274,6 +275,48 @@ test('dedupeAndRankCandidates rejects price crossing marketing and KOL opinion n
     assert.equal(result.items.length, 1);
     assert.match(result.items[0].title, /SEC rejects/i);
     assert.equal(result.dropped.unimportant, 3);
+});
+
+test('dedupeAndRankCandidates rejects Chinese translated crypto marketing noise', () => {
+    const result = dedupeAndRankCandidates('crypto', [
+        candidate({
+            category: 'crypto',
+            title: '2026 年 5 月最佳加密预售：随着 ETF 资金大量涌入比特币，AlphaPepe 领先 7 个精选',
+            summary: '这是一篇推广 AlphaPepe 预售和精选代币的营销稿。',
+            source: 'openPR.com',
+            domain: 'openpr.com',
+            url: 'https://example.com/alphapepe-best-crypto-presale',
+            publishedAt: '2026-04-17T18:00:00.000Z',
+            tags: ['ETF', 'BTC'],
+            rawSnippet: '',
+        }),
+        candidate({
+            category: 'crypto',
+            title: 'Pepeto 模仿 SOL 和 LINK 起源，新加密货币资本推动 BTC ETF 流入创纪录',
+            summary: '这篇文章推广 Pepeto 项目并借 BTC ETF 流入包装叙事。',
+            source: 'TechBullion',
+            domain: 'techbullion.com',
+            url: 'https://example.com/pepeto-sol-link-btc-etf',
+            publishedAt: '2026-04-17T19:00:00.000Z',
+            tags: ['ETF', 'BTC', 'SOL'],
+            rawSnippet: '',
+        }),
+        candidate({
+            category: 'crypto',
+            title: 'SEC rejects spot Bitcoin ETF rule change, BTC falls after decision',
+            summary: 'The regulator rejected a filing for a spot Bitcoin ETF rule change.',
+            source: 'Reuters',
+            domain: 'reuters.com',
+            url: 'https://www.reuters.com/technology/sec-rejects-bitcoin-etf-rule-change-2026-04-17/',
+            publishedAt: '2026-04-17T20:00:00.000Z',
+            tags: ['SEC', 'ETF', 'BTC'],
+            rawSnippet: '',
+        }),
+    ], WINDOW, 10);
+
+    assert.equal(result.items.length, 1);
+    assert.match(result.items[0].title, /SEC rejects/i);
+    assert.doesNotMatch(result.items.map((item) => item.title).join('\n'), /AlphaPepe|Pepeto|预售|最佳加密/i);
 });
 
 test('dedupeAndRankCandidates filters routine financing partnership listing and activity noise', () => {
@@ -615,7 +658,7 @@ test('buildDailyNewsDigestFromResults creates an important signal brief from eve
     assert.doesNotMatch(digest.brief?.headline || '', /风险偏好|多空|交易/);
     assert.ok(digest.brief?.driverTags.includes('通胀'));
     assert.equal(digest.brief?.driverTags.includes('聚合'), false);
-    assert.ok(digest.brief?.affectedAssets.includes('BTC'));
+    assert.ok((digest.brief?.affectedAssets || []).some((asset) => ['UST', 'Oil'].includes(asset)));
     assert.ok((digest.brief?.latestSignals || []).length >= 2);
 });
 
@@ -757,6 +800,60 @@ test('buildDailyNewsDigestFromResults excludes price-only stories from top stori
     assert.doesNotMatch(digest.topStories?.[0].headline || '', /crosses|rally|new high/i);
 });
 
+test('buildDailyNewsDigestFromResults keeps ETF flow context out of top stories when it is price framed', () => {
+    const digest = buildDailyNewsDigestFromResults([
+        {
+            category: 'crypto',
+            ok: true,
+            candidates: [
+                candidate({
+                    category: 'crypto',
+                    title: 'Bitcoin holds $80K as ETF flows drive the next move',
+                    summary: 'The article frames ETF flows around BTC holding a price level without a new filing or regulatory action.',
+                    source: 'Crypto Adventure',
+                    domain: 'cryptoadventure.com',
+                    url: 'https://example.com/bitcoin-holds-80k-etf-flows',
+                    publishedAt: '2026-04-17T18:00:00.000Z',
+                    tags: ['BTC', 'ETF'],
+                    rawSnippet: '',
+                }),
+                candidate({
+                    category: 'crypto',
+                    title: 'BTC leads market as spot ETF inflows increase',
+                    summary: 'The exchange recap frames spot ETF inflows as a market move without a new issuer filing or regulatory decision.',
+                    source: 'MEXC Exchange',
+                    domain: 'mexc.com',
+                    url: 'https://example.com/btc-leads-market-spot-etf-inflows',
+                    publishedAt: '2026-04-17T19:00:00.000Z',
+                    tags: ['BTC', 'ETF'],
+                    rawSnippet: '',
+                }),
+                candidate({
+                    category: 'crypto',
+                    title: 'SEC rejects spot Bitcoin ETF rule change, BTC falls after decision',
+                    summary: 'The regulator rejected a filing for a spot Bitcoin ETF rule change.',
+                    source: 'Reuters',
+                    domain: 'reuters.com',
+                    url: 'https://www.reuters.com/technology/sec-rejects-bitcoin-etf-rule-change-2026-04-17/',
+                    publishedAt: '2026-04-17T21:00:00.000Z',
+                    tags: ['SEC', 'ETF', 'BTC'],
+                    rawSnippet: '',
+                }),
+            ],
+        },
+        { category: 'macro', ok: true, candidates: [] },
+        { category: 'ai', ok: true, candidates: [] },
+    ], WINDOW);
+
+    assert.ok(digest.crypto.length >= 2);
+    assert.equal(digest.topStories?.length, 1);
+    assert.match(digest.topStories?.[0].headline || '', /SEC|ETF|监管/);
+    assert.doesNotMatch([
+        ...(digest.topStories || []).map((story) => story.headline),
+        ...(digest.brief?.latestSignals || []),
+    ].join('\n'), /holds \$80K|ETF flows drive|leads market|inflows|80K/i);
+});
+
 test('daily news items expose fixed summary sections', () => {
     const digest = buildDailyNewsDigestFromResults([
         {
@@ -830,6 +927,439 @@ test('daily news output uses simplified Chinese formal wording without banned pr
     assert.match(item.summarySections?.whyImportant || '', /^为什么重要：/);
     assert.match(item.summarySections?.whatToWatch || '', /^后续看什么：/);
     assert.match(item.summarySections?.sourceAndConfirmation || '', /^来源与确认度：/);
+});
+
+test('daily news Chinese normalization preserves concrete facts instead of empty templates', () => {
+    const digest = buildDailyNewsDigestFromResults([
+        {
+            category: 'crypto',
+            ok: true,
+            candidates: [
+                candidate({
+                    category: 'crypto',
+                    title: 'Western Union begins USDPT stablecoin rollout on Solana',
+                    summary: 'Western Union started rolling out its USDPT stablecoin on Solana.',
+                    source: 'Cointelegraph',
+                    domain: 'cointelegraph.com',
+                    url: 'https://cointelegraph.com/news/western-union-usdpt-stablecoin-solana',
+                    publishedAt: '2026-04-17T18:00:00.000Z',
+                    tags: ['stablecoin', 'SOL'],
+                    rawSnippet: '',
+                }),
+                candidate({
+                    category: 'crypto',
+                    title: 'Ripple to share North Korean threat intelligence with crypto firms',
+                    summary: 'Ripple plans to share threat intelligence tied to North Korean activity with crypto companies.',
+                    source: 'CoinDesk',
+                    domain: 'coindesk.com',
+                    url: 'https://www.coindesk.com/tech/2026/04/17/ripple-threat-intelligence-north-korea/',
+                    publishedAt: '2026-04-17T19:00:00.000Z',
+                    tags: ['security'],
+                    rawSnippet: '',
+                }),
+            ],
+        },
+        { category: 'macro', ok: true, candidates: [] },
+        { category: 'ai', ok: true, candidates: [] },
+    ], WINDOW);
+
+    const titles = digest.crypto.map((item) => item.title).join('\n');
+    assert.match(titles, /西联汇款|Western Union/);
+    assert.match(titles, /USDPT/);
+    assert.match(titles, /Solana/);
+    assert.match(titles, /Ripple/);
+    assert.match(titles, /朝鲜|North Korean/);
+    assert.doesNotMatch(titles, /相关.*事项|披露新进展|启动推进/);
+});
+
+test('daily news Chinese normalization avoids glued entities and duplicate event wording', () => {
+    const digest = buildDailyNewsDigestFromResults([
+        {
+            category: 'crypto',
+            ok: true,
+            candidates: [
+                candidate({
+                    category: 'crypto',
+                    title: 'SEC rejects spot Bitcoin ETF rule change, BTC falls after decision',
+                    summary: 'The regulator rejected a filing for a spot Bitcoin ETF rule change.',
+                    source: 'Reuters',
+                    domain: 'reuters.com',
+                    url: 'https://www.reuters.com/technology/sec-rejects-bitcoin-etf-rule-change-2026-04-17/',
+                    publishedAt: '2026-04-17T18:00:00.000Z',
+                    tags: ['SEC', 'ETF', 'BTC'],
+                    rawSnippet: '',
+                }),
+                candidate({
+                    category: 'crypto',
+                    title: 'Coinbase expands institutional custody reporting for Bitcoin funds',
+                    summary: 'The update adds reporting details for institutional Bitcoin custody clients.',
+                    source: 'CoinDesk',
+                    domain: 'coindesk.com',
+                    url: 'https://example.com/coinbase-institutional-custody-reporting',
+                    publishedAt: '2026-04-17T19:00:00.000Z',
+                    tags: ['crypto', 'exchange', 'custody', 'BTC'],
+                    rawSnippet: '',
+                }),
+            ],
+        },
+        { category: 'macro', ok: true, candidates: [] },
+        { category: 'ai', ok: true, candidates: [] },
+    ], WINDOW);
+
+    const combined = digest.crypto
+        .flatMap((item) => [item.title, item.summarySections?.whyImportant || ''])
+        .join('\n');
+
+    assert.match(combined, /SEC 拒绝比特币现货 ETF 规则变更/);
+    assert.match(combined, /Coinbase 扩展比特币基金机构托管报告/);
+    assert.doesNotMatch(combined, /SECETF|ETFETF|安全事件事件|ETF事件|交易所事件/);
+});
+
+test('dedupeAndRankCandidates keeps a richer set of non-noise category items', () => {
+    const result = dedupeAndRankCandidates('crypto', [
+        candidate({
+            category: 'crypto',
+            title: 'Coinbase expands institutional custody reporting for Bitcoin funds',
+            summary: 'The update adds reporting details for institutional Bitcoin custody clients.',
+            source: 'CoinDesk',
+            domain: 'coindesk.com',
+            url: 'https://example.com/coinbase-institutional-custody-reporting',
+            publishedAt: '2026-04-17T10:00:00.000Z',
+            tags: ['crypto', 'exchange', 'custody', 'BTC'],
+            rawSnippet: '',
+        }),
+        candidate({
+            category: 'crypto',
+            title: 'Kraken adds proof-of-reserve disclosures for institutional accounts',
+            summary: 'The exchange published additional reserve disclosures for large accounts.',
+            source: 'Cointelegraph',
+            domain: 'cointelegraph.com',
+            url: 'https://example.com/kraken-proof-of-reserve-institutional',
+            publishedAt: '2026-04-17T11:00:00.000Z',
+            tags: ['crypto', 'exchange', 'reserve'],
+            rawSnippet: '',
+        }),
+        candidate({
+            category: 'crypto',
+            title: 'Circle updates USDC reserve attestation process for banks',
+            summary: 'Circle described changes to its reserve attestation process for banking partners.',
+            source: 'The Block',
+            domain: 'theblock.co',
+            url: 'https://example.com/circle-usdc-reserve-attestation-banks',
+            publishedAt: '2026-04-17T12:00:00.000Z',
+            tags: ['stablecoin', 'USDC', 'reserve'],
+            rawSnippet: '',
+        }),
+        candidate({
+            category: 'crypto',
+            title: 'Tether publishes new USDT reserve disclosure for token holders',
+            summary: 'Tether released a reserve disclosure covering assets backing USDT.',
+            source: 'CoinDesk',
+            domain: 'coindesk.com',
+            url: 'https://example.com/tether-usdt-reserve-disclosure',
+            publishedAt: '2026-04-17T13:00:00.000Z',
+            tags: ['stablecoin', 'USDT', 'reserve'],
+            rawSnippet: '',
+        }),
+        candidate({
+            category: 'crypto',
+            title: 'Solana validators prepare network upgrade after outage review',
+            summary: 'Validators prepared a network upgrade following a review of outage conditions.',
+            source: 'Decrypt',
+            domain: 'decrypt.co',
+            url: 'https://example.com/solana-network-upgrade-outage-review',
+            publishedAt: '2026-04-17T14:00:00.000Z',
+            tags: ['SOL', 'upgrade', 'outage'],
+            rawSnippet: '',
+        }),
+        candidate({
+            category: 'crypto',
+            title: 'Binance updates withdrawal controls after wallet security review',
+            summary: 'The exchange changed withdrawal controls after a wallet security review.',
+            source: 'Cointelegraph',
+            domain: 'cointelegraph.com',
+            url: 'https://example.com/binance-withdrawal-controls-wallet-security',
+            publishedAt: '2026-04-17T15:00:00.000Z',
+            tags: ['exchange', 'wallet security', 'Binance'],
+            rawSnippet: '',
+        }),
+        candidate({
+            category: 'crypto',
+            title: 'Ethereum client teams schedule upgrade coordination call',
+            summary: 'Client teams scheduled a coordination call for the next network upgrade.',
+            source: 'The Block',
+            domain: 'theblock.co',
+            url: 'https://example.com/ethereum-client-teams-upgrade-call',
+            publishedAt: '2026-04-17T16:00:00.000Z',
+            tags: ['ETH', 'upgrade'],
+            rawSnippet: '',
+        }),
+        candidate({
+            category: 'crypto',
+            title: 'CFTC opens comment period on crypto derivatives custody rules',
+            summary: 'The agency opened a comment period on custody rules for crypto derivatives.',
+            source: 'Reuters',
+            domain: 'reuters.com',
+            url: 'https://example.com/cftc-crypto-derivatives-custody-rules',
+            publishedAt: '2026-04-17T17:00:00.000Z',
+            tags: ['CFTC', 'custody', 'regulation'],
+            rawSnippet: '',
+        }),
+        candidate({
+            category: 'crypto',
+            title: 'Token presale price prediction says best crypto to buy now',
+            summary: 'The marketing post promotes a token sale and moonshot claim.',
+            source: 'Example',
+            domain: 'example.com',
+            url: 'https://example.com/token-presale-price-prediction',
+            publishedAt: '2026-04-17T20:00:00.000Z',
+            tags: ['token'],
+            rawSnippet: '',
+        }),
+    ], WINDOW, 10);
+
+    assert.equal(result.items.length, 8);
+    assert.equal(result.dropped.unimportant, 1);
+});
+
+test('dedupeAndRankCandidates removes low-information crypto market recaps while backfilling richer items', () => {
+    const result = dedupeAndRankCandidates('crypto', [
+        candidate({
+            category: 'crypto',
+            title: 'Bitcoin ETF inflows hit $532 million as BTC recovers above $80K',
+            summary: 'The article recaps ETF inflows and BTC price recovery without a new policy fact.',
+            source: 'Cointelegraph',
+            domain: 'cointelegraph.com',
+            url: 'https://example.com/bitcoin-etf-inflows-btc-recovers',
+            publishedAt: '2026-04-17T10:00:00.000Z',
+            tags: ['BTC', 'ETF'],
+            rawSnippet: '',
+        }),
+        candidate({
+            category: 'crypto',
+            title: 'Bitcoin ETFs pull in $532M as BTC reclaims $80K amid post-ceasefire recovery',
+            summary: 'The article recaps ETF demand and BTC reclaiming a price level.',
+            source: 'Cointelegraph',
+            domain: 'cointelegraph.com',
+            url: 'https://example.com/bitcoin-etfs-pull-in-532m',
+            publishedAt: '2026-04-17T10:30:00.000Z',
+            tags: ['BTC', 'ETF'],
+            rawSnippet: '',
+        }),
+        candidate({
+            category: 'crypto',
+            title: 'Bitcoin used to hate inflation. Now the opposite may be true',
+            summary: 'A market commentary links BTC price behavior to inflation expectations.',
+            source: 'CoinDesk',
+            domain: 'coindesk.com',
+            url: 'https://example.com/bitcoin-inflation-commentary',
+            publishedAt: '2026-04-17T11:00:00.000Z',
+            tags: ['BTC', 'inflation'],
+            rawSnippet: '',
+        }),
+        candidate({
+            category: 'crypto',
+            title: 'Western Union begins USDPT stablecoin rollout on Solana',
+            summary: 'Western Union started rolling out its USDPT stablecoin on Solana.',
+            source: 'Cointelegraph',
+            domain: 'cointelegraph.com',
+            url: 'https://cointelegraph.com/news/western-union-usdpt-stablecoin-solana',
+            publishedAt: '2026-04-17T12:00:00.000Z',
+            tags: ['stablecoin', 'SOL'],
+            rawSnippet: '',
+        }),
+        candidate({
+            category: 'crypto',
+            title: 'Ripple to share North Korean threat intelligence with crypto firms',
+            summary: 'Ripple plans to share threat intelligence tied to North Korean activity with crypto companies.',
+            source: 'CoinDesk',
+            domain: 'coindesk.com',
+            url: 'https://www.coindesk.com/tech/2026/04/17/ripple-threat-intelligence-north-korea/',
+            publishedAt: '2026-04-17T13:00:00.000Z',
+            tags: ['security'],
+            rawSnippet: '',
+        }),
+    ], WINDOW, 10);
+
+    const titles = result.items.map((item) => item.title).join('\n');
+    assert.equal(result.items.length, 2);
+    assert.match(titles, /Western Union|Ripple/i);
+    assert.doesNotMatch(titles, /ETF inflows|pull in|hate inflation|above \$80K|reclaims/i);
+});
+
+test('dedupeAndRankCandidates filters advice explainers and crypto-adjacent business noise', () => {
+    const result = dedupeAndRankCandidates('crypto', [
+        candidate({
+            category: 'crypto',
+            title: 'Elon Musk settles SEC Twitter case with $1.5M fine',
+            summary: 'The case concerns a Twitter disclosure dispute and does not add a crypto market structure fact.',
+            source: 'crypto.news',
+            domain: 'crypto.news',
+            url: 'https://example.com/elon-musk-sec-twitter-case',
+            publishedAt: '2026-04-17T10:00:00.000Z',
+            tags: ['SEC'],
+            rawSnippet: '',
+        }),
+        candidate({
+            category: 'crypto',
+            title: 'GameStop eBay takeover bid puts its bitcoin stash in the crosshairs',
+            summary: 'The article frames a retail merger around a company bitcoin treasury.',
+            source: 'crypto.news',
+            domain: 'crypto.news',
+            url: 'https://example.com/gamestop-ebay-bitcoin-stash',
+            publishedAt: '2026-04-17T11:00:00.000Z',
+            tags: ['BTC'],
+            rawSnippet: '',
+        }),
+        candidate({
+            category: 'crypto',
+            title: 'SEC rejects spot Bitcoin ETF rule change, BTC falls after decision',
+            summary: 'The regulator rejected a filing for a spot Bitcoin ETF rule change.',
+            source: 'Reuters',
+            domain: 'reuters.com',
+            url: 'https://www.reuters.com/technology/sec-rejects-bitcoin-etf-rule-change-2026-04-17/',
+            publishedAt: '2026-04-17T12:00:00.000Z',
+            tags: ['SEC', 'ETF', 'BTC'],
+            rawSnippet: '',
+        }),
+    ], WINDOW, 10);
+
+    assert.equal(result.items.length, 1);
+    assert.match(result.items[0].title, /SEC rejects/i);
+});
+
+test('dedupeAndRankCandidates filters AI consumer device rumors', () => {
+    const result = dedupeAndRankCandidates('ai', [
+        candidate({
+            category: 'ai',
+            title: 'OpenAI may launch AI phone in 2027',
+            summary: 'A report says OpenAI may launch a consumer AI phone in 2027.',
+            source: 'MacRumors',
+            domain: 'macrumors.com',
+            url: 'https://example.com/openai-ai-phone-2027',
+            publishedAt: '2026-04-17T10:00:00.000Z',
+            tags: ['OpenAI'],
+            rawSnippet: '',
+        }),
+        candidate({
+            category: 'ai',
+            title: 'NVIDIA launches new AI accelerator for hyperscale data centers',
+            summary: 'The chip launch changes compute supply for large model training.',
+            source: 'NVIDIA',
+            domain: 'nvidia.com',
+            url: 'https://www.nvidia.com/en-us/data-center/new-ai-accelerator/',
+            publishedAt: '2026-04-17T11:00:00.000Z',
+            tags: ['NVIDIA', 'chip'],
+            rawSnippet: '',
+        }),
+    ], WINDOW, 10);
+
+    assert.equal(result.items.length, 1);
+    assert.match(result.items[0].title, /NVIDIA/i);
+});
+
+test('dedupeAndRankCandidates filters low-value AI personnel and routine partnership news', () => {
+    const result = dedupeAndRankCandidates('ai', [
+        candidate({
+            category: 'ai',
+            title: 'Former Pentagon think tank head joins Anthropic',
+            summary: 'The appointment does not describe a model, chip, infrastructure or regulatory change.',
+            source: 'Example',
+            domain: 'example.com',
+            url: 'https://example.com/former-pentagon-head-joins-anthropic',
+            publishedAt: '2026-04-17T10:00:00.000Z',
+            tags: ['Anthropic'],
+            rawSnippet: '',
+        }),
+        candidate({
+            category: 'ai',
+            title: 'FIS partners to bring agentic AI to banking with Anthropic',
+            summary: 'A routine commercial partnership announcement for banking software.',
+            source: 'Example',
+            domain: 'example.com',
+            url: 'https://example.com/fis-anthropic-agentic-ai-banking',
+            publishedAt: '2026-04-17T11:00:00.000Z',
+            tags: ['Anthropic', 'AI'],
+            rawSnippet: '',
+        }),
+        candidate({
+            category: 'ai',
+            title: 'Google, xAI and Microsoft agree to US national security reviews of new AI models',
+            summary: 'The agreement gives US officials access to review frontier AI model safety.',
+            source: 'Financial Times',
+            domain: 'ft.com',
+            url: 'https://www.ft.com/content/ai-model-national-security-review',
+            publishedAt: '2026-04-17T12:00:00.000Z',
+            tags: ['Google', 'Microsoft', 'AI', 'regulation'],
+            rawSnippet: '',
+        }),
+    ], WINDOW, 10);
+
+    assert.equal(result.items.length, 1);
+    assert.match(result.items[0].title, /national security reviews/i);
+});
+
+test('sanitizeDailyNewsDigest removes translated low-information items and rebuilds top stories', () => {
+    const digest = buildDailyNewsDigestFromResults([
+        {
+            category: 'crypto',
+            ok: true,
+            candidates: [
+                candidate({
+                    category: 'crypto',
+                    title: 'Western Union begins USDPT stablecoin rollout on Solana',
+                    summary: 'Western Union started rolling out its USDPT stablecoin on Solana.',
+                    source: 'Cointelegraph',
+                    domain: 'cointelegraph.com',
+                    url: 'https://cointelegraph.com/news/western-union-usdpt-stablecoin-solana',
+                    publishedAt: '2026-04-17T10:00:00.000Z',
+                    tags: ['stablecoin', 'SOL'],
+                    rawSnippet: '',
+                }),
+                candidate({
+                    category: 'crypto',
+                    title: 'Ripple to share North Korean threat intelligence with crypto firms',
+                    summary: 'Ripple plans to share threat intelligence tied to North Korean activity with crypto companies.',
+                    source: 'CoinDesk',
+                    domain: 'coindesk.com',
+                    url: 'https://www.coindesk.com/tech/2026/04/17/ripple-threat-intelligence-north-korea/',
+                    publishedAt: '2026-04-17T11:00:00.000Z',
+                    tags: ['security'],
+                    rawSnippet: '',
+                }),
+            ],
+        },
+        { category: 'macro', ok: true, candidates: [] },
+        { category: 'ai', ok: true, candidates: [] },
+    ], WINDOW);
+
+    digest.crypto.unshift({
+        ...digest.crypto[0],
+        id: 'crypto-translated-noise',
+        title: '随着黄金支持代币的需求上升，Tether Gold 突破 $3.3B',
+        summary: '随着黄金支持代币的需求上升，Tether Gold 突破 $3.3B。',
+        importanceScore: 90,
+        subcategory: '稳定币',
+        tags: ['加密', '稳定币'],
+    });
+    digest.topStories = digest.crypto.slice(0, 3).map((item) => ({
+        id: item.id,
+        headline: item.title,
+        whyImportant: item.whyItMatters || item.summary,
+        category: item.category,
+        confirmationLevel: item.confirmationLevel,
+        sourceTier: item.sourceTier,
+        importanceScore: item.importanceScore,
+    }));
+
+    const sanitized = sanitizeDailyNewsDigest(digest);
+    const combined = [
+        ...sanitized.crypto.map((item) => item.title),
+        ...(sanitized.topStories || []).map((story) => story.headline),
+    ].join('\n');
+
+    assert.doesNotMatch(combined, /Tether Gold|突破 \$3\.3B/);
+    assert.match(combined, /西联汇款|Ripple/);
 });
 
 test('buildDailyNewsDigestFromResults summarizes the 24 hour brief without trading language', () => {

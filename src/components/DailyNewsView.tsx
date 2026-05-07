@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from 'react';
-import { ChevronDown, ChevronUp, ExternalLink } from 'lucide-react';
+import { ChevronDown, ChevronUp, ExternalLink, RefreshCw } from 'lucide-react';
 
 import { usePersistentSWR } from '@/hooks/usePersistentSWR';
 import type { DailyNewsApiResponse, DailyNewsBrief, DailyNewsDigest, DailyNewsItem, DailyNewsTopStory, NewsCategory } from '@/lib/dailyNews/types';
@@ -18,7 +18,9 @@ const CATEGORY_CONFIG: Array<{
 ];
 
 const fetcher = async (url: string) => {
-    const response = await fetch(url);
+    const response = await fetch(url, {
+        cache: 'no-store',
+    });
     if (!response.ok) {
         throw new Error(`Failed to fetch daily news: ${response.status}`);
     }
@@ -314,15 +316,16 @@ function NewsItemCard({
 
 export default function DailyNewsView() {
     const [expandedItems, setExpandedItems] = useState<Set<string>>(() => new Set());
-    const { data, error, isLoading } = usePersistentSWR<DailyNewsApiResponse>(
+    const [isRefreshing, setIsRefreshing] = useState(false);
+    const { data, error, isLoading, isValidating, mutate } = usePersistentSWR<DailyNewsApiResponse>(
         '/api/daily-news',
         fetcher,
         {
-            refreshInterval: 10 * 60 * 1000,
-            revalidateOnFocus: false,
-            dedupingInterval: 60 * 1000,
-            storageTtlMs: 12 * 60 * 60 * 1000,
-            persistIntervalMs: 5 * 60 * 1000,
+            refreshInterval: 5 * 60 * 1000,
+            revalidateOnFocus: true,
+            dedupingInterval: 30 * 1000,
+            storageTtlMs: 2 * 60 * 60 * 1000,
+            persistIntervalMs: 60 * 1000,
             storageKey: 'persistent-swr:v4:/api/daily-news:important-news',
         }
     );
@@ -347,6 +350,17 @@ export default function DailyNewsView() {
             }
             return next;
         });
+    };
+    const handleRefresh = async () => {
+        setIsRefreshing(true);
+        try {
+            await mutate(fetcher('/api/daily-news?refresh=1'), {
+                populateCache: true,
+                revalidate: false,
+            });
+        } finally {
+            setIsRefreshing(false);
+        }
     };
 
     if (isLoading && !digest) {
@@ -399,6 +413,16 @@ export default function DailyNewsView() {
                         <span className={styles.metaLabel}>重大事件</span>
                         <strong>{highImpactCount} 条</strong>
                     </div>
+                    <button
+                        className={styles.refreshButton}
+                        type="button"
+                        onClick={handleRefresh}
+                        disabled={isRefreshing || isValidating}
+                        aria-label="刷新重要新闻"
+                    >
+                        <RefreshCw size={16} />
+                        <span>{isRefreshing || isValidating ? '刷新中' : '刷新新闻'}</span>
+                    </button>
                 </div>
             </header>
 
