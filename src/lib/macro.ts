@@ -197,7 +197,7 @@ function classifyLsRatio(value: number): Pick<MacroMonitorCard, 'statusLabel' | 
         return { statusLabel: '散户重多', tone: 'negative', hint: '>2.5 散户极多 / <1.0 大户偏多' };
     }
     if (value <= 1.0) {
-        return { statusLabel: '主力偏多', tone: 'positive', hint: '>2.5 散户极多 / <1.0 大户偏多' };
+        return { statusLabel: '大户偏多', tone: 'positive', hint: '>2.5 散户极多 / <1.0 大户偏多' };
     }
     return { statusLabel: '中性', tone: 'neutral', hint: '>2.5 散户极多 / <1.0 大户偏多' };
 }

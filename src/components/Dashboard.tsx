@@ -324,7 +324,7 @@ export default function Dashboard({
                         <span className={styles.liveBadge}>实时监控</span>
                     </div>
                     <p className={styles.subtitle}>
-                        搜索、筛选并比较主力合约的短周期动能、资金费率与持仓热度，把注意力集中在最活跃的标的上。
+                        搜索、筛选并比较核心合约的短周期动能、资金费率与持仓热度，把注意力集中在最活跃的标的上。
                     </p>
                     <div className={styles.metaRow}>
                         <span className={styles.status}>排序：{currentSortLabel}</span>
