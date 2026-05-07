@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 
 import type { TokenSearchResult } from './types.ts';
 import {
+    buildAddressIdentity,
+    buildTokenEligibility,
     buildCandidateTokenResults,
     filterAndSortSearchResults,
     getFallbackBannerMessage,
@@ -182,7 +184,7 @@ test('getFallbackBannerMessage keeps upstream failure guidance as default', () =
     );
 });
 
-test('getFallbackBannerMessage marks unconfirmed mappings without showing chip data', () => {
+test('getFallbackBannerMessage marks unconfirmed mappings without showing onchain data', () => {
     assert.match(
         getFallbackBannerMessage('data_source_unconfirmed' as never),
         /数据源待确认/
@@ -413,4 +415,390 @@ test('buildCandidateTokenResults filters weak imposters and ranks market cap bef
         ranked.map((token) => token.tokenAddress),
         ['0xlarge', '0xmid']
     );
+});
+
+test('buildAddressIdentity downgrades symbol-only candidates to fallback evidence', () => {
+    const identity = buildAddressIdentity({
+        token: {
+            ...sampleTokens[0],
+            isVerifiedContract: false,
+        },
+        scope: 'contracts',
+        mappingStatus: 'candidate',
+        searchResults: sampleTokens,
+    });
+
+    assert.equal(identity.confidence, 'fallback');
+    assert.match(identity.evidence.join(' '), /DEX|候选|币安合约/);
+    assert.match(identity.riskFlags.join(' '), /官方地址|多个候选/);
+});
+
+test('buildTokenEligibility allows only confirmed clean holder data for analysis', () => {
+    const eligibility = buildTokenEligibility({
+        token: sampleTokens[0],
+        identity: {
+            symbol: 'PEPE',
+            chain: 'Ethereum',
+            address: '0x111',
+            confidence: 'probable',
+            source: 'binance_alpha',
+            evidence: ['Binance Alpha 官方地址命中。'],
+            riskFlags: [],
+        },
+        mappingStatus: 'confirmed',
+        metrics: {
+            totalHolders: 1200,
+            holderSupply: {
+                top10: { supply: 1, supplyPercent: 0.3 },
+                top25: { supply: 1, supplyPercent: 0.4 },
+                top50: { supply: 1, supplyPercent: 0.5 },
+                top100: { supply: 1, supplyPercent: 0.6 },
+                top250: { supply: 1, supplyPercent: 0.7 },
+                top500: { supply: 1, supplyPercent: 0.8 },
+            },
+            holderChange: {
+                '5min': { change: 0, changePercent: 0 },
+                '1h': { change: 0, changePercent: 0 },
+                '6h': { change: 0, changePercent: 0 },
+                '24h': { change: 0, changePercent: 0 },
+                '3d': { change: 0, changePercent: 0 },
+                '7d': { change: 0, changePercent: 0 },
+                '30d': { change: 0, changePercent: 0 },
+            },
+            holdersByAcquisition: { swap: 0, transfer: 0, airdrop: 0 },
+            holderDistribution: { whales: 1, sharks: 2, dolphins: 3, fish: 4, octopus: 5, crabs: 6, shrimps: 7 },
+        },
+        dataQuality: {
+            confidence: '高',
+            summary: '',
+            topHoldersCount: 10,
+            historicalDays: 14,
+            topHolderCoveragePercent: 40,
+            flaggedTopHolderSharePercent: 0,
+            warnings: [],
+        },
+    });
+
+    assert.equal(eligibility.level, 'analysis_allowed');
+    assert.equal(eligibility.category, 'A');
+});
+
+test('buildTokenEligibility blocks abnormal TopN data and keeps fallback addresses raw-only', () => {
+    const blocked = buildTokenEligibility({
+        token: sampleTokens[0],
+        identity: {
+            symbol: 'PEPE',
+            chain: 'Ethereum',
+            address: '0x111',
+            confidence: 'probable',
+            source: 'binance_alpha',
+            evidence: [],
+            riskFlags: [],
+        },
+        mappingStatus: 'confirmed',
+        metrics: null,
+        dataQuality: {
+            confidence: '低',
+            summary: '',
+            topHoldersCount: 5,
+            historicalDays: 1,
+            topHolderCoveragePercent: 140,
+            flaggedTopHolderSharePercent: 0,
+            warnings: ['Top holders 明细占比合计约 140.00%，超过 100%。'],
+        },
+    });
+    const rawOnly = buildTokenEligibility({
+        token: sampleTokens[0],
+        identity: {
+            symbol: 'PEPE',
+            chain: 'Ethereum',
+            address: '0x111',
+            confidence: 'fallback',
+            source: 'dex_screener',
+            evidence: [],
+            riskFlags: ['地址来自 DEX Screener 候选。'],
+        },
+        mappingStatus: 'candidate',
+        metrics: null,
+        dataQuality: {
+            confidence: '中',
+            summary: '',
+            topHoldersCount: 10,
+            historicalDays: 14,
+            topHolderCoveragePercent: 40,
+            flaggedTopHolderSharePercent: 0,
+            warnings: [],
+        },
+    });
+
+    assert.equal(blocked.level, 'blocked');
+    assert.equal(blocked.category, 'C');
+    assert.equal(rawOnly.level, 'raw_only');
+    assert.equal(rawOnly.category, 'B');
+});
+
+test('buildTokenEligibility downgrades high unknown or excluded holder concentration to raw-only', () => {
+    const baseInput = {
+        token: sampleTokens[0],
+        identity: {
+            symbol: 'PEPE',
+            chain: 'Ethereum',
+            address: '0x111',
+            confidence: 'probable' as const,
+            source: 'binance_alpha' as const,
+            evidence: [],
+            riskFlags: [],
+        },
+        mappingStatus: 'confirmed' as const,
+        metrics: {
+            totalHolders: 1200,
+            holderSupply: {
+                top10: { supply: 1, supplyPercent: 0.3 },
+                top25: { supply: 1, supplyPercent: 0.4 },
+                top50: { supply: 1, supplyPercent: 0.5 },
+                top100: { supply: 1, supplyPercent: 0.6 },
+                top250: { supply: 1, supplyPercent: 0.7 },
+                top500: { supply: 1, supplyPercent: 0.8 },
+            },
+            holderChange: {
+                '5min': { change: 0, changePercent: 0 },
+                '1h': { change: 0, changePercent: 0 },
+                '6h': { change: 0, changePercent: 0 },
+                '24h': { change: 0, changePercent: 0 },
+                '3d': { change: 0, changePercent: 0 },
+                '7d': { change: 0, changePercent: 0 },
+                '30d': { change: 0, changePercent: 0 },
+            },
+            holdersByAcquisition: { swap: 0, transfer: 0, airdrop: 0 },
+            holderDistribution: { whales: 1, sharks: 2, dolphins: 3, fish: 4, octopus: 5, crabs: 6, shrimps: 7 },
+        },
+        dataQuality: {
+            confidence: '高' as const,
+            summary: '',
+            topHoldersCount: 10,
+            historicalDays: 14,
+            topHolderCoveragePercent: 40,
+            flaggedTopHolderSharePercent: 0,
+            warnings: [],
+        },
+    };
+    const unknown = buildTokenEligibility({
+        ...baseInput,
+        holderConcentration: {
+            rawTop1: 30,
+            rawTop5: 60,
+            rawTop10: 70,
+            floatTop1: 30,
+            floatTop5: 60,
+            floatTop10: 70,
+            excludedSharePercent: 0,
+            unknownSharePercent: 35,
+            classifiedHolders: [],
+            excludedTopHolders: [],
+            unknownTopHolders: [],
+            warnings: ['未知地址占比约 35.00%。'],
+        },
+    });
+    const excluded = buildTokenEligibility({
+        ...baseInput,
+        holderConcentration: {
+            rawTop1: 40,
+            rawTop5: 65,
+            rawTop10: 80,
+            floatTop1: 6,
+            floatTop5: 12,
+            floatTop10: 15,
+            excludedSharePercent: 45,
+            unknownSharePercent: 0,
+            classifiedHolders: [],
+            excludedTopHolders: [],
+            unknownTopHolders: [],
+            warnings: ['疑似非流通/基础设施地址占比约 45.00%。'],
+        },
+    });
+
+    assert.equal(unknown.level, 'raw_only');
+    assert.match(unknown.reasons.join(' '), /未知地址占比/);
+    assert.equal(excluded.level, 'raw_only');
+    assert.match(excluded.reasons.join(' '), /基础设施地址|污染/);
+});
+
+test('buildTokenEligibility blocks missing holder percentages and raw-only Solana unlabelled holders', () => {
+    const input = {
+        token: {
+            ...sampleTokens[0],
+            chainFamily: 'solana' as const,
+            chainId: 'solana',
+            chain: 'solana',
+            chainName: 'Solana',
+        },
+        identity: {
+            symbol: 'PEPE',
+            chain: 'Solana',
+            address: 'So11111111111111111111111111111111111111112',
+            confidence: 'probable' as const,
+            source: 'binance_alpha' as const,
+            evidence: [],
+            riskFlags: [],
+        },
+        mappingStatus: 'confirmed' as const,
+        metrics: null,
+        dataQuality: {
+            confidence: '高' as const,
+            summary: '',
+            topHoldersCount: 10,
+            historicalDays: 14,
+            topHolderCoveragePercent: 40,
+            flaggedTopHolderSharePercent: 0,
+            warnings: [],
+        },
+    };
+    const blocked = buildTokenEligibility({
+        ...input,
+        holderConcentration: {
+            rawTop1: null,
+            rawTop5: null,
+            rawTop10: null,
+            floatTop1: null,
+            floatTop5: null,
+            floatTop10: null,
+            excludedSharePercent: 0,
+            unknownSharePercent: 0,
+            classifiedHolders: [],
+            excludedTopHolders: [],
+            unknownTopHolders: [],
+            warnings: ['部分 Top holders 缺少可用占比。'],
+        },
+    });
+    const rawOnly = buildTokenEligibility({
+        ...input,
+        holderConcentration: {
+            rawTop1: 20,
+            rawTop5: 55,
+            rawTop10: 70,
+            floatTop1: 20,
+            floatTop5: 55,
+            floatTop10: 70,
+            excludedSharePercent: 0,
+            unknownSharePercent: 70,
+            classifiedHolders: [],
+            excludedTopHolders: [],
+            unknownTopHolders: [],
+            warnings: [],
+        },
+    });
+
+    assert.equal(blocked.level, 'blocked');
+    assert.equal(rawOnly.level, 'raw_only');
+    assert.match(rawOnly.reasons.join(' '), /Solana|标签/);
+});
+
+test('buildTokenEligibility blocks when every Top holder is unknown', () => {
+    const eligibility = buildTokenEligibility({
+        token: sampleTokens[0],
+        identity: {
+            symbol: 'PEPE',
+            chain: 'Ethereum',
+            address: '0x111',
+            confidence: 'probable',
+            source: 'binance_alpha',
+            evidence: [],
+            riskFlags: [],
+        },
+        mappingStatus: 'confirmed',
+        metrics: null,
+        dataQuality: {
+            confidence: '高',
+            summary: '',
+            topHoldersCount: 10,
+            historicalDays: 14,
+            topHolderCoveragePercent: 80,
+            flaggedTopHolderSharePercent: 0,
+            warnings: [],
+        },
+        holderConcentration: {
+            rawTop1: 20,
+            rawTop5: 55,
+            rawTop10: 80,
+            floatTop1: 20,
+            floatTop5: 55,
+            floatTop10: 80,
+            excludedSharePercent: 0,
+            unknownSharePercent: 80,
+            classifiedHolders: Array.from({ length: 10 }, (_, index) => ({
+                address: `0xunknown${index}`,
+                percentage: 8,
+                class: 'unknown' as const,
+                confidence: 'low' as const,
+                reasons: ['缺少可用 label/entity，无法可靠分类。'],
+            })),
+            excludedTopHolders: [],
+            unknownTopHolders: [],
+            warnings: [],
+        },
+    });
+
+    assert.equal(eligibility.level, 'blocked');
+    assert.match(eligibility.reasons.join(' '), /全部 Top holders/);
+});
+
+test('buildTokenEligibility links supply confidence and estimated float supply', () => {
+    const baseInput = {
+        token: sampleTokens[0],
+        identity: {
+            symbol: 'PEPE',
+            chain: 'Ethereum',
+            address: '0x111',
+            confidence: 'probable' as const,
+            source: 'binance_alpha' as const,
+            evidence: [],
+            riskFlags: [],
+        },
+        mappingStatus: 'confirmed' as const,
+        metrics: null,
+        dataQuality: {
+            confidence: '高' as const,
+            summary: '',
+            topHoldersCount: 10,
+            historicalDays: 14,
+            topHolderCoveragePercent: 60,
+            flaggedTopHolderSharePercent: 0,
+            warnings: [],
+        },
+    };
+    const blocked = buildTokenEligibility({
+        ...baseInput,
+        supplyBreakdown: {
+            totalSupply: 1000,
+            circulatingSupply: null,
+            burnedSupply: 400,
+            lockedOrInfrastructureSupply: 500,
+            cexSupply: 100,
+            unknownTopHolderSupply: 0,
+            estimatedFloatSupply: 0,
+            confidence: 'low',
+            warnings: ['estimatedFloatSupply <= 0'],
+            evidence: [],
+        },
+    });
+    const rawOnly = buildTokenEligibility({
+        ...baseInput,
+        supplyBreakdown: {
+            totalSupply: 1000,
+            circulatingSupply: null,
+            burnedSupply: 50,
+            lockedOrInfrastructureSupply: 100,
+            cexSupply: 20,
+            unknownTopHolderSupply: 300,
+            estimatedFloatSupply: 830,
+            confidence: 'low',
+            warnings: ['unknownTopHolderSupply 过高'],
+            evidence: [],
+        },
+    });
+
+    assert.equal(blocked.level, 'blocked');
+    assert.match(blocked.reasons.join(' '), /estimatedFloatSupply/);
+    assert.equal(rawOnly.level, 'raw_only');
+    assert.match(rawOnly.reasons.join(' '), /SupplyBreakdown|circulatingSupply|unknownTopHolderSupply/);
 });

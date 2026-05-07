@@ -52,7 +52,7 @@ export default function TabNavigation({ activeTab, onChange }: TabNavigationProp
                 className={`${styles.tabBtn} ${activeTab === 'onchain' ? styles.active : ''}`}
                 onClick={() => onChange('onchain')}
             >
-                ⛓️ 控筹分析
+                ⛓️ 链上筹码观察
             </button>
             <button
                 className={`${styles.tabBtn} ${activeTab === 'strategies' ? styles.active : ''}`}

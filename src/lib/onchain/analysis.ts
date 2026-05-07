@@ -1,22 +1,26 @@
 import type {
-    ChipAnalysis,
-    ChipDataQuality,
-    ChipScoreBreakdownItem,
+    StructureObservation,
+    OnchainDataQuality,
     HistoricalHoldersPoint,
+    HolderConcentrationAnalysis,
     TokenHolderMetrics,
     TopHolderItem,
 } from './types';
-
-function clamp(value: number, min: number, max: number) {
-    return Math.min(max, Math.max(min, value));
-}
 
 function pct(value: number) {
     return value < 1 ? value * 100 : value;
 }
 
+function percentValue(value: number) {
+    if (!Number.isFinite(value)) {
+        return 0;
+    }
+
+    return pct(value);
+}
+
 function formatPct(value: number) {
-    return `${pct(value).toFixed(2)}%`;
+    return `${percentValue(value).toFixed(2)}%`;
 }
 
 function latestOrNull(points: HistoricalHoldersPoint[]) {
@@ -60,11 +64,11 @@ function isKnownNonUserHolder(holder: TopHolderItem) {
     ].some((keyword) => descriptor.includes(keyword));
 }
 
-export function buildChipDataQuality(
+export function buildOnchainDataQuality(
     metrics: TokenHolderMetrics | null,
     historical: HistoricalHoldersPoint[],
     topHolders: TopHolderItem[]
-): ChipDataQuality {
+): OnchainDataQuality {
     const warnings: string[] = [];
     const topHolderCoveragePercent = topHolders.length > 0
         ? topHolders.reduce((sum, holder) => sum + holder.percentage, 0)
@@ -72,6 +76,24 @@ export function buildChipDataQuality(
     const flaggedTopHolderSharePercent = topHolders
         .filter(isKnownNonUserHolder)
         .reduce((sum, holder) => sum + holder.percentage, 0);
+    const invalidTopHolderPercentages = topHolders.filter((holder) => (
+        !Number.isFinite(holder.percentage) || holder.percentage < 0 || holder.percentage > 100
+    ));
+    const top5HolderCoveragePercent = topHolders
+        .slice(0, 5)
+        .reduce((sum, holder) => sum + holder.percentage, 0);
+    const supplyPercents = [
+        metrics?.holderSupply.top10.supplyPercent,
+        metrics?.holderSupply.top25.supplyPercent,
+        metrics?.holderSupply.top50.supplyPercent,
+        metrics?.holderSupply.top100.supplyPercent,
+        metrics?.holderSupply.top250.supplyPercent,
+        metrics?.holderSupply.top500.supplyPercent,
+    ].filter((value): value is number => value !== undefined).map(percentValue);
+    const hasInvalidSupplyBucket = supplyPercents.some((value) => value < 0 || value > 100);
+    const hasNonMonotonicSupplyBucket = supplyPercents.some((value, index) => (
+        index > 0 && value + 0.000001 < supplyPercents[index - 1]
+    ));
 
     if (!metrics || metrics.totalHolders <= 0) {
         warnings.push('没有拿到有效 holder metrics，当前不能生成可靠筹码分布。');
@@ -84,15 +106,33 @@ export function buildChipDataQuality(
     }
 
     if (flaggedTopHolderSharePercent >= 5) {
-        warnings.push(`Top holders 中约 ${flaggedTopHolderSharePercent.toFixed(2)}% 属于合约、LP、交易所、销毁等非普通持仓地址，原始控筹占比可能被高估。`);
+        warnings.push(`Top holders 中约 ${flaggedTopHolderSharePercent.toFixed(2)}% 属于合约、LP、交易所、销毁等非普通持仓地址，原始地址集中度可能被高估。`);
+    }
+
+    if (invalidTopHolderPercentages.length > 0 || (topHolderCoveragePercent !== null && topHolderCoveragePercent > 100.000001)) {
+        warnings.push(`Top holders 明细占比合计约 ${topHolderCoveragePercent?.toFixed(2) ?? '--'}%，超过 100%，说明上游 holder 明细与总供应量口径不一致或返回了异常读数。`);
+    } else if (top5HolderCoveragePercent > 100.000001) {
+        warnings.push(`Top5 地址占比合计约 ${top5HolderCoveragePercent.toFixed(2)}%，超过 100%，这组头部地址明细不能生成链上结构观察。`);
+    }
+
+    if (hasInvalidSupplyBucket || hasNonMonotonicSupplyBucket) {
+        warnings.push('holderSupply 聚合桶出现越界或顺序异常，Top10/Top50/Top100 指标需要等待数据源刷新后再复核。');
     }
 
     if (historical.length > 0 && historical.length < 7) {
         warnings.push('历史持币序列少于 7 天，只能观察快照，趋势判断可信度较低。');
     }
 
-    let confidence: ChipDataQuality['confidence'] = '高';
+    let confidence: OnchainDataQuality['confidence'] = '高';
     if (!metrics || metrics.totalHolders <= 0 || topHolders.length === 0) {
+        confidence = '低';
+    } else if (
+        invalidTopHolderPercentages.length > 0
+        || (topHolderCoveragePercent !== null && topHolderCoveragePercent > 100.000001)
+        || top5HolderCoveragePercent > 100.000001
+        || hasInvalidSupplyBucket
+        || hasNonMonotonicSupplyBucket
+    ) {
         confidence = '低';
     } else if (topHolders.length < 5 || historical.length < 7 || flaggedTopHolderSharePercent >= 5) {
         confidence = '中';
@@ -101,7 +141,7 @@ export function buildChipDataQuality(
     const summary = confidence === '高'
         ? 'holder metrics、Top holders 与历史序列都较完整，可以作为较可靠的筹码结构参考。'
         : confidence === '中'
-            ? '链上主数据可用，但存在地址污染或历史覆盖不足，控筹结论需要结合 Top holders 明细复核。'
+            ? '链上主数据可用，但存在地址污染或历史覆盖不足，只能结合 Top holders 明细做原始观察。'
             : '关键校验数据缺失，当前只能作为粗略市场快照，不能当作准确筹码分布。';
 
     return {
@@ -115,13 +155,13 @@ export function buildChipDataQuality(
     };
 }
 
-export function buildChipAnalysis(
+export function buildStructureObservation(
     metrics: TokenHolderMetrics,
-    historical: HistoricalHoldersPoint[]
-): ChipAnalysis {
-    const top10 = pct(metrics.holderSupply.top10.supplyPercent);
-    const top50 = pct(metrics.holderSupply.top50.supplyPercent);
-    const top100 = pct(metrics.holderSupply.top100.supplyPercent);
+    historical: HistoricalHoldersPoint[],
+    holderConcentration?: HolderConcentrationAnalysis
+): StructureObservation {
+    const top10 = holderConcentration?.floatTop10 ?? percentValue(metrics.holderSupply.top10.supplyPercent);
+    const top5 = holderConcentration?.floatTop5 ?? null;
     const whales = metrics.holderDistribution.whales;
     const sharks = metrics.holderDistribution.sharks;
     const shrimps = metrics.holderDistribution.shrimps;
@@ -130,100 +170,51 @@ export function buildChipAnalysis(
     const change30d = metrics.holderChange['30d'].changePercent;
     const acquisitionSwap = metrics.holdersByAcquisition.swap;
 
-    const breakdown: ChipScoreBreakdownItem[] = [
-        {
-            id: 'top10',
-            label: 'Top10 占比',
-            score: Math.round(Math.sqrt(top10) * 2.2),
-            value: formatPct(metrics.holderSupply.top10.supplyPercent),
-            rationale: '前十大地址占比越高，控筹强度越高。',
-            tone: 'positive',
-        },
-        {
-            id: 'top50',
-            label: 'Top50 占比',
-            score: Math.round(Math.sqrt(top50) * 1.4),
-            value: formatPct(metrics.holderSupply.top50.supplyPercent),
-            rationale: 'Top50 能看出头部筹码是否在更大范围内继续集中。',
-            tone: 'positive',
-        },
-        {
-            id: 'top100',
-            label: 'Top100 占比',
-            score: Math.round(Math.sqrt(top100) * 0.9),
-            value: formatPct(metrics.holderSupply.top100.supplyPercent),
-            rationale: 'Top100 反映中大户层面的持仓集中程度。',
-            tone: 'positive',
-        },
-        {
-            id: 'whales',
-            label: '鲸鱼数量',
-            score: Math.round(Math.min(Math.sqrt(whales) * 3, 18)),
-            value: `${whales}`,
-            rationale: '鲸鱼越多，越需要观察是否形成抱团和一致性行为。',
-            tone: 'positive',
-        },
-        {
-            id: 'holderChange',
-            label: '7d 持币地址变化',
-            score: Math.round(clamp(change7d * 0.8, -12, 12)),
-            value: `${change7d.toFixed(2)}%`,
-            rationale: '持币地址持续扩张通常说明筹码在向外扩散。',
-            tone: change7d >= 0 ? 'negative' : 'positive',
-        },
-        {
-            id: 'swapAcquisition',
-            label: 'Swap 获取占比',
-            score: -Math.round(clamp(acquisitionSwap * 0.15, 0, 10)),
-            value: `${acquisitionSwap.toFixed(2)}%`,
-            rationale: '大量通过 swap 新增的持仓，往往意味着更活跃的流动筹码。',
-            tone: acquisitionSwap >= 45 ? 'negative' : 'neutral',
-        },
-    ];
-
-    const chipScore = Math.round(clamp(
-        breakdown.reduce((sum, item) => sum + item.score, 10),
-        0,
-        100
-    ));
-
-    const controlLevel = chipScore >= 68 ? '高度控筹' : chipScore >= 45 ? '中度集中' : '相对分散';
+    const concentrationLevel = top10 >= 60
+        ? '原始地址高度集中'
+        : top10 >= 25
+            ? '原始地址中度集中'
+            : '原始地址相对分散';
     const distributionLevel = (whales + sharks) > shrimps ? '头部集中' : shrimps > whales * 6 ? '长尾分散' : '中段扎实';
-    const trendLevel = change30d >= 12 ? '持续扩散' : change7d >= 3 ? '温和扩散' : latest && latest.netHolderChange < -80 ? '可能派发' : '趋于稳定';
+    const trendLevel = change30d >= 12 || change7d >= 3
+        ? '地址数量扩张'
+        : latest && latest.netHolderChange < -80
+            ? '地址数量回落'
+            : '地址数量稳定';
 
     return {
-        chipScore,
-        controlLevel,
+        concentrationLevel,
         distributionLevel,
         trendLevel,
-        breakdown,
         summaryCards: [
             {
-                title: '控筹强度',
-                value: controlLevel,
-                description: `Top10 ${formatPct(metrics.holderSupply.top10.supplyPercent)}，Top50 ${formatPct(metrics.holderSupply.top50.supplyPercent)}。`,
+                title: holderConcentration ? '净化后集中度' : '原始地址集中度',
+                value: concentrationLevel,
+                description: holderConcentration
+                    ? `净化后 Top5 ${top5 === null ? '--' : `${top5.toFixed(2)}%`}，Top10 ${top10 === null ? '--' : `${top10.toFixed(2)}%`}。`
+                    : `原始 Top10 ${formatPct(metrics.holderSupply.top10.supplyPercent)}。`,
             },
             {
-                title: '筹码分层',
+                title: '地址分层',
                 value: distributionLevel,
                 description: `Whales ${whales} / Sharks ${sharks} / Shrimps ${shrimps}。`,
             },
             {
-                title: '持币趋势',
+                title: '地址数量变化',
                 value: trendLevel,
                 description: `7d ${change7d.toFixed(2)}%，30d ${change30d.toFixed(2)}%。`,
             },
         ],
         insights: [
-            chipScore >= 72
-                ? '前排地址占比很高，这类币更像由少数地址主导，弹性和抛压都更强。'
-                : '头部地址占比还没有到极端，筹码集中度处于更可观察的中段。',
+            holderConcentration
+                ? `净化后集中度已剔除疑似非流通/基础设施地址；未知地址占比约 ${holderConcentration.unknownSharePercent.toFixed(2)}%，该结果依赖标签质量。`
+                : `${concentrationLevel}：该读数仍包含未净化的交易所、LP、销毁、合约或项目方地址，需要结合 Top holders 标签复核。`,
             acquisitionSwap >= 45
-                ? '新增筹码更多来自 swap，说明流动交易盘偏多，短线波动可能更大。'
-                : '新增筹码来源没有过度偏向 swap，更像自然扩散。',
+                ? '新增地址来源中 swap 占比较高，只能说明 DEX 交互更活跃，不能推导价格方向。'
+                : '新增地址来源没有明显偏向 swap，当前只作为地址行为来源参考。',
             latest && latest.netHolderChange < 0
-                ? '最近一期净持币地址在回落，需要警惕派发或热度降温。'
-                : '最近一期持币地址没有明显恶化，结构相对稳定。',
+                ? '最近一期持币地址数回落，只能说明地址数量减少，不能直接解释为筹码迁移。'
+                : '最近一期持币地址数没有明显回落，仍需结合地址标签和交易流复核。',
         ],
     };
 }

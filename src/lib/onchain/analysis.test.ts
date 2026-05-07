@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildChipAnalysis, buildChipDataQuality } from './analysis.ts';
+import { buildOnchainDataQuality, buildStructureObservation } from './analysis.ts';
 import type { HistoricalHoldersPoint, TokenHolderMetrics, TopHolderItem } from './types.ts';
 
 function createMetrics(overrides: Partial<TokenHolderMetrics> = {}): TokenHolderMetrics {
@@ -81,17 +81,18 @@ function createTopHolders(overrides: Partial<TopHolderItem>[] = []): TopHolderIt
     }));
 }
 
-test('buildChipAnalysis classifies heavily concentrated token as high control', () => {
-    const analysis = buildChipAnalysis(createMetrics(), createHistorical());
+test('buildStructureObservation describes raw concentration without removed score fields', () => {
+    const analysis = buildStructureObservation(createMetrics(), createHistorical());
 
-    assert.equal(analysis.controlLevel, '中度集中');
+    assert.equal(analysis.concentrationLevel, '原始地址高度集中');
     assert.equal(analysis.distributionLevel, '长尾分散');
-    assert.equal(analysis.trendLevel, '持续扩散');
-    assert.ok(analysis.chipScore >= 45 && analysis.chipScore < 68, `期望中度集中（得分 ${analysis.chipScore}）`);
+    assert.equal(analysis.trendLevel, '地址数量扩张');
+    assert.equal('chipScore' in analysis, false);
+    assert.equal('controlLevel' in analysis, false);
 });
 
-test('buildChipAnalysis can detect more distributed structure', () => {
-    const analysis = buildChipAnalysis(
+test('buildStructureObservation can describe more distributed raw structure', () => {
+    const analysis = buildStructureObservation(
         createMetrics({
             holderSupply: {
                 top10: { supply: 120000000, supplyPercent: 0.12 },
@@ -128,14 +129,13 @@ test('buildChipAnalysis can detect more distributed structure', () => {
         createHistorical({ netHolderChange: -12, holderPercentChange: -0.1 })
     );
 
-    assert.equal(analysis.controlLevel, '相对分散');
+    assert.equal(analysis.concentrationLevel, '原始地址相对分散');
     assert.equal(analysis.distributionLevel, '长尾分散');
-    assert.equal(analysis.trendLevel, '趋于稳定');
-    assert.ok(analysis.chipScore < 45, `期望相对分散（得分 ${analysis.chipScore}）`);
+    assert.equal(analysis.trendLevel, '地址数量稳定');
 });
 
-test('buildChipDataQuality downgrades confidence when top holders include contracts and burn addresses', () => {
-    const quality = buildChipDataQuality(
+test('buildOnchainDataQuality downgrades confidence when top holders include contracts and burn addresses', () => {
+    const quality = buildOnchainDataQuality(
         createMetrics(),
         createHistorical(),
         createTopHolders([
@@ -149,9 +149,47 @@ test('buildChipDataQuality downgrades confidence when top holders include contra
     assert.match(quality.warnings.join(' '), /非普通持仓地址/);
 });
 
-test('buildChipDataQuality marks missing top holders as low confidence', () => {
-    const quality = buildChipDataQuality(createMetrics(), createHistorical(), []);
+test('buildOnchainDataQuality marks missing top holders as low confidence', () => {
+    const quality = buildOnchainDataQuality(createMetrics(), createHistorical(), []);
 
     assert.equal(quality.confidence, '低');
     assert.match(quality.warnings.join(' '), /Top holders 明细/);
+});
+
+test('buildOnchainDataQuality marks impossible top holder percentages as low confidence', () => {
+    const quality = buildOnchainDataQuality(
+        createMetrics(),
+        createHistorical(),
+        createTopHolders([
+            { percentage: 68.06 },
+            { percentage: 32.4 },
+            { percentage: 18.8 },
+            { percentage: 12.5 },
+            { percentage: 8.6 },
+        ])
+    );
+
+    assert.equal(quality.confidence, '低');
+    assert.equal(quality.topHolderCoveragePercent?.toFixed(2), '140.36');
+    assert.match(quality.warnings.join(' '), /超过 100%/);
+});
+
+test('buildOnchainDataQuality warns when holder supply buckets are not monotonic', () => {
+    const quality = buildOnchainDataQuality(
+        createMetrics({
+            holderSupply: {
+                top10: { supply: 1, supplyPercent: 0.7 },
+                top25: { supply: 1, supplyPercent: 0.8 },
+                top50: { supply: 1, supplyPercent: 0.6 },
+                top100: { supply: 1, supplyPercent: 0.9 },
+                top250: { supply: 1, supplyPercent: 0.94 },
+                top500: { supply: 1, supplyPercent: 0.97 },
+            },
+        }),
+        createHistorical(),
+        createTopHolders()
+    );
+
+    assert.equal(quality.confidence, '低');
+    assert.match(quality.warnings.join(' '), /holderSupply 聚合桶/);
 });

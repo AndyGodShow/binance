@@ -1,5 +1,9 @@
 export type OnchainSourceMode = 'hybrid' | 'fallback';
 export type OnchainMappingStatus = 'confirmed' | 'candidate' | 'unavailable';
+export type AddressConfidence = 'official' | 'probable' | 'fallback' | 'unverified' | 'blocked';
+export type AnalysisEligibilityLevel = 'analysis_allowed' | 'raw_only' | 'blocked';
+export type AnalysisEligibilityCategory = 'A' | 'B' | 'C';
+export type TokenIdentitySource = 'binance_alpha' | 'dex_screener' | 'futures_symbol' | 'manual' | 'unknown';
 export type OnchainFallbackReason =
     | 'missing_moralis_api_key'
     | 'no_search_results'
@@ -34,6 +38,7 @@ export interface TokenSearchResult {
     logo: string | null;
     usdPrice: number | null;
     marketCap: number | null;
+    fdv?: number | null;
     totalLiquidityUsd: number | null;
     securityScore: number | null;
     totalHolders: number | null;
@@ -41,6 +46,15 @@ export interface TokenSearchResult {
     turnoverRatio: number | null;
     dexTrades: Record<Exclude<DexWindowKey, 'm5'>, DexTradeWindow>;
     dexPriceStats: Record<DexWindowKey, DexPriceWindow>;
+}
+
+export interface TokenIdentityCandidate {
+    token: TokenSearchResult;
+    source: TokenIdentitySource;
+    matchType: 'exact_symbol' | 'exact_address' | 'futures_symbol' | 'symbol_fuzzy' | 'name_fuzzy' | 'unknown';
+    score: number;
+    evidence: string[];
+    riskFlags: string[];
 }
 
 export interface HolderSupplyBucket {
@@ -112,22 +126,67 @@ export interface TopHolderItem {
     isContract: boolean;
 }
 
-export interface ChipScoreBreakdownItem {
-    id: string;
-    label: string;
-    score: number;
-    value: string;
-    rationale: string;
-    tone: 'positive' | 'negative' | 'neutral';
+export type HolderAddressClass =
+    | 'user_wallet'
+    | 'lp_pool'
+    | 'burn'
+    | 'cex'
+    | 'treasury'
+    | 'vesting'
+    | 'staking'
+    | 'bridge'
+    | 'router'
+    | 'contract'
+    | 'market_maker'
+    | 'unknown';
+
+export interface ClassifiedHolder {
+    address: string;
+    balance?: string | null;
+    percentage: number | null;
+    label?: string | null;
+    entity?: string | null;
+    isContract?: boolean | null;
+    class: HolderAddressClass;
+    confidence: 'high' | 'medium' | 'low';
+    reasons: string[];
 }
 
-export interface ChipSummaryCard {
+export interface HolderConcentrationAnalysis {
+    rawTop1: number | null;
+    rawTop5: number | null;
+    rawTop10: number | null;
+    floatTop1: number | null;
+    floatTop5: number | null;
+    floatTop10: number | null;
+    excludedSharePercent: number;
+    unknownSharePercent: number;
+    classifiedHolders: ClassifiedHolder[];
+    excludedTopHolders: ClassifiedHolder[];
+    unknownTopHolders: ClassifiedHolder[];
+    warnings: string[];
+}
+
+export interface SupplyBreakdown {
+    totalSupply: number | null;
+    circulatingSupply: number | null;
+    burnedSupply: number | null;
+    lockedOrInfrastructureSupply: number | null;
+    cexSupply: number | null;
+    unknownTopHolderSupply: number | null;
+    estimatedFloatSupply: number | null;
+    confidence: 'high' | 'medium' | 'low';
+    warnings: string[];
+    evidence: string[];
+}
+
+export interface StructureSummaryCard {
     title: string;
     value: string;
     description: string;
 }
 
-export interface ChipDataQuality {
+export interface OnchainDataQuality {
     confidence: '高' | '中' | '低';
     summary: string;
     topHoldersCount: number;
@@ -137,13 +196,40 @@ export interface ChipDataQuality {
     warnings: string[];
 }
 
-export interface ChipAnalysis {
-    chipScore: number;
-    controlLevel: '高度控筹' | '中度集中' | '相对分散';
+export interface AddressIdentity {
+    symbol: string;
+    chain: string;
+    address: string | null;
+    confidence: AddressConfidence;
+    source: TokenIdentitySource;
+    evidence: string[];
+    riskFlags: string[];
+}
+
+export interface TokenIdentityResolution {
+    query: string;
+    normalizedSymbol: string;
+    chain: string | null;
+    address: string | null;
+    confidence: AddressConfidence;
+    source: TokenIdentitySource;
+    evidence: string[];
+    riskFlags: string[];
+    candidates: TokenIdentityCandidate[];
+}
+
+export interface AnalysisEligibility {
+    level: AnalysisEligibilityLevel;
+    category: AnalysisEligibilityCategory;
+    reasons: string[];
+    requiredManualChecks: string[];
+}
+
+export interface StructureObservation {
+    concentrationLevel: '原始地址高度集中' | '原始地址中度集中' | '原始地址相对分散';
     distributionLevel: '头部集中' | '中段扎实' | '长尾分散';
-    trendLevel: '持续扩散' | '温和扩散' | '趋于稳定' | '可能派发';
-    breakdown: ChipScoreBreakdownItem[];
-    summaryCards: ChipSummaryCard[];
+    trendLevel: '地址数量扩张' | '地址数量回落' | '地址数量稳定';
+    summaryCards: StructureSummaryCard[];
     insights: string[];
 }
 
@@ -154,12 +240,17 @@ export interface TokenResearchPayload {
     sourceMode: OnchainSourceMode;
     mappingStatus: OnchainMappingStatus;
     fallbackReason?: OnchainFallbackReason;
+    identityResolution: TokenIdentityResolution;
+    identity: AddressIdentity;
+    eligibility: AnalysisEligibility;
     searchResults: TokenSearchResult[];
     selectedToken: TokenSearchResult | null;
     metrics: TokenHolderMetrics | null;
     historical: HistoricalHoldersPoint[];
     topHolders: TopHolderItem[];
-    dataQuality: ChipDataQuality;
-    analysis: ChipAnalysis | null;
+    holderConcentration: HolderConcentrationAnalysis;
+    supplyBreakdown: SupplyBreakdown;
+    dataQuality: OnchainDataQuality;
+    analysis: StructureObservation | null;
     notes: string[];
 }

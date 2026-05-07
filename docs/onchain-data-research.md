@@ -1,134 +1,134 @@
-# 控筹分析数据源调研
+# 链上筹码结构观察台说明
 
-更新时间：2026-04-13
+更新时间：2026-05-07
 
-## 目标
+## 当前定位
 
-为“控筹分析”板块建立一个分层的数据获取体系，优先满足：
+`OnchainTracker` 当前定位是“链上筹码结构观察台”，不是控筹结论工具，也不输出交易建议。
 
-- 查询单币控筹情况
-- 查看 holder 分布与筹码集中度
-- 识别交易所净流入/净流出
-- 接入聪明钱与地址标签
-- 为后续榜单、预警、策略联动提供扩展空间
+它的职责是把链上 token 身份、Top holders、地址分类、供应口径和数据可信度放在同一个观察台里，帮助研究者判断这组链上读数是否值得进一步人工复核。
 
-## 数据源分层结论
+## 当前不会输出什么
 
-### 1. 基础 holder / Top holders / 地址分布
+- 不输出控筹指数。
+- 不输出高度/中度/低度控筹等级。
+- 不输出一句话交易判断。
+- 不用 Top10 高推导控盘。
+- 不用 holder 增长推导利好。
+- 不用 DEX 买卖笔数推导吸筹或出货。
+- 不把 DEX Screener fallback 地址当成官方合约。
+- 不把 FDV 当作 marketCap。
+- 不把 raw TopN 当作 float TopN。
 
-优先候选：
+## 数据链路
 
-- Etherscan
-  - 官方文档：<https://docs.etherscan.io/>
-  - 用途：EVM 的 holder count、holder list、top holders、基础 name tag
-  - 适合：Ethereum / BSC / Base / Arbitrum / Optimism / Polygon
-  - 优点：接入门槛低，适合 MVP
-  - 限制：更偏基础链上浏览器能力，标签和资金流解释层较弱
+当前链路：
 
-- Birdeye
-  - 官方文档：<https://docs.birdeye.so/>
-  - 用途：热点币 overview、holder distribution、多链 token 数据
-  - 适合：Solana 以及热点 token 画像
-  - 优点：更适合 Meme 币和链上热点追踪
-  - 限制：更偏 token 画像，不是强标签平台
+```text
+src/components/OnchainTracker.tsx
+-> src/app/api/onchain/dashboard/route.ts
+-> src/lib/onchain/service.ts
+-> identity / addressClassifier / supplyNormalizer / analysis
+-> Binance Alpha / Binance futures universe / DEX Screener / Moralis
+```
 
-- Moralis / Chainbase / Helius
-  - Moralis：<https://docs.moralis.com/>
-  - Chainbase：<https://docs.chainbase.com/>
-  - Helius：<https://www.helius.dev/docs>
-  - 用途：补足多链 holder 明细、Solana 原生账户与转账
-  - 定位：作为统一 provider 层的候补或增强源
+主要字段来源：
 
-### 2. 标签体系 / 聪明钱 / 交易所行为
+- `identity`：由 `TokenIdentityResolver` 统一输出，来源可能是 Binance Alpha、DEX Screener、futures symbol 或 unknown。
+- `eligibility`：由 `buildTokenEligibility` 根据身份、holder 数据、地址分类、供应口径和风险标记统一裁决。
+- `topHolders`：来自 Moralis owners 或 Solana holder 明细。
+- `holderConcentration`：由 `AddressClassifier` 分类后计算原始集中度和净化后集中度。
+- `supplyBreakdown`：由 `SupplyNormalizer` 基于 Top holders balance/percentage 和地址分类估算供应口径。
+- `analysis`：只有 `eligibility.level === "analysis_allowed"` 时才存在。
 
-优先候选：
+## 可信度边界
 
-- Nansen
-  - 官方文档：<https://docs.nansen.ai/>
-  - 用途：地址标签、聪明钱、交易所/基金行为、资金流解释
-  - 优点：如果你想让“控筹分析”有交易决策价值，Nansen 是最强增强层
-  - 限制：门槛和成本较高
+当前系统只能证明“这组数据是否可作为链上结构观察材料”，不能证明真实控制关系。
 
-### 3. 宏观链上流量 / 历史分布 / 自定义研究
+原因包括：
 
-优先候选：
+- Top holders 标签可能缺失或错误。
+- CEX、LP、bridge、staking、vesting、treasury 地址可能未被完整识别。
+- marketCap、FDV、total supply、circulating supply 的口径可能来自不同 provider。
+- `totalSupply` 当前主要由 Top holders 的 `balance / percentage` 反推，属于估算。
+- `circulatingSupply` 暂无独立可靠来源时保持为空。
+- Solana supply 和标签质量在当前阶段不可完全验证。
+- 多链 token、wrapped asset、bridge token 和迁移旧合约不能用单一 holder 结构代表整体筹码结构。
 
-- Glassnode
-  - 官方文档：<https://docs.glassnode.com/>
-  - 用途：主流币宏观链上指标、交易所净流量、历史分布
-  - 优点：适合 BTC / ETH 这类大币的中观和宏观分析
-  - 限制：不适合作为长尾 token 的唯一来源
+## Eligibility Gate
 
-- Dune
-  - 官方文档：<https://docs.dune.com/api-reference/api-overview>
-  - 用途：自定义 SQL 查询、榜单、预警、历史快照沉淀
-  - 优点：最灵活，适合后续策略联动和内部指标
-  - 限制：不是即插即用型产品 API，需要自己建设 query 资产
+### `blocked`
 
-## 推荐接入策略
+禁止生成链上结构观察，且 `analysis` 为空、`floatTop1/5/10` 为空。
 
-### Phase 1：先做“控筹面板”
+典型触发：
 
-推荐组合：
+- 地址无法确认。
+- 原生资产、稳定币、wrapped asset、bridge token。
+- Top holders percentage 数学异常。
+- TopN 或 holderSupply 越界。
+- 全部 Top holders 都无法分类。
+- holder percentage 无法计算。
+- `estimatedFloatSupply <= 0`。
+- `estimatedFloatSupply > totalSupply`。
+- total supply 与 holder 百分比分母严重冲突。
 
-- Etherscan：EVM holder 数据
-- Birdeye：Solana / 热点 token 分布
+### `raw_only`
 
-目标：
+只展示身份、原始 holder、地址分类、供应口径和风险提示，不生成净化后观察。
 
-- Top10 / Top50 / Top100 持仓占比
-- 持币地址数与 7d 变化
-- 交易所占比 / 巨鲸占比
-- 控筹指数和风险标签
+典型触发：
 
-### Phase 2：把“解释层”做出来
+- 地址来自 fallback 或 unverified。
+- Binance futures 只能证明交易标的存在，不能证明链上地址。
+- Binance Alpha/DEX/Moralis 口径不一致。
+- holder 数据不完整。
+- unknown holder 占比过高。
+- LP/CEX/burn/contract/treasury/vesting/staking/bridge 污染明显。
+- `SupplyBreakdown.confidence = low`。
+- marketCap 缺失但 FDV 存在。
+- `circulatingSupply` 缺失。
+- Solana 标签不足或 supply 不可独立验证。
 
-推荐组合：
+### `analysis_allowed`
 
-- Nansen：标签、聪明钱、交易所行为
-- Glassnode：宏观净流量
+允许展示“链上筹码结构观察”，但仍然只是结构观察，不是控制关系结论。
 
-目标：
+必须同时满足：
 
-- 聪明钱净流入
-- 转所压力
-- 交易所净流入/净流出
-- 风险标签自动化
+- 地址身份可信。
+- mappingStatus 为 confirmed。
+- holder 数据质量高。
+- Top holders 至少部分可分类。
+- supply 分母可信。
+- `estimatedFloatSupply` 可解释。
+- 没有会导致误判的风险标记。
 
-### Phase 3：做成策略底座
+## 出口控制
 
-推荐组合：
+当前出口控制集中在 `src/lib/onchain/service.ts`：
 
-- Dune：历史分布、自定义榜单、预警 SQL
+- `analysis` 只在 `eligibility.level === "analysis_allowed"` 时生成。
+- `applyEligibilityToHolderConcentration` 会在 `blocked` 或 `raw_only` 时清空 `floatTop1/5/10`。
+- `supplyBreakdown` 始终可展示，但只能作为供应口径审计材料；低可信时不会驱动净化后观察。
+- 前端只展示中性模块：身份可信度、数据可信度、供应口径、原始 Holder 集中度、地址分类、剔除列表。
 
-目标：
+## 已知限制
 
-- 链上异常榜
-- 持续控筹榜
-- 大额派发预警
-- 链上因子接入策略中心
+- 还没有独立 token supply provider interface。
+- 还没有官方地址白名单或项目公告校验层。
+- 还没有可靠的 CEX/MM/treasury/vesting 地址库。
+- 还没有 LP token lock、honeypot、tax/freeze/rebase 的独立检测。
+- 还没有多池价格冲突和多链 canonical contract 的完整归一化。
+- 还没有链上历史快照存储，当前更多是请求时观察。
+- 还没有把 provider 限流、缓存和异步预计算完全抽象出来。
 
-## 当前仓库落地情况
+## 后续方向
 
-已新增基础骨架：
+下一阶段应继续沿着“可信度优先”的方向做基础设施，而不是恢复单一评分：
 
-- `src/lib/onchain/`
-  - provider registry
-  - provider-neutral types
-  - concentration analysis
-  - mock bootstrap data
-- `src/app/api/onchain/dashboard/route.ts`
-  - 输出链上板块初始化 payload
-- `src/components/OnchainTracker.tsx`
-  - 新一级板块“控筹分析”
-
-## 建议的真实环境变量
-
-- `ETHERSCAN_API_KEY`
-- `BIRDEYE_API_KEY`
-- `NANSEN_API_KEY`
-- `GLASSNODE_API_KEY`
-- `DUNE_API_KEY`
-- `HELIUS_API_KEY`
-- `CHAINBASE_API_KEY`
-- `MORALIS_API_KEY`
+- Provider interface：统一 Binance Alpha、DEX Screener、Moralis、future metadata 的数据契约。
+- Address registry：沉淀 CEX、LP、burn、router、bridge、treasury、vesting、staking、MM 地址标签。
+- Supply provider：接入可靠 total/circulating/burned/locked supply 来源。
+- Candidate audit：记录多候选、多链、同名 token、wrapped/bridge/fake token 的选择过程。
+- Snapshot storage：保存身份、holder、supply 和 eligibility 的时间序列，供人工研究复盘。
