@@ -13,7 +13,10 @@ import { singletonStrategyRuntimeState } from '@/lib/strategyRuntimeState';
 import { evaluateSentimentHotspotExitMonitor } from '@/lib/sentimentHotspot';
 import { createDismissedSignalKey } from '@/lib/strategySignalKeys';
 import { detectVisibleStrategySignalsForTicker } from '@/lib/strategyScannerCore';
+import { buildStrategyInputReadinessSummary } from '@/lib/strategyInputs';
 import type { DeepPartial, StrategyParameterConfigMap } from '@/lib/strategyParameters';
+import type { StrategyId } from '@/lib/strategyParameters';
+import type { StrategyInputReadinessSummary } from '@/lib/strategyInputs';
 
 const MAX_SIGNAL_COUNT = APP_CONFIG.UI.MAX_ACTIVE_SIGNALS;
 const DISMISSED_SIGNALS_STORAGE_KEY = 'dismissedSignals';
@@ -219,10 +222,12 @@ export function useStrategyScanner(data: TickerData[], options: UseStrategyScann
     // 保存上一次的数据摘要，用于检测变化
     const prevDataDigest = useRef<Map<string, string>>(new Map());
     const prevStrategyVersion = useRef(0);
+    const prevReadinessDigest = useRef('');
 
     const dismissedSignalsRef = useRef<DismissedSignalMap>({});
     const [strategyVersion, setStrategyVersion] = useState(0);
     const [isHydrated, setIsHydrated] = useState(false);
+    const [readinessSummary, setReadinessSummary] = useState<StrategyInputReadinessSummary | null>(null);
     const hasCompletedInitialScan = useRef(false);
 
     // 在客户端加载后从 localStorage 读取
@@ -257,6 +262,28 @@ export function useStrategyScanner(data: TickerData[], options: UseStrategyScann
             const now = Date.now();
             lastScanTime.current.time = now;
             const enabledStrategies = strategyRegistry.getEnabled();
+            const enabledStrategyIds = enabledStrategies.map((strategy) => strategy.id)
+                .filter((strategyId): strategyId is StrategyId => (
+                    strategyId === 'strong-breakout' ||
+                    strategyId === 'trend-confirmation' ||
+                    strategyId === 'capital-inflow' ||
+                    strategyId === 'rsrs-trend' ||
+                    strategyId === 'volatility-squeeze' ||
+                    strategyId === 'wei-shen-ledger' ||
+                    strategyId === 'sentiment-hotspot'
+                ));
+            const readinessSummary = buildStrategyInputReadinessSummary(data, enabledStrategyIds);
+            const readinessDigest = JSON.stringify(readinessSummary.byStrategy);
+            const hasMissingInputs = Object.values(readinessSummary.byStrategy)
+                .some((entry) => entry.symbolsMissingRequiredFields > 0);
+            if (hasMissingInputs && readinessDigest !== prevReadinessDigest.current) {
+                console.warn('[strategy-scanner] input readiness degraded', readinessSummary);
+                prevReadinessDigest.current = readinessDigest;
+            }
+            if (!hasMissingInputs && prevReadinessDigest.current) {
+                prevReadinessDigest.current = '';
+            }
+            setReadinessSummary(readinessSummary);
             const parameterOverrides = options.parameterOverrides;
             const forceRescan = prevStrategyVersion.current !== strategyVersion;
             const isInitialScan = !hasCompletedInitialScan.current;
@@ -439,6 +466,7 @@ export function useStrategyScanner(data: TickerData[], options: UseStrategyScann
 
     return {
         signals: sortedSignals,
+        readinessSummary,
         dismissSignal,
         clearAll,
     };

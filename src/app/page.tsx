@@ -33,6 +33,7 @@ import {
   type RsrsDataMap,
   type TimedPayload,
 } from '@/lib/liveMarketData';
+import { buildMarketDataStatus } from '@/lib/strategyScannerDiagnostics';
 
 type AppTab = 'dashboard' | 'leaderboard' | 'macro' | 'news' | 'watchlists' | 'longshort' | 'onchain' | 'strategies' | 'trading';
 
@@ -117,6 +118,8 @@ async function fetcherWithMeta<T>(url: string): Promise<TimedPayload<T>> {
     fetchedAt: Date.now(),
     cacheAgeSeconds: parseOptionalSeconds(res.headers.get('X-Cache-Age-Seconds')),
     dataSource: res.headers.get('X-Data-Source') || undefined,
+    dataQuality: res.headers.get('X-Data-Quality') || undefined,
+    buildState: res.headers.get('X-Build-State') || undefined,
   };
 }
 
@@ -377,9 +380,17 @@ export default function Home() {
   );
 
   // Run strategy scanner
-  const { signals, dismissSignal, clearAll: clearAllSignals } = useStrategyScanner(strategyScanData, {
+  const { signals, readinessSummary, dismissSignal, clearAll: clearAllSignals } = useStrategyScanner(strategyScanData, {
     parameterOverrides: strategyParameterOverrides,
   });
+  const strategyMarketDataStatus = useMemo(
+    () => buildMarketDataStatus({
+      dataQuality: heavyMarketPayload?.dataQuality,
+      buildState: heavyMarketPayload?.buildState,
+      dataSource: heavyMarketPayload?.dataSource,
+    }),
+    [heavyMarketPayload?.buildState, heavyMarketPayload?.dataQuality, heavyMarketPayload?.dataSource]
+  );
   const demoSignals = useMemo<StrategySignal[]>(() => {
     if (!isDemoMode) {
       return [];
@@ -522,6 +533,8 @@ export default function Home() {
           dismissSignal={dismissSignal}
           clearAllSignals={clearAllSignals}
           onSymbolClick={handleSymbolClick}
+          marketDataStatus={strategyMarketDataStatus}
+          readinessSummary={readinessSummary}
         />
       )}
       {activeTab === 'trading' && (

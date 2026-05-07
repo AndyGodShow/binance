@@ -2,6 +2,12 @@
 
 import { useState, useEffect } from 'react';
 import { StrategySignal } from '@/lib/strategyTypes';
+import type { MarketDataStatus } from '@/lib/strategyScannerDiagnostics';
+import {
+    buildReadinessDebugRows,
+    isMarketDataStatusDegraded,
+} from '@/lib/strategyScannerDiagnostics';
+import type { StrategyInputReadinessSummary } from '@/lib/strategyInputs';
 import { strategyRegistry } from '@/strategies/registry';
 import SignalCard from './SignalCard';
 import { ChevronDown, ChevronUp } from 'lucide-react';
@@ -12,9 +18,18 @@ interface StrategyCenterProps {
     dismissSignal: (signal: StrategySignal) => void; // 从父组件接收
     clearAllSignals?: () => void; // 一键清除全部
     onSymbolClick?: (symbol: string) => void;
+    marketDataStatus: MarketDataStatus;
+    readinessSummary?: StrategyInputReadinessSummary | null;
 }
 
-export default function StrategyCenter({ signals, dismissSignal, clearAllSignals, onSymbolClick }: StrategyCenterProps) {
+export default function StrategyCenter({
+    signals,
+    dismissSignal,
+    clearAllSignals,
+    onSymbolClick,
+    marketDataStatus,
+    readinessSummary,
+}: StrategyCenterProps) {
     // 使用本地状态存储策略列表，以便响应式更新
     const [allStrategies, setAllStrategies] = useState(() => strategyRegistry.getAll());
 
@@ -45,6 +60,10 @@ export default function StrategyCenter({ signals, dismissSignal, clearAllSignals
 
     // 折叠/展开状态
     const [isCollapsed, setIsCollapsed] = useState(false);
+    const [showDebug, setShowDebug] = useState(false);
+    const isDevelopment = process.env.NODE_ENV === 'development';
+    const isDegraded = isMarketDataStatusDegraded(marketDataStatus);
+    const readinessRows = buildReadinessDebugRows(readinessSummary);
 
     const handleToggle = (id: string) => {
         strategyRegistry.toggleStrategy(id);
@@ -87,9 +106,21 @@ export default function StrategyCenter({ signals, dismissSignal, clearAllSignals
             {/* 右侧：信号列表 */}
             <div className={styles.right}>
                 <div className={styles.signalHeader}>
-                    <h2 className={styles.sectionTitle}>
-                        信号池 ({filteredStats.total})
-                    </h2>
+                    <div className={styles.signalTitleGroup}>
+                        <h2 className={styles.sectionTitle}>
+                            信号池 ({filteredStats.total})
+                        </h2>
+                        <div className={styles.marketStatusLine}>
+                            <span>market: {marketDataStatus.dataQuality}</span>
+                            <span>build: {marketDataStatus.buildState}</span>
+                            <span>source: {marketDataStatus.dataSource}</span>
+                        </div>
+                        {isDegraded && (
+                            <div className={styles.degradedHint}>
+                                当前策略信号可能不完整
+                            </div>
+                        )}
+                    </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                         <div className={styles.stats}>
                             实时: {filteredStats.activeCount} | 开页已有: {filteredStats.snapshotCount} | 回落保留: {filteredStats.coolingCount} | 🟢 做多: {filteredStats.longCount} | 🔴 做空: {filteredStats.shortCount}
@@ -113,6 +144,26 @@ export default function StrategyCenter({ signals, dismissSignal, clearAllSignals
                         )}
                     </div>
                 </div>
+
+                {isDevelopment && readinessRows.length > 0 && (
+                    <details
+                        className={styles.debugPanel}
+                        open={showDebug}
+                        onToggle={(event) => setShowDebug(event.currentTarget.open)}
+                    >
+                        <summary>策略输入诊断 ({readinessRows.length})</summary>
+                        <div className={styles.debugRows}>
+                            {readinessRows.map((row) => (
+                                <div key={row.strategyId} className={styles.debugRow}>
+                                    <strong>{row.strategyId}</strong>
+                                    <span>缺字段币种 {row.missingSymbolCount}</span>
+                                    <span>{row.missingFields.slice(0, 6).join(', ')}</span>
+                                    <span>样本 {row.sampleSymbols.join(', ')}</span>
+                                </div>
+                            ))}
+                        </div>
+                    </details>
+                )}
 
                 <div className={styles.signalList}>
                     {filteredSignals.length === 0 ? (

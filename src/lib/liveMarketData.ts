@@ -24,6 +24,8 @@ export type TimedPayload<T> = {
     fetchedAt: number;
     cacheAgeSeconds?: number;
     dataSource?: string;
+    dataQuality?: string;
+    buildState?: string;
 };
 
 export function pruneTimedPayloadData<T>(
@@ -59,6 +61,8 @@ export function mergeTimedPayloadData<T>(
         },
         fetchedAt: Date.now(),
         dataSource: next.dataSource || 'client-batched',
+        dataQuality: next.dataQuality,
+        buildState: next.buildState,
     };
 }
 

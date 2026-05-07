@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import type { TickerData } from './types.ts';
 import {
+    buildStrategyInputReadinessSummary,
     STRATEGY_INPUT_CONTRACTS,
     toCapitalInflowStrategyInput,
     toRsrsStrategyInput,
@@ -234,4 +235,43 @@ test('strategy input adapters preserve the declared ticker fields', () => {
     const sentimentHotspotInput = toSentimentHotspotStrategyInput(sampleTicker);
     assert.equal(sentimentHotspotInput.strategyContexts, sampleTicker.strategyContexts);
     assert.equal(sentimentHotspotInput.fundingRate, sampleTicker.fundingRate);
+});
+
+test('strategy input readiness summary reports missing key fields per strategy', () => {
+    const fallbackTicker: TickerData = {
+        symbol: 'LIGHTUSDT',
+        lastPrice: '100',
+        priceChange: '1',
+        priceChangePercent: '2',
+        weightedAvgPrice: '99',
+        prevClosePrice: '98',
+        highPrice: '105',
+        lowPrice: '95',
+        volume: '1234',
+        quoteVolume: '5678',
+        openTime: 1,
+        closeTime: 2,
+    };
+
+    const summary = buildStrategyInputReadinessSummary([fallbackTicker], [
+        'strong-breakout',
+        'trend-confirmation',
+        'capital-inflow',
+        'rsrs-trend',
+        'volatility-squeeze',
+        'wei-shen-ledger',
+        'sentiment-hotspot',
+    ]);
+
+    assert.equal(summary.totalSymbols, 1);
+    assert.equal(summary.byStrategy['capital-inflow'].symbolsMissingRequiredFields, 1);
+    assert.ok(summary.byStrategy['capital-inflow'].missingFieldCounts.cvdSlope >= 1);
+    assert.equal(summary.byStrategy['rsrs-trend'].symbolsMissingRequiredFields, 1);
+    assert.ok(summary.byStrategy['rsrs-trend'].missingFieldCounts.rsrsFinal >= 1);
+    assert.equal(summary.byStrategy['volatility-squeeze'].symbolsMissingRequiredFields, 1);
+    assert.ok(summary.byStrategy['volatility-squeeze'].missingFieldCounts.squeezeStatus >= 1);
+    assert.equal(summary.byStrategy['wei-shen-ledger'].symbolsMissingRequiredFields, 1);
+    assert.ok(summary.byStrategy['wei-shen-ledger'].missingFieldCounts['strategyContexts.weiShen'] >= 1);
+    assert.equal(summary.byStrategy['sentiment-hotspot'].symbolsMissingRequiredFields, 1);
+    assert.ok(summary.byStrategy['sentiment-hotspot'].missingFieldCounts['strategyContexts.sentimentHotspot'] >= 1);
 });
