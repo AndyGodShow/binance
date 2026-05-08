@@ -22,7 +22,12 @@ import { calculateVolumeProfile } from '@/lib/volumeProfile';
 import { logger } from '@/lib/logger';
 import { klineCache } from '@/lib/cache';
 import { APP_CONFIG } from '@/lib/config';
-import { fetchBinanceJson } from '@/lib/binanceApi';
+import {
+    classifyBinanceFailureKind,
+    createBinanceFailureLogLimiter,
+    fetchBinanceJson,
+    sanitizeBinanceErrorMessage,
+} from '@/lib/binanceApi';
 import {
     calculateBreakoutMetrics,
     deriveTrendStructure,
@@ -46,6 +51,7 @@ type BinanceKline = [
 const GMMA_SHORT_PERIODS = [3, 5, 8, 10, 12, 15] as const;
 const GMMA_LONG_PERIODS = [30, 35, 40, 45, 50, 60] as const;
 const MULTI_EMA_PERIODS = [20, 60, 100, 120] as const;
+const klineFetchFailureLogLimiter = createBinanceFailureLogLimiter(1, 60_000);
 
 function isBinanceKline(value: unknown): value is BinanceKline {
     return Array.isArray(value) &&
@@ -68,7 +74,9 @@ export async function fetchKlines(symbol: string, interval: string = '15m', limi
     // 尝试从缓存获取
     const cached = klineCache.get(cacheKey) as OHLC[] | undefined;
     if (cached) {
-        logger.debug(`Klines cache hit for ${symbol}`);
+        if (process.env.DEBUG_KLINE_CACHE === '1') {
+            logger.debug(`Klines cache hit for ${symbol}`);
+        }
         return cached;
     }
 
@@ -102,7 +110,20 @@ export async function fetchKlines(symbol: string, interval: string = '15m', limi
 
         return klines;
     } catch (error) {
-        logger.error(`Error fetching klines for ${symbol}`, error as Error);
+        const rawMessage = error instanceof Error ? error.message : String(error);
+        const sanitizedMessage = sanitizeBinanceErrorMessage(rawMessage);
+        const failureKind = classifyBinanceFailureKind(sanitizedMessage);
+        const logDecision = klineFetchFailureLogLimiter.take(`/fapi/v1/klines:${symbol}:${failureKind}`);
+        if (logDecision.shouldLog) {
+            logger.warn('Kline fetch failed; returning empty candles', {
+                symbol,
+                interval,
+                limit,
+                failureKind,
+                error: sanitizedMessage,
+                suppressedSimilarFailures: logDecision.suppressedCount,
+            });
+        }
         return [];
     }
 }

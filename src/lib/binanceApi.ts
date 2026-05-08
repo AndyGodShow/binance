@@ -37,6 +37,7 @@ interface BinanceFetchOptions {
 export type BinanceFailureKind =
     | 'ECONNRESET'
     | 'ETIMEDOUT'
+    | 'CONNECT_TIMEOUT'
     | 'TLS_TIMEOUT'
     | 'DNS'
     | 'ABORT'
@@ -49,6 +50,11 @@ const BINANCE_RETRY_ROUNDS = 2;
 const BINANCE_RETRY_BACKOFF_MS = 500;
 const BINANCE_FAILOVER_DELAY_MS = 150;
 const RETRYABLE_HTTP_STATUSES = new Set([408, 409, 418, 425, 429, 500, 502, 503, 504]);
+
+interface BinanceRequestContext {
+    endpoint: string;
+    symbol?: string;
+}
 
 interface NormalizedBinanceError {
     message: string;
@@ -90,7 +96,8 @@ export function createBinanceFailureLogLimiter(maxLogsPerWindow: number, windowM
     };
 }
 
-const binanceFailureLogLimiter = createBinanceFailureLogLimiter(5, 60_000);
+const binanceFailureLogLimiter = createBinanceFailureLogLimiter(2, 60_000);
+const binanceRetryLogLimiter = createBinanceFailureLogLimiter(1, 60_000);
 
 function sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -132,6 +139,9 @@ export function classifyBinanceFailureKind(message: string): BinanceFailureKind 
     if (normalized.includes('econnreset')) {
         return 'ECONNRESET';
     }
+    if (normalized.includes('und_err_connect_timeout') || normalized.includes('connecttimeout')) {
+        return 'CONNECT_TIMEOUT';
+    }
     if (normalized.includes('tls') && (normalized.includes('timeout') || normalized.includes('timed out'))) {
         return 'TLS_TIMEOUT';
     }
@@ -158,12 +168,25 @@ export function classifyBinanceFailureKind(message: string): BinanceFailureKind 
     return 'UNKNOWN';
 }
 
-export function extractBinanceRequestContext(path: string): { endpoint: string; symbol?: string } {
+export function extractBinanceRequestContext(path: string): BinanceRequestContext {
     const [endpoint, rawQuery = ''] = path.split('?');
     const params = new URLSearchParams(rawQuery);
     const symbol = params.get('symbol') || undefined;
 
     return { endpoint, symbol };
+}
+
+export function formatBinanceRequestTarget(context: BinanceRequestContext): string {
+    return context.symbol ? `${context.endpoint}?symbol=${context.symbol}` : context.endpoint;
+}
+
+export function createBinanceFailureLogKey(
+    context: BinanceRequestContext,
+    failureKindKey: string,
+    scope?: string
+): string {
+    const key = `${context.endpoint}:${context.symbol || 'all'}:${failureKindKey || 'UNKNOWN'}`;
+    return scope ? `${scope}:${key}` : key;
 }
 
 export function sanitizeBinanceErrorMessage(message: string): string {
@@ -198,6 +221,10 @@ function normalizeBinanceError(error: unknown): NormalizedBinanceError {
         kind: classifyBinanceFailureKind(message),
         retryable: isRetryableBinanceErrorMessage(message),
     };
+}
+
+function getFailureKindKey(kinds: Iterable<BinanceFailureKind>): string {
+    return Array.from(kinds).sort().join(',') || 'UNKNOWN';
 }
 
 function getScheduledBases(candidateBases: string[]): string[] {
@@ -257,13 +284,22 @@ async function runMirroredRequest<T>(
         const shouldRetry = round < BINANCE_RETRY_ROUNDS - 1 && roundErrors.some((error) => error.retryable);
 
         if (shouldRetry) {
-            logger.warn('Binance base round failed, retrying', {
-                ...requestContext,
-                requestKind,
-                round: round + 1,
-                failureKinds: Array.from(new Set(roundErrors.map((error) => error.kind))),
-                retryableFailures: roundErrors.filter((error) => error.retryable).length,
-            });
+            const roundFailureKinds = new Set(roundErrors.map((error) => error.kind));
+            const retryLogDecision = binanceRetryLogLimiter.take(createBinanceFailureLogKey(
+                requestContext,
+                getFailureKindKey(roundFailureKinds),
+                `${requestKind}:retry`
+            ));
+            if (retryLogDecision.shouldLog) {
+                logger.warn('Binance base round failed, retrying', {
+                    ...requestContext,
+                    requestKind,
+                    round: round + 1,
+                    failureKinds: Array.from(roundFailureKinds),
+                    retryableFailures: roundErrors.filter((error) => error.retryable).length,
+                    suppressedSimilarFailures: retryLogDecision.suppressedCount,
+                });
+            }
             await sleep(getRetryBackoffMs(round, roundErrors));
             continue;
         }
@@ -272,8 +308,8 @@ async function runMirroredRequest<T>(
     }
 
     const errorMessage = collectedErrors.join(' | ') || `Unknown Binance ${requestKind} error`;
-    const failureKindKey = Array.from(failureKinds).sort().join(',') || 'UNKNOWN';
-    const logDecision = binanceFailureLogLimiter.take(`${requestContext.endpoint}:${failureKindKey}`);
+    const failureKindKey = getFailureKindKey(failureKinds);
+    const logDecision = binanceFailureLogLimiter.take(createBinanceFailureLogKey(requestContext, failureKindKey, requestKind));
     const diagnosticContext = {
         ...requestContext,
         requestKind,
@@ -285,13 +321,13 @@ async function runMirroredRequest<T>(
         if (logDecision.shouldLog) {
             logger.error('All Binance JSON endpoints failed', new Error(errorMessage), diagnosticContext);
         }
-        throw new Error(`All Binance JSON endpoints failed for ${path}`);
+        throw new Error(`All Binance JSON endpoints failed for ${formatBinanceRequestTarget(requestContext)}`);
     }
 
     if (logDecision.shouldLog) {
         logger.error('All Binance endpoints failed', new Error(errorMessage), diagnosticContext);
     }
-    throw new Error(`All Binance endpoints failed for ${path}`);
+    throw new Error(`All Binance endpoints failed for ${formatBinanceRequestTarget(requestContext)}`);
 }
 
 function buildAttemptInit(options: BinanceFetchOptions, signal?: AbortSignal): NextFetchInit {
