@@ -13,6 +13,8 @@ import {
     sanitizeDailyNewsDigest,
 } from './pipeline.ts';
 import { normalizeGdeltDate } from './gdelt.ts';
+import { rssInternals } from './rss.ts';
+import { sixFiveFiveOneInternals } from './sixFiveFiveOne.ts';
 import { scoreNewsCandidate, toImportanceLevel } from './scoring.ts';
 import { createDailyNewsFileStorage } from './storage.ts';
 import { translationInternals } from './translate.ts';
@@ -52,6 +54,49 @@ test('normalizeGdeltDate parses GDELT seendate timestamps', () => {
         normalizeGdeltDate('20260418T044500Z'),
         '2026-04-18T04:45:00.000Z'
     );
+});
+
+test('daily news RSS sources include Chinese crypto media feeds', () => {
+    const cryptoSources = rssInternals.getSourcesForCategory('crypto');
+    const urls = cryptoSources.map((source) => source.url);
+
+    assert.ok(urls.includes('https://api.theblockbeats.news/v2/rss/newsflash'));
+    assert.ok(urls.includes('https://api.theblockbeats.news/v2/rss/article'));
+    assert.ok(urls.includes('https://rss.odaily.news/rss/newsflash'));
+    assert.ok(urls.includes('https://rss.odaily.news/rss/post'));
+});
+
+test('6551 hot news payload parser maps open news items into candidates', () => {
+    const candidates = sixFiveFiveOneInternals.parse6551HotNewsPayload({
+        success: true,
+        data: {
+            news: [
+                {
+                    title: '律动消息：某交易所披露钱包安全事件',
+                    summary: '交易所公告称已暂停提现并排查钱包基础设施。',
+                    url: 'https://www.theblockbeats.info/flash/123',
+                    source: '律动 BlockBeats',
+                    published_at: '2026-04-17T18:00:00.000Z',
+                },
+            ],
+            tweets: [
+                {
+                    text: 'SEC delays decision on spot Ethereum ETF staking proposal',
+                    link: 'https://x.com/example/status/1',
+                    author: 'opennews',
+                    created_at: '2026-04-17T19:00:00.000Z',
+                },
+            ],
+        },
+    }, 'crypto', WINDOW);
+
+    assert.equal(candidates.length, 2);
+    assert.equal(candidates[0]?.category, 'crypto');
+    assert.equal(candidates[0]?.source, '律动 BlockBeats');
+    assert.equal(candidates[0]?.domain, 'theblockbeats.info');
+    assert.match(candidates[0]?.title || '', /钱包安全事件/);
+    assert.equal(candidates[1]?.source, '6551 Twitter');
+    assert.equal(candidates[1]?.domain, 'x.com');
 });
 
 test('translation helpers only translate non-Chinese text', () => {
@@ -1015,6 +1060,273 @@ test('daily news Chinese normalization avoids glued entities and duplicate event
     assert.doesNotMatch(combined, /SECETF|ETFETF|安全事件事件|ETF事件|交易所事件/);
 });
 
+test('daily news Chinese normalization cleans html entities and avoids untranslated fallback headlines', () => {
+    const digest = buildDailyNewsDigestFromResults([
+        {
+            category: 'macro',
+            ok: true,
+            candidates: [
+                candidate({
+                    category: 'macro',
+                    title: "Jerome Powell making a &apos;significant mistake&apos; by staying on at the Fed, Sen. Tim Scott says",
+                    summary: "Sen. Tim Scott said Jerome Powell made a &apos;significant mistake&apos; by staying on at the Federal Reserve.",
+                    source: 'CNBC',
+                    domain: 'cnbc.com',
+                    url: 'https://www.cnbc.com/2026/04/17/powell-fed-tim-scott.html',
+                    publishedAt: '2026-04-17T18:00:00.000Z',
+                    tags: ['Fed', 'rates'],
+                    rawSnippet: '',
+                }),
+                candidate({
+                    category: 'macro',
+                    title: "30-Year Treasury Yields Hit 5%: Trump's Interest Bill Top $1.2T",
+                    summary: 'Thirty-year Treasury yields moved near 5%, renewing concern about US interest costs.',
+                    source: 'MarketWatch',
+                    domain: 'marketwatch.com',
+                    url: 'https://www.marketwatch.com/story/treasury-yields-hit-5-percent',
+                    publishedAt: '2026-04-17T19:00:00.000Z',
+                    tags: ['Treasury', 'yields'],
+                    rawSnippet: '',
+                }),
+            ],
+        },
+        { category: 'crypto', ok: true, candidates: [] },
+        { category: 'ai', ok: true, candidates: [] },
+    ], WINDOW);
+
+    const combined = [
+        ...digest.macro.map((item) => item.title),
+        ...digest.macro.map((item) => item.summary),
+        ...(digest.topStories || []).map((story) => story.headline),
+        ...(digest.brief?.latestSignals || []),
+    ].join('\n');
+
+    assert.doesNotMatch(combined, /&apos;|&#39;|&quot;|Jerome Powell making|30-Year Treasury Yields Hit/i);
+    assert.match(combined, /美联储|收益率|利率/);
+});
+
+test('daily news Chinese normalization avoids duplicated ETF wording in generic crypto fallbacks', () => {
+    const digest = buildDailyNewsDigestFromResults([
+        {
+            category: 'crypto',
+            ok: true,
+            candidates: [
+                candidate({
+                    category: 'crypto',
+                    title: 'Bitcoin ETF launch window opens after exchange filing update',
+                    summary: 'An exchange filing update opened a new launch window for a Bitcoin ETF product.',
+                    source: 'CoinDesk',
+                    domain: 'coindesk.com',
+                    url: 'https://www.coindesk.com/markets/2026/04/17/bitcoin-etf-launch-window',
+                    publishedAt: '2026-04-17T18:00:00.000Z',
+                    tags: ['ETF', 'BTC'],
+                    rawSnippet: '',
+                }),
+            ],
+        },
+        { category: 'macro', ok: true, candidates: [] },
+        { category: 'ai', ok: true, candidates: [] },
+    ], WINDOW);
+
+    const combined = [
+        digest.crypto[0]?.title,
+        digest.crypto[0]?.summary,
+        digest.crypto[0]?.summarySections?.whatHappened,
+        digest.topStories?.[0]?.headline,
+    ].join('\n');
+
+    assert.match(combined, /比特币现货 ETF|比特币 ETF/);
+    assert.doesNotMatch(combined, /ETFETF|ETF进展开始落地|比特币、ETF/);
+});
+
+test('daily news Chinese normalization compacts long Chinese media summaries', () => {
+    const longSummary = '原创 | Odaily 星球日报 作者 | Asher。Kalshi 宣布完成新一轮 10 亿美元融资，投后估值达到 220 亿美元。预测市场正在从边缘化事件交易工具进入主流金融机构视野。'.repeat(20);
+    const digest = buildDailyNewsDigestFromResults([
+        {
+            category: 'crypto',
+            ok: true,
+            candidates: [
+                candidate({
+                    category: 'crypto',
+                    title: 'Circle 更新 USDC 储备证明流程，银行合作方审计要求提高',
+                    summary: longSummary,
+                    source: 'Odaily 星球日报',
+                    domain: 'odaily.news',
+                    url: 'https://www.odaily.news/zh-CN/post/usdc-reserve-attestation',
+                    publishedAt: '2026-04-17T18:00:00.000Z',
+                    tags: ['USDC', 'stablecoin', 'reserve'],
+                    rawSnippet: '',
+                }),
+            ],
+        },
+        { category: 'macro', ok: true, candidates: [] },
+        { category: 'ai', ok: true, candidates: [] },
+    ], WINDOW);
+
+    const item = digest.crypto[0];
+    assert.ok((item.summary || '').length < 260);
+    assert.ok((item.summarySections?.whatHappened || '').length < 280);
+    assert.doesNotMatch(item.summary || '', /原创 |作者/);
+});
+
+test('dedupeAndRankCandidates filters crypto-adjacent GameStop eBay media noise', () => {
+    const result = dedupeAndRankCandidates('crypto', [
+        candidate({
+            category: 'crypto',
+            title: 'GameStop CEO卖袜子买eBay：一场560亿美元的行为艺术',
+            summary: '文章讨论 GameStop CEO Ryan Cohen 对 eBay 的收购表演，只有边缘比特币财库背景。',
+            source: 'Odaily 星球日报',
+            domain: 'odaily.news',
+            url: 'https://www.odaily.news/zh-CN/post/5210649',
+            publishedAt: '2026-04-17T18:00:00.000Z',
+            tags: ['加密'],
+            rawSnippet: '',
+        }),
+        candidate({
+            category: 'crypto',
+            title: 'SEC delays decision on spot Ethereum ETF staking proposal',
+            summary: 'The delay affects the structure of US spot ETH ETF products.',
+            source: 'Reuters',
+            domain: 'reuters.com',
+            url: 'https://www.reuters.com/technology/sec-delays-eth-staking-etf-2026-04-17/',
+            publishedAt: '2026-04-17T19:00:00.000Z',
+            tags: ['SEC', 'ETH', 'ETF'],
+            rawSnippet: '',
+        }),
+    ], WINDOW, 10);
+
+    assert.equal(result.items.length, 1);
+    assert.match(result.items[0]?.title || '', /SEC|以太坊|ETF/);
+    assert.doesNotMatch(result.items.map((item) => item.title).join('\n'), /GameStop|eBay|卖袜子/);
+});
+
+test('dedupeAndRankCandidates filters Chinese stock commentary and roundup recaps from crypto news', () => {
+    const result = dedupeAndRankCandidates('crypto', [
+        candidate({
+            category: 'crypto',
+            title: '2026 年的美股，赚得我有点心慌',
+            summary: '文章讨论美股存储股、股票账户收益和投资者情绪，缺少加密市场结构事实。',
+            source: 'Odaily 星球日报',
+            domain: 'odaily.news',
+            url: 'https://www.odaily.news/zh-CN/post/us-stocks-2026',
+            publishedAt: '2026-04-17T18:00:00.000Z',
+            tags: ['加密'],
+            rawSnippet: '',
+        }),
+        candidate({
+            category: 'crypto',
+            title: '24H 热门币种与要闻｜美伊发生交火，停火并未结束',
+            summary: 'CEX 热门币种 CEX 成交额 Top 10 及 24 小时涨跌幅，24 小时涨幅榜单和市场快讯合集。',
+            source: 'Odaily 星球日报',
+            domain: 'odaily.news',
+            url: 'https://www.odaily.news/zh-CN/post/market-recap',
+            publishedAt: '2026-04-17T18:30:00.000Z',
+            tags: ['加密'],
+            rawSnippet: '',
+        }),
+        candidate({
+            category: 'crypto',
+            title: 'Coinbase交易所宕机超2小时',
+            summary: 'Coinbase 交易所发生宕机，用户交易和提现短时受影响。',
+            source: 'Odaily 星球日报',
+            domain: 'odaily.news',
+            url: 'https://www.odaily.news/zh-CN/newsflash/coinbase-outage',
+            publishedAt: '2026-04-17T19:00:00.000Z',
+            tags: ['Coinbase', 'exchange'],
+            rawSnippet: '',
+        }),
+    ], WINDOW, 10);
+
+    assert.equal(result.items.length, 1);
+    assert.match(result.items[0]?.title || '', /Coinbase|宕机/);
+    assert.ok((result.items[0]?.importanceScore || 0) >= 58);
+    assert.equal(result.items[0]?.sourceTier, 'specialist');
+    assert.equal(result.items[0]?.confirmationLevel, 'single_authoritative');
+});
+
+test('daily news Chinese normalization hard caps long first-sentence recaps', () => {
+    const longSummary = `CEX 热门币种 CEX 成交额 Top 10 及 24 小时涨跌幅：${' BTC: -1.55% ETH: -1.7% SOL: -0.02%'.repeat(40)}。后续还有市场要闻。`;
+    const digest = buildDailyNewsDigestFromResults([
+        {
+            category: 'crypto',
+            ok: true,
+            candidates: [
+                candidate({
+                    category: 'crypto',
+                    title: 'Circle 更新 USDC 储备证明流程，银行合作方审计要求提高',
+                    summary: longSummary,
+                    source: 'Odaily 星球日报',
+                    domain: 'odaily.news',
+                    url: 'https://www.odaily.news/zh-CN/post/usdc-reserve-long-summary',
+                    publishedAt: '2026-04-17T18:00:00.000Z',
+                    tags: ['USDC', 'stablecoin', 'reserve'],
+                    rawSnippet: '',
+                }),
+            ],
+        },
+        { category: 'macro', ok: true, candidates: [] },
+        { category: 'ai', ok: true, candidates: [] },
+    ], WINDOW);
+
+    assert.ok((digest.crypto[0]?.summary || '').length < 260);
+});
+
+test('daily news Chinese normalization does not translate shares slide as sharing', () => {
+    const digest = buildDailyNewsDigestFromResults([
+        {
+            category: 'crypto',
+            ok: true,
+            candidates: [
+                candidate({
+                    category: 'crypto',
+                    title: 'Coinbase shares slide on $400M Q1 loss, revenue miss',
+                    summary: 'Coinbase shares slid after the exchange reported a Q1 loss and missed revenue estimates.',
+                    source: 'Cointelegraph',
+                    domain: 'cointelegraph.com',
+                    url: 'https://cointelegraph.com/news/coinbase-shares-slide-q1-loss-revenue-miss',
+                    publishedAt: '2026-04-17T18:00:00.000Z',
+                    tags: ['Coinbase', 'exchange'],
+                    rawSnippet: '',
+                }),
+            ],
+        },
+        { category: 'macro', ok: true, candidates: [] },
+        { category: 'ai', ok: true, candidates: [] },
+    ], WINDOW);
+
+    const combined = [digest.crypto[0]?.title, digest.crypto[0]?.summary].join('\n');
+    assert.match(combined, /Coinbase 股价|财报|营收/);
+    assert.doesNotMatch(combined, /共享交易所|将共享/);
+});
+
+test('daily news Chinese normalization does not translate stock shares as sharing', () => {
+    const digest = buildDailyNewsDigestFromResults([
+        {
+            category: 'ai',
+            ok: true,
+            candidates: [
+                candidate({
+                    category: 'ai',
+                    title: 'IREN stock surges as Nvidia backs AI expansion with warrants tied to 30 million shares',
+                    summary: 'Nvidia-backed warrants are tied to 30 million shares as IREN expands AI infrastructure.',
+                    source: '6551News',
+                    domain: 'ai.6551.io',
+                    url: 'https://ai.6551.io/news/iren-nvidia-ai-expansion',
+                    publishedAt: '2026-04-17T18:00:00.000Z',
+                    tags: ['NVIDIA', 'AI'],
+                    rawSnippet: '',
+                }),
+            ],
+        },
+        { category: 'macro', ok: true, candidates: [] },
+        { category: 'crypto', ok: true, candidates: [] },
+    ], WINDOW);
+
+    const combined = [digest.ai[0]?.title, digest.ai[0]?.summary].join('\n');
+    assert.match(combined, /Nvidia|AI|芯片/);
+    assert.doesNotMatch(combined, /将共享|共享芯片/);
+});
+
 test('dedupeAndRankCandidates keeps a richer set of non-noise category items', () => {
     const result = dedupeAndRankCandidates('crypto', [
         candidate({
@@ -1360,6 +1672,123 @@ test('sanitizeDailyNewsDigest removes translated low-information items and rebui
 
     assert.doesNotMatch(combined, /Tether Gold|突破 \$3\.3B/);
     assert.match(combined, /西联汇款|Ripple/);
+});
+
+test('sanitizeDailyNewsDigest removes generic normalized fallback placeholders', () => {
+    const digest = buildDailyNewsDigestFromResults([
+        {
+            category: 'crypto',
+            ok: true,
+            candidates: [
+                candidate({
+                    category: 'crypto',
+                    title: 'Coinbase交易所宕机超2小时',
+                    summary: 'Coinbase 交易所发生宕机，用户交易和提现短时受影响。',
+                    source: 'Odaily 星球日报',
+                    domain: 'odaily.news',
+                    url: 'https://www.odaily.news/zh-CN/newsflash/coinbase-outage',
+                    publishedAt: '2026-04-17T19:00:00.000Z',
+                    tags: ['Coinbase', 'exchange'],
+                    rawSnippet: '',
+                }),
+            ],
+        },
+        { category: 'macro', ok: true, candidates: [] },
+        { category: 'ai', ok: true, candidates: [] },
+    ], WINDOW);
+
+    digest.crypto.push({
+        ...digest.crypto[0],
+        id: 'generic-regulation',
+        title: '监管',
+        summary: '监管。',
+        importanceScore: 90,
+    }, {
+        ...digest.crypto[0],
+        id: 'generic-etf',
+        title: 'ETF 开始 ETF',
+        summary: 'ETF 开始 ETF。',
+        importanceScore: 90,
+    });
+    digest.ai.push({
+        ...digest.crypto[0],
+        id: 'generic-ai',
+        category: 'ai',
+        title: 'Anthropic 模型出现新进展',
+        summary: 'Anthropic 模型出现新进展。',
+        importanceScore: 90,
+        tags: ['Anthropic', 'AI'],
+    });
+
+    const sanitized = sanitizeDailyNewsDigest(digest);
+    const combined = [
+        ...sanitized.crypto.map((item) => item.title),
+        ...sanitized.ai.map((item) => item.title),
+    ].join('\n');
+
+    assert.match(combined, /Coinbase/);
+    assert.doesNotMatch(combined, /(^|\n)监管($|\n)|ETF 开始 ETF|出现新进展/);
+});
+
+test('dedupeAndRankCandidates filters price predictions but keeps systemic ETF stablecoin and AI events', () => {
+    const cryptoResult = dedupeAndRankCandidates('crypto', [
+        candidate({
+            category: 'crypto',
+            title: '分析师称 BTC 将上涨至 120000 美元',
+            summary: '交易员预测比特币价格将上涨，投资者关注价格目标。',
+            source: 'Odaily 星球日报',
+            domain: 'odaily.news',
+            url: 'https://www.odaily.news/zh-CN/post/btc-price-prediction',
+            publishedAt: '2026-04-17T18:00:00.000Z',
+            tags: ['BTC', '价格预测'],
+            rawSnippet: '',
+        }),
+        candidate({
+            category: 'crypto',
+            title: 'SEC delays decision on spot Ethereum ETF staking proposal',
+            summary: 'The delay affects the structure of US spot ETH ETF products and requires updated filings.',
+            source: 'Reuters',
+            domain: 'reuters.com',
+            url: 'https://www.reuters.com/technology/sec-delays-eth-staking-etf-2026-04-17/',
+            publishedAt: '2026-04-17T19:00:00.000Z',
+            tags: ['SEC', 'ETH', 'ETF'],
+            rawSnippet: '',
+        }),
+        candidate({
+            category: 'crypto',
+            title: 'Circle updates USDC reserve attestations after redemption pressure',
+            summary: 'USDC reserve attestations were updated after redemption pressure and regulatory scrutiny.',
+            source: 'CoinDesk',
+            domain: 'coindesk.com',
+            url: 'https://www.coindesk.com/policy/usdc-reserve-attestation-redemption-pressure',
+            publishedAt: '2026-04-17T20:00:00.000Z',
+            tags: ['USDC', 'stablecoin', 'reserve'],
+            rawSnippet: '',
+        }),
+    ], WINDOW, 10);
+
+    const cryptoTitles = cryptoResult.items.map((item) => item.title).join('\n');
+    assert.doesNotMatch(cryptoTitles, /120000|价格预测|分析师称/);
+    assert.match(cryptoTitles, /SEC|ETF/);
+    assert.match(cryptoTitles, /USDC|储备|赎回|reserve/i);
+
+    const aiResult = dedupeAndRankCandidates('ai', [
+        candidate({
+            category: 'ai',
+            title: 'Nvidia and TSMC expand AI chip capacity after major cloud demand surge',
+            summary: 'Nvidia and TSMC expanded AI chip capacity as cloud demand for accelerators surged.',
+            source: 'Reuters',
+            domain: 'reuters.com',
+            url: 'https://www.reuters.com/technology/nvidia-tsmc-ai-chip-capacity-2026-04-17/',
+            publishedAt: '2026-04-17T21:00:00.000Z',
+            tags: ['NVIDIA', 'TSMC', 'AI chips'],
+            rawSnippet: '',
+        }),
+    ], WINDOW, 10);
+
+    assert.equal(aiResult.items.length, 1);
+    assert.equal(aiResult.items[0]?.sourceTier, 'major');
+    assert.match(aiResult.items[0]?.title || '', /Nvidia|TSMC|芯片|AI/i);
 });
 
 test('buildDailyNewsDigestFromResults summarizes the 24 hour brief without trading language', () => {

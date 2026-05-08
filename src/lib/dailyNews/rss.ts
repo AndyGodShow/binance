@@ -85,6 +85,34 @@ const RSS_SOURCES: RssSource[] = [
         domain: 'cointelegraph.com',
         tags: ['加密'],
     },
+    {
+        category: 'crypto',
+        url: 'https://api.theblockbeats.news/v2/rss/newsflash',
+        source: '律动 BlockBeats',
+        domain: 'theblockbeats.news',
+        tags: ['加密', '中文媒体', '快讯'],
+    },
+    {
+        category: 'crypto',
+        url: 'https://api.theblockbeats.news/v2/rss/article',
+        source: '律动 BlockBeats',
+        domain: 'theblockbeats.news',
+        tags: ['加密', '中文媒体', '深度'],
+    },
+    {
+        category: 'crypto',
+        url: 'https://rss.odaily.news/rss/newsflash',
+        source: 'Odaily 星球日报',
+        domain: 'odaily.news',
+        tags: ['加密', '中文媒体', '快讯'],
+    },
+    {
+        category: 'crypto',
+        url: 'https://rss.odaily.news/rss/post',
+        source: 'Odaily 星球日报',
+        domain: 'odaily.news',
+        tags: ['加密', '中文媒体', '深度'],
+    },
 ];
 
 function decodeXml(value: string): string {
@@ -219,3 +247,9 @@ export async function fetchRssNewsCandidates(category: NewsCategory, window: Dai
 
     return candidates;
 }
+
+export const rssInternals = {
+    getSourcesForCategory(category: NewsCategory): RssSource[] {
+        return RSS_SOURCES.filter((source) => source.category === category);
+    },
+};

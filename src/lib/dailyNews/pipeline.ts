@@ -136,11 +136,15 @@ const LOW_INFORMATION_RECAP_TERMS = [
     'how high', 'dominates top', 'used to hate inflation', 'might be the opposite',
     'twitter case', '市场概况', '价格能', '不在乎', '可能恰恰相反',
     'allocation to 5%', 'adjusts bitcoin allocation', '曾经讨厌通货膨胀',
-    '配置调整为 5%', '前 5 名', '前5名',
+    '配置调整为 5%', '前 5 名', '前5名', '24h 热门币种与要闻',
+    '24H 热门币种与要闻', 'cex 热门币种', 'CEX 热门币种',
+    '成交额 Top 10', '24 小时涨跌幅', '24 小时涨幅榜单',
 ];
 const CRYPTO_ADJACENT_BUSINESS_NOISE_TERMS = [
     'sec twitter', 'twitter case', 'ebay takeover', 'bitcoin stash in the crosshairs',
-    'eBay 收购', 'Twitter 案件',
+    'gamestop ceo', 'gamestop', 'ebay', 'socks',
+    'eBay 收购', 'Twitter 案件', '卖袜子', '行为艺术',
+    '美股赚钱', '美股存储股', '股票账户', '炒美股',
 ];
 const AI_PRODUCT_RUMOR_NOISE_TERMS = [
     'ai phone', 'phone in 2027', 'may launch ai phone', 'consumer device rumor',
@@ -195,6 +199,7 @@ const MAJOR_SOURCE_DOMAINS = [
 ];
 const SPECIALIST_SOURCE_DOMAINS = [
     'coindesk.com', 'theblock.co', 'decrypt.co', 'cointelegraph.com', 'bitcoinmagazine.com',
+    'theblockbeats.news', 'theblockbeats.info', 'odaily.news', 'ai.6551.io',
 ];
 const CORE_ENTITY_RULES: Array<[string, string[]]> = [
     ['BTC', ['bitcoin', 'btc']],
@@ -850,10 +855,59 @@ function buildSummarySections(
 }
 
 function cleanChineseStyle(value: string): string {
+    const decoded = value
+        .replace(/&apos;|&#39;/g, "'")
+        .replace(/&quot;/g, '"')
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/\s*[-|]\s*[A-Z][A-Za-z0-9 .&/]{2,}$/g, '')
+        .replace(/([A-Za-z0-9])([\u3400-\u9FFF])/g, '$1 $2')
+        .replace(/([\u3400-\u9FFF])([A-Za-z0-9])/g, '$1 $2')
+        .replace(/\bETF\s*ETF\b/g, 'ETF')
+        .replace(/ETFETF/g, 'ETF')
+        .replace(/事件事件/g, '事件')
+        .replace(/\s+/g, ' ')
+        .trim();
+
     return BANNED_CHINESE_STYLE_TERMS.reduce(
         (text, banned) => text.replaceAll(banned, '中性影响'),
-        value
+        decoded
     );
+}
+
+function compactNewsSummary(summary: string, title: string): string {
+    const cleaned = cleanChineseStyle(summary)
+        .replace(/(原创\s*[|｜]\s*)?Odaily\s*星球日报[^。！？]{0,80}[。！？]?\s*/gi, '')
+        .replace(/原文作者：[^。！？]{0,100}[。！？]?\s*/g, '')
+        .replace(/作者\s*[|｜：:][^。！？]{0,100}[。！？]?\s*/g, '')
+        .replace(/本报告由[^。！？]{0,100}[。！？]?\s*/g, '')
+        .replace(/核心摘要\s*/gi, '')
+        .trim();
+
+    if (cleaned.length <= 260) {
+        return cleaned || `${title}。`;
+    }
+
+    const sentences = cleaned.split(/(?<=[。！？])/).map((part) => part.trim()).filter(Boolean);
+    let compact = '';
+    for (const sentence of sentences) {
+        const nextSentence = sentence.length > 220 ? sentence.slice(0, 220) : sentence;
+        if (compact && compact.length + sentence.length > 220) {
+            break;
+        }
+        compact += nextSentence;
+        if (compact.length >= 120) {
+            break;
+        }
+    }
+
+    if (!compact) {
+        compact = cleaned.slice(0, 220);
+    }
+
+    return `${compact.replace(/[，,；;：:、\s]+$/, '')}${compact.endsWith('。') || compact.endsWith('！') || compact.endsWith('？') ? '' : '。'}`;
 }
 
 function entityDisplayName(entity: string): string {
@@ -952,6 +1006,26 @@ function extractHeadlineTopic(title: string, item: DailyNewsItem): string {
                 : '相关事项';
         return `${assetName || ''}现货 ETF ${suffix}`.trim();
     }
+    if (includesTerm(lowerTitle, 'bitcoin') && includesTerm(lowerTitle, 'etf')) {
+        return includesTerm(lowerTitle, 'filing')
+            ? '比特币 ETF 备案更新'
+            : '比特币 ETF';
+    }
+    if (includesTerm(lowerTitle, 'ethereum') && includesTerm(lowerTitle, 'etf')) {
+        return includesTerm(lowerTitle, 'filing')
+            ? '以太坊 ETF 备案更新'
+            : '以太坊 ETF';
+    }
+    if (includesTerm(lowerTitle, 'treasury yield') || includesTerm(lowerTitle, 'treasury yields') || includesTerm(lowerTitle, 'yields')) {
+        return includesTerm(lowerTitle, '5%')
+            ? '美债收益率接近 5%'
+            : '美债收益率变化';
+    }
+    if (includesTerm(lowerTitle, 'fed') || includesTerm(lowerTitle, 'federal reserve')) {
+        return includesTerm(lowerTitle, 'powell')
+            ? '美联储主席任期争议'
+            : '美联储政策信号';
+    }
     if (stablecoinTicker) {
         const chainPrefix = assetName ? `在 ${assetName} 上` : '';
         return `${chainPrefix}推出 ${stablecoinTicker} 稳定币`.trim();
@@ -960,6 +1034,9 @@ function extractHeadlineTopic(title: string, item: DailyNewsItem): string {
         return includesTerm(lowerTitle, 'north korean') || includesTerm(lowerTitle, 'north korea')
             ? '朝鲜威胁情报'
             : '威胁情报';
+    }
+    if (includesTerm(lowerTitle, 'wallet') && (includesTerm(lowerTitle, 'security incident') || includesTerm(lowerTitle, 'withdrawal pause'))) {
+        return '钱包安全事件';
     }
     if (includesTerm(lowerTitle, 'custody reporting')) {
         return `${assetName || '加密'}基金机构托管报告`;
@@ -986,6 +1063,13 @@ function extractHeadlineTopic(title: string, item: DailyNewsItem): string {
 }
 
 function buildActionHeadline(actor: string, topic: string, text: string): string | null {
+    if ((includesTerm(text, 'shares slide') || includesTerm(text, 'shares slid') || includesTerm(text, 'stock falls') || includesTerm(text, 'stock down'))
+        && (includesTerm(text, 'loss') || includesTerm(text, 'revenue miss') || includesTerm(text, 'missed revenue'))) {
+        return `${actor} 股价因财报亏损和营收不及预期承压`;
+    }
+    if (includesTerm(text, 'disclose') || includesTerm(text, 'discloses') || includesTerm(text, 'disclosed')) {
+        return `${actor}披露${topic}`;
+    }
     if (includesTerm(text, 'reject') || includesTerm(text, 'rejected') || includesTerm(text, 'rejects')) {
         return `${actor} 拒绝${topic}`;
     }
@@ -998,11 +1082,21 @@ function buildActionHeadline(actor: string, topic: string, text: string): string
     if (includesTerm(text, 'expand') || includesTerm(text, 'expands') || includesTerm(text, 'expanded')) {
         return `${actor} 扩展${topic}`;
     }
-    if (includesTerm(text, 'share') || includesTerm(text, 'shares')) {
+    if ((includesTerm(text, 'share') || includesTerm(text, 'shares'))
+        && (includesTerm(text, 'threat intelligence') || includesTerm(text, 'data') || includesTerm(text, 'information'))) {
         return `${actor} 将共享${topic}`;
     }
     if (includesTerm(text, 'begins') || includesTerm(text, 'rollout') || includesTerm(text, 'launch') || includesTerm(text, 'launches') || includesTerm(text, 'release')) {
         return `${actor} 开始${topic}`;
+    }
+    if (includesTerm(text, 'opens')) {
+        return `${topic}窗口打开`;
+    }
+    if (includesTerm(text, 'hit') || includesTerm(text, 'hits') || includesTerm(text, 'near')) {
+        return `${topic}`;
+    }
+    if (includesTerm(text, 'says') || includesTerm(text, 'said')) {
+        return `${topic}`;
     }
     if (includesTerm(text, 'announce') || includesTerm(text, 'announces')) {
         return `${actor} 宣布${topic}`;
@@ -1039,7 +1133,7 @@ function buildObjectiveChineseTitle(item: DailyNewsItem): string {
         return `${subject}${item.subcategory || CATEGORY_LABELS[item.category]}获得批准`;
     }
     if (includesTerm(text, 'launch') || includesTerm(text, 'release') || includesTerm(text, 'rollout')) {
-        return `${subject}${item.subcategory || CATEGORY_LABELS[item.category]}开始落地`;
+        return `${subject}${topic}开始落地`;
     }
     if (includesTerm(text, 'hack') || includesTerm(text, 'exploit') || includesTerm(text, 'breach')) {
         return `${subject}安全事件披露细节`;
@@ -1048,12 +1142,22 @@ function buildObjectiveChineseTitle(item: DailyNewsItem): string {
         return `${subject}监管或法律事件披露细节`;
     }
 
+    if (item.category === 'macro') {
+        return `${topic}受到关注`;
+    }
+    if (item.category === 'crypto') {
+        return `${subject}${topic}出现新进展`;
+    }
+    if (item.category === 'ai') {
+        return `${subject}${topic}出现新进展`;
+    }
+
     return cleanChineseStyle(title);
 }
 
 function buildObjectiveChineseSummary(item: DailyNewsItem, title: string): string {
     if (hasCjkText(item.summary)) {
-        return cleanChineseStyle(item.summary.trim());
+        return compactNewsSummary(item.summary.trim(), title);
     }
 
     if (item.summary && item.summary.trim()) {
@@ -1286,7 +1390,8 @@ function isEditoriallyImportant(item: DailyNewsItem): boolean {
         || isWeakMarketRecap(item)
         || isCryptoAdjacentBusinessNoise(item)
         || isAiProductRumorNoise(item)
-        || isLowValueAiIndustryNoise(item)) {
+        || isLowValueAiIndustryNoise(item)
+        || isGenericNormalizedFallback(item)) {
         return false;
     }
 
@@ -1301,6 +1406,26 @@ function isEditoriallyImportant(item: DailyNewsItem): boolean {
     return item.importanceScore >= MIN_EDITORIAL_IMPORTANCE_SCORE
         || hasSystemicSignal
         || (item.importanceScore >= 45 && item.sourceTier !== 'unknown' && item.confirmationLevel !== 'single_source');
+}
+
+function isGenericNormalizedFallback(item: DailyNewsItem): boolean {
+    const title = item.title.trim();
+    if (/^(监管|芯片|模型|加密|宏观|交易所|稳定币|ETF)$/.test(title)) {
+        return true;
+    }
+    if (/出现新进展$/.test(title)) {
+        return true;
+    }
+    if (/^[A-Za-z0-9 .&-]+\s+(加密|模型|芯片|交易所|监管)出现新进展$/.test(title)) {
+        return true;
+    }
+    if (/^ETF\s+开始\s+ETF$/.test(title) || /^.+\s+开始(加密|模型|芯片|交易所|监管|安全事件)$/.test(title)) {
+        return true;
+    }
+    if (/^(比特币|以太坊)?\s*ETF$/.test(title) && item.importanceScore < TOP_STORY_MIN_SCORE) {
+        return true;
+    }
+    return false;
 }
 
 export function isTopStoryEligible(item: DailyNewsItem): boolean {
