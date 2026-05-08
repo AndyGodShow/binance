@@ -69,6 +69,7 @@ function formatWindow(digest: DailyNewsDigest): string {
 
 function healthLabel(status: NewsHealthStatus['overallStatus']): string {
     if (status === 'healthy') return '正常';
+    if (status === 'partial') return '部分可用';
     if (status === 'degraded') return '部分失败';
     return '数据不足';
 }
@@ -150,9 +151,9 @@ function NewsCommandHeader({
                     <span>缓存状态：{isValidating ? '正在校验最新摘要' : 'SWR 持久缓存可用'}</span>
                     <span>缓存年龄：{model.health.cacheAgeMinutes === null ? '未知' : `${model.health.cacheAgeMinutes} 分钟`}</span>
                 </div>
-                {(model.health.hasFailures || message) && (
+                {(model.health.overallStatus !== 'healthy' || message) && (
                     <div className={styles.degradedNotice}>
-                        {model.health.hasFailures ? '部分源失败，当前结果可能不完整。' : message}
+                        {model.health.overallStatus !== 'healthy' ? `${model.health.message}。` : message}
                     </div>
                 )}
             </aside>

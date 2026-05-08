@@ -23,7 +23,7 @@ export type NewsFilterKey =
     | 'chip'
     | 'model';
 
-export type NewsHealthOverallStatus = 'healthy' | 'degraded' | 'empty';
+export type NewsHealthOverallStatus = 'healthy' | 'partial' | 'degraded' | 'empty';
 export type NewsBriefQuality = 'normal' | 'limited_sample' | 'incomplete';
 
 export interface NewsFilterOption {
@@ -280,18 +280,28 @@ export function getNewsHealthStatus(digest: DailyNewsDigest, now = new Date()): 
     const failedCategories = (Object.values(categoryHealth) as NewsCategoryHealth[])
         .filter((item) => item.status === 'failed')
         .map((item) => item.category);
+    const categoryHealthItems = Object.values(categoryHealth) as NewsCategoryHealth[];
     const allItems = getAllNewsItems(digest);
     const hasFailures = failedCategories.length > 0;
+    const hasPartialCategories = categoryHealthItems.some((item) => item.status === 'partial');
+    const allCategoriesEmpty = categoryHealthItems.every((item) => item.status === 'empty');
+    const hasLimitedSample = allItems.length > 0 && allItems.length <= 1;
     const overallStatus: NewsHealthOverallStatus = hasFailures
         ? 'degraded'
-        : allItems.length === 0
+        : allCategoriesEmpty || allItems.length === 0
             ? 'empty'
-            : 'healthy';
+            : hasPartialCategories || hasLimitedSample
+                ? 'partial'
+                : 'healthy';
     const message = overallStatus === 'healthy'
         ? '数据健康状态正常'
         : overallStatus === 'degraded'
             ? '部分源失败，当前结果可能不完整'
-            : '数据不足，当前窗口暂无入选事件';
+            : overallStatus === 'partial'
+                ? hasLimitedSample
+                    ? '样本不足，当前风险偏向参考价值有限'
+                    : '部分可用，当前结果可能不完整'
+                : '数据不足，当前窗口暂无入选事件';
 
     return {
         overallStatus,

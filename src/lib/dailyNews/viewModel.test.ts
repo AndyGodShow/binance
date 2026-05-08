@@ -133,6 +133,104 @@ test('getNewsHealthStatus distinguishes failed collection from no news', () => {
     assert.equal(health.cacheAgeMinutes, 60);
 });
 
+test('getNewsHealthStatus marks all partial categories as partial rather than healthy', () => {
+    const health = getNewsHealthStatus(digest({
+        macro: [{
+            ...BASE_ITEM,
+            id: 'macro-1',
+            category: 'macro',
+            title: '美联储官员释放谨慎信号',
+        }],
+        ai: [{
+            ...BASE_ITEM,
+            id: 'ai-1',
+            category: 'ai',
+            title: 'NVIDIA 扩大 AI 芯片供应',
+        }],
+        categoryStatus: {
+            crypto: status({ status: 'partial', returned: 1 }),
+            macro: status({ status: 'partial', returned: 1 }),
+            ai: status({ status: 'partial', returned: 1 }),
+        },
+    }));
+
+    assert.equal(health.overallStatus, 'partial');
+    assert.match(health.message, /部分可用/);
+});
+
+test('getNewsHealthStatus marks success plus partial as partial', () => {
+    const health = getNewsHealthStatus(digest({
+        macro: [{
+            ...BASE_ITEM,
+            id: 'macro-1',
+            category: 'macro',
+            title: '美联储官员释放谨慎信号',
+        }],
+        categoryStatus: {
+            crypto: status({ status: 'ok', returned: 1 }),
+            macro: status({ status: 'partial', returned: 1 }),
+            ai: status({ status: 'ok', returned: 0 }),
+        },
+    }));
+
+    assert.equal(health.overallStatus, 'partial');
+});
+
+test('getNewsHealthStatus keeps failed categories degraded', () => {
+    const health = getNewsHealthStatus(digest({
+        macro: [{
+            ...BASE_ITEM,
+            id: 'macro-1',
+            category: 'macro',
+            title: '美联储官员释放谨慎信号',
+        }],
+        categoryStatus: {
+            crypto: status({ status: 'ok', returned: 1 }),
+            macro: status({ status: 'partial', returned: 1 }),
+            ai: status({ status: 'failed', returned: 0, error: 'AI timeout after 10000ms' }),
+        },
+    }));
+
+    assert.equal(health.overallStatus, 'degraded');
+});
+
+test('getNewsHealthStatus only marks all successful and sufficient samples as healthy', () => {
+    const health = getNewsHealthStatus(digest({
+        macro: [{
+            ...BASE_ITEM,
+            id: 'macro-1',
+            category: 'macro',
+            title: '美联储官员释放谨慎信号',
+        }],
+        ai: [{
+            ...BASE_ITEM,
+            id: 'ai-1',
+            category: 'ai',
+            title: 'NVIDIA 扩大 AI 芯片供应',
+        }],
+        categoryStatus: {
+            crypto: status({ status: 'ok', returned: 1 }),
+            macro: status({ status: 'ok', returned: 1 }),
+            ai: status({ status: 'ok', returned: 1 }),
+        },
+    }));
+
+    assert.equal(health.overallStatus, 'healthy');
+});
+
+test('getNewsHealthStatus marks one successful selected event as partial sample', () => {
+    const health = getNewsHealthStatus(digest({
+        categoryStatus: {
+            crypto: status({ status: 'ok', returned: 1 }),
+            macro: status({ status: 'ok', returned: 0 }),
+            ai: status({ status: 'ok', returned: 0 }),
+        },
+    }));
+
+    assert.equal(health.overallStatus, 'partial');
+    assert.match(health.message, /样本不足/);
+});
+
 test('buildNewsViewModel marks one selected event as limited sample and incomplete brief', () => {
     const model = buildNewsViewModel(digest(), new Date('2026-05-08T06:18:14.786Z'));
 
