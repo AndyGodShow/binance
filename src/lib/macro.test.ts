@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+    BTC_LONG_SHORT_RATIO_PERIOD,
+    buildEtfFlowSourceStatus,
     buildMacroDashboard,
     DIGITAL_ASSET_ETF_ASSETS,
     parseBitboBtcEtfFlowHtml,
@@ -151,6 +153,61 @@ test('digital asset ETF defaults include listed single-asset crypto ETFs', () =>
             ['XRPC', 'XRP现货ETF'],
         ]
     );
+});
+
+test('BTC long-short ratio uses a 15 minute period for intraday macro monitoring', () => {
+    assert.equal(BTC_LONG_SHORT_RATIO_PERIOD, '15m');
+});
+
+test('buildEtfFlowSourceStatus marks Farside primary data as live', () => {
+    const status = buildEtfFlowSourceStatus({
+        snapshot: {
+            date: '2026-04-17',
+            provider: 'Farside',
+            totalNetInflowUsdMillion: 120,
+            rolling7dNetInflowUsdMillion: 300,
+            rolling7dPositiveDays: 4,
+            rolling7dNegativeDays: 1,
+            flows: [],
+        },
+        primaryAvailable: true,
+        secondaryAvailable: true,
+    });
+
+    assert.equal(status.status, 'live');
+    assert.equal(status.provider, 'Farside');
+    assert.match(status.detail || '', /备用源已交叉拉取/);
+});
+
+test('buildEtfFlowSourceStatus marks Bitbo-only ETF data as fallback', () => {
+    const status = buildEtfFlowSourceStatus({
+        snapshot: {
+            date: '2026-04-17',
+            provider: 'Bitbo',
+            totalNetInflowUsdMillion: 88,
+            rolling7dNetInflowUsdMillion: 240,
+            rolling7dPositiveDays: 3,
+            rolling7dNegativeDays: 2,
+            flows: [],
+        },
+        primaryAvailable: false,
+        secondaryAvailable: true,
+    });
+
+    assert.equal(status.status, 'fallback');
+    assert.equal(status.provider, 'Bitbo');
+    assert.match(status.detail || '', /正在使用备用 ETF 数据源/);
+});
+
+test('buildEtfFlowSourceStatus marks missing ETF data as unavailable', () => {
+    const status = buildEtfFlowSourceStatus({
+        primaryAvailable: false,
+        secondaryAvailable: false,
+    });
+
+    assert.equal(status.status, 'unavailable');
+    assert.equal(status.provider, 'Unavailable');
+    assert.match(status.detail || '', /ETF flow 当前不可用/);
 });
 
 test('buildMacroDashboard does not claim fallback ETF flow data when no ETF flow snapshot exists', () => {

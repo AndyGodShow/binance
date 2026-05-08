@@ -72,9 +72,9 @@ export default function MacroView() {
         fetcher,
         {
             refreshInterval: 60 * 1000,
-            revalidateOnFocus: false,
+            revalidateOnFocus: true,
             dedupingInterval: 30 * 1000,
-            storageTtlMs: 30 * 60 * 1000,
+            storageTtlMs: 10 * 60 * 1000,
             persistIntervalMs: 60 * 1000,
         }
     );
@@ -403,7 +403,7 @@ export default function MacroView() {
             </section>
 
             <footer className={styles.footerNote}>
-                数据源：雅虎财经、Alternative.me、Binance、Farside Investors。这个页面用于做宏观定位和风险开关，不替代具体进出场信号。
+                数据源：雅虎财经、Alternative.me、Binance、Farside Investors、Bitbo。这个页面用于做宏观定位和风险开关，不替代具体进出场信号。
             </footer>
         </section>
     );

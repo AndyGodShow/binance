@@ -6,6 +6,8 @@ export interface MacroSourceAsset {
     changePercent: number;
 }
 
+export const BTC_LONG_SHORT_RATIO_PERIOD = '15m';
+
 export interface FearGreedSnapshot {
     value: number;
     valueText?: string;
@@ -80,6 +82,40 @@ export interface MacroSourceStatus {
     provider: string;
     status: 'live' | 'fallback' | 'unavailable';
     detail?: string;
+}
+
+export function buildEtfFlowSourceStatus(input: {
+    snapshot?: BtcEtfFlowSnapshot;
+    primaryAvailable: boolean;
+    secondaryAvailable: boolean;
+}): MacroSourceStatus {
+    if (!input.snapshot) {
+        return {
+            key: 'etf',
+            label: 'ETF 资金流',
+            provider: 'Unavailable',
+            status: 'unavailable',
+            detail: 'ETF flow 当前不可用',
+        };
+    }
+
+    const detailParts = [input.snapshot.date];
+    if (!input.primaryAvailable && input.secondaryAvailable) {
+        detailParts.push('主源不可用，正在使用备用 ETF 数据源');
+    } else if (input.snapshot.provider === 'Bitbo' && input.primaryAvailable) {
+        detailParts.push('Bitbo 更新更靠前');
+    }
+    if (input.primaryAvailable && input.secondaryAvailable) {
+        detailParts.push('备用源已交叉拉取');
+    }
+
+    return {
+        key: 'etf',
+        label: 'ETF 资金流',
+        provider: input.snapshot.provider || 'Unknown',
+        status: input.primaryAvailable ? 'live' : 'fallback',
+        detail: detailParts.join(' · '),
+    };
 }
 
 export interface MacroDashboardData {

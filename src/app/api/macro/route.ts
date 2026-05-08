@@ -3,6 +3,8 @@ import { NextResponse } from 'next/server';
 import { fetchBinanceJson } from '@/lib/binanceApi';
 import { logger } from '@/lib/logger';
 import {
+    BTC_LONG_SHORT_RATIO_PERIOD,
+    buildEtfFlowSourceStatus,
     buildMacroDashboard,
     DIGITAL_ASSET_ETF_ASSETS,
     parseBitboBtcEtfFlowHtml,
@@ -79,6 +81,12 @@ const YAHOO_ASSETS: YahooAssetConfig[] = [
 const ETF_FLOWS_URL = 'https://farside.co.uk/btc/';
 const ETF_FLOWS_BITBO_URL = 'https://bitbo.io/treasuries/etf-flows/';
 
+interface EtfFlowFetchResult {
+    snapshot?: BtcEtfFlowSnapshot;
+    primaryAvailable: boolean;
+    secondaryAvailable: boolean;
+}
+
 function normalizeHtmlToText(html: string): string {
     return html
         .replace(/<script[\s\S]*?<\/script>/gi, ' ')
@@ -102,7 +110,7 @@ async function fetchYahooAsset(asset: YahooAssetConfig): Promise<MacroSourceAsse
                     'User-Agent': 'Mozilla/5.0',
                     'Accept': 'application/json',
                 },
-                next: { revalidate: 300 },
+                next: { revalidate: 60 },
             });
 
             if (!response.ok) {
@@ -182,7 +190,7 @@ async function fetchBtcSnapshot() {
     const [ticker, premium, lsRatioData] = await Promise.all([
         fetchBinanceJson<Binance24hTicker>('/fapi/v1/ticker/24hr?symbol=BTCUSDT', { revalidate: 30 }),
         fetchBinanceJson<BinancePremiumIndex>('/fapi/v1/premiumIndex?symbol=BTCUSDT', { revalidate: 30 }),
-        fetchBinanceJson<Array<{ longShortRatio: string }>>('/futures/data/globalLongShortAccountRatio?symbol=BTCUSDT&period=1d', { revalidate: 300 }),
+        fetchBinanceJson<Array<{ longShortRatio: string }>>(`/futures/data/globalLongShortAccountRatio?symbol=BTCUSDT&period=${BTC_LONG_SHORT_RATIO_PERIOD}`, { revalidate: 60 }),
     ]);
 
     const lsRatio = (Array.isArray(lsRatioData) && lsRatioData.length > 0)
@@ -207,14 +215,14 @@ async function fetchEthBtcSnapshot() {
     };
 }
 
-async function fetchBtcEtfFlow(): Promise<BtcEtfFlowSnapshot | undefined> {
+async function fetchFarsideBtcEtfFlow(): Promise<BtcEtfFlowSnapshot | undefined> {
     try {
         const response = await fetch(ETF_FLOWS_URL, {
             headers: {
                 'User-Agent': 'Mozilla/5.0',
                 'Accept': 'text/html,application/xhtml+xml',
             },
-            next: { revalidate: 60 * 60 },
+            next: { revalidate: 15 * 60 },
         });
 
         if (!response.ok) {
@@ -230,15 +238,18 @@ async function fetchBtcEtfFlow(): Promise<BtcEtfFlowSnapshot | undefined> {
         logger.warn('Failed to fetch BTC ETF flow data', {
             error: error instanceof Error ? error.message : String(error),
         });
+        return undefined;
     }
+}
 
+async function fetchBitboBtcEtfFlow(): Promise<BtcEtfFlowSnapshot | undefined> {
     try {
         const response = await fetch(ETF_FLOWS_BITBO_URL, {
             headers: {
                 'User-Agent': 'Mozilla/5.0',
                 'Accept': 'text/html,application/xhtml+xml',
             },
-            next: { revalidate: 60 * 60 },
+            next: { revalidate: 15 * 60 },
         });
 
         if (!response.ok) {
@@ -256,6 +267,37 @@ async function fetchBtcEtfFlow(): Promise<BtcEtfFlowSnapshot | undefined> {
         });
         return undefined;
     }
+}
+
+function chooseLatestEtfFlow(primary?: BtcEtfFlowSnapshot, secondary?: BtcEtfFlowSnapshot): BtcEtfFlowSnapshot | undefined {
+    if (!primary) {
+        return secondary;
+    }
+    if (!secondary) {
+        return primary;
+    }
+
+    const primaryTime = new Date(primary.date).getTime();
+    const secondaryTime = new Date(secondary.date).getTime();
+    if (Number.isFinite(secondaryTime) && (!Number.isFinite(primaryTime) || secondaryTime > primaryTime)) {
+        return secondary;
+    }
+
+    return primary;
+}
+
+async function fetchBtcEtfFlow(): Promise<EtfFlowFetchResult> {
+    const [primary, secondary] = await Promise.all([
+        fetchFarsideBtcEtfFlow(),
+        fetchBitboBtcEtfFlow(),
+    ]);
+    const snapshot = chooseLatestEtfFlow(primary, secondary);
+
+    return {
+        snapshot,
+        primaryAvailable: Boolean(primary),
+        secondaryAvailable: Boolean(secondary),
+    };
 }
 
 export async function GET() {
@@ -285,9 +327,9 @@ export async function GET() {
             fearGreed: fearGreedResult,
             btc: btcResult,
             ethBtc: ethBtcResult,
-            etfFlow: etfFlowResult
+            etfFlow: etfFlowResult.snapshot
                 ? {
-                    ...etfFlowResult,
+                    ...etfFlowResult.snapshot,
                     btcPrice: btcResult.price,
                 }
                 : undefined,
@@ -315,13 +357,7 @@ export async function GET() {
                 status: 'live',
                 detail: `BTC ${btcResult.price.toFixed(0)}`,
             },
-            {
-                key: 'etf',
-                label: 'ETF 资金流',
-                provider: etfFlowResult?.provider === 'Bitbo' ? 'Bitbo (备用源)' : etfFlowResult?.provider || 'Unavailable',
-                status: etfFlowResult ? (etfFlowResult.provider === 'Bitbo' ? 'fallback' : 'live') : 'unavailable',
-                detail: etfFlowResult ? etfFlowResult.date : '暂无可用源',
-            },
+            buildEtfFlowSourceStatus(etfFlowResult),
         ];
 
         const dashboard = buildMacroDashboard(payload);
@@ -329,7 +365,7 @@ export async function GET() {
 
         return NextResponse.json(dashboard, {
             headers: {
-                'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=300',
+                'Cache-Control': 'public, s-maxage=30, stale-while-revalidate=60',
             },
         });
     } catch (error) {
