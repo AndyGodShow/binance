@@ -118,7 +118,8 @@ const ADVICE_EXPLAINER_NOISE_TERMS = [
 const PRICE_MOVE_TERMS = [
     'crosses', 'breaks', 'hits', 'reaches', 'jumps', 'surges', 'drops', 'falls',
     'rally', 'rallies', 'pullback', 'new high', '突破', '反弹', '回调', '新高',
-    '触及', '收复', '上涨', '下跌',
+    '触及', '收复', '上涨', '下跌', '涨超', '跌超', '拉升', '急涨', '急跌',
+    '短时上涨', '短时下跌', '短时突破',
 ];
 const PRICE_FRAMING_TERMS = [
     ...PRICE_MOVE_TERMS,
@@ -159,6 +160,17 @@ const AI_PERSONNEL_OR_ROUTINE_PARTNERSHIP_TERMS = [
     'jensen huang on anthropic', 'fis', 'stock falls', 'stock down',
     'shares down', 'chip stocks are tumbling', 'blame openai', '股价下跌',
     '芯片股正在暴跌', '归咎于 OpenAI',
+];
+const LISTING_PRICE_REACTION_TERMS = [
+    'will list', 'to list', 'lists', 'listing', 'new listing', '上线',
+    '将上线', '新增交易对', '永续合约',
+];
+const PRICE_REACTION_PROTECTED_TERMS = [
+    'sec', 'cftc', 'etf', 'stablecoin', 'usdc', 'tether', 'circle', 'depeg',
+    'reserve', 'reserves', 'hack', 'exploit', 'breach', 'outage', 'withdrawal',
+    'lawsuit', 'charges', 'settlement', 'regulator', 'regulation', '监管',
+    '诉讼', '指控', '和解', '脱锚', '储备', '黑客', '攻击', '漏洞',
+    '宕机', '故障', '暂停提现',
 ];
 const MAJOR_EVENT_ANCHOR_TERMS = [
     'sec', 'cftc', 'etf', 'stablecoin', 'depeg', 'hack', 'exploit', 'binance',
@@ -547,6 +559,17 @@ function isWeakMarketRecap(value: NewsCandidate | DailyNewsItem): boolean {
         && !hasRegulatoryFiling
         && !hasSecurityOrInfrastructureFact
         && sourceTier !== 'official';
+}
+
+function isListingPriceReaction(value: NewsCandidate | DailyNewsItem): boolean {
+    if ('category' in value && value.category !== 'crypto') {
+        return false;
+    }
+
+    const text = newsText(value);
+    return hasAnyTerm(text, LISTING_PRICE_REACTION_TERMS)
+        && hasAnyTerm(text, PRICE_MOVE_TERMS)
+        && !hasAnyTerm(text, PRICE_REACTION_PROTECTED_TERMS);
 }
 
 function isCryptoAdjacentBusinessNoise(value: NewsCandidate | DailyNewsItem): boolean {
@@ -1387,6 +1410,7 @@ function isEditoriallyImportant(item: DailyNewsItem): boolean {
         || isKolOpinionNoise(item)
         || isAdviceExplainerNoise(item)
         || isPurePriceMove(item)
+        || isListingPriceReaction(item)
         || isWeakMarketRecap(item)
         || isCryptoAdjacentBusinessNoise(item)
         || isAiProductRumorNoise(item)
@@ -1437,6 +1461,7 @@ export function isTopStoryEligible(item: DailyNewsItem): boolean {
         && !isKolOpinionNoise(item)
         && !isAdviceExplainerNoise(item)
         && !isPurePriceMove(item)
+        && !isListingPriceReaction(item)
         && !isPriceFramedWithoutConcreteEvent(item)
         && !isWeakMarketRecap(item)
         && !isCryptoAdjacentBusinessNoise(item)

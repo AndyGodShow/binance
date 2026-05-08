@@ -1244,6 +1244,37 @@ test('dedupeAndRankCandidates filters Chinese stock commentary and roundup recap
     assert.equal(result.items[0]?.confirmationLevel, 'single_authoritative');
 });
 
+test('dedupeAndRankCandidates filters Chinese price reaction news while keeping exchange incidents', () => {
+    const result = dedupeAndRankCandidates('crypto', [
+        candidate({
+            category: 'crypto',
+            title: 'Binance 将上线 PROSUSDT 永续合约，PROS 短时涨超 70%',
+            summary: '行情显示，受 Binance 将上线 PROSUSDT 永续合约影响，PROS 短时涨超 70%。',
+            source: 'Odaily 星球日报',
+            domain: 'odaily.news',
+            url: 'https://www.odaily.news/zh-CN/newsflash/pros-price-surge',
+            publishedAt: '2026-04-17T18:00:00.000Z',
+            tags: ['PROS', 'Binance', 'USDT'],
+            rawSnippet: '',
+        }),
+        candidate({
+            category: 'crypto',
+            title: 'Coinbase交易所宕机超2小时',
+            summary: 'Coinbase 交易所发生宕机，用户交易和提现短时受影响。',
+            source: 'Odaily 星球日报',
+            domain: 'odaily.news',
+            url: 'https://www.odaily.news/zh-CN/newsflash/coinbase-outage',
+            publishedAt: '2026-04-17T19:00:00.000Z',
+            tags: ['Coinbase', 'exchange'],
+            rawSnippet: '',
+        }),
+    ], WINDOW, 10);
+
+    const titles = result.items.map((item) => item.title).join('\n');
+    assert.doesNotMatch(titles, /PROS|短时涨超/);
+    assert.match(titles, /Coinbase|宕机/);
+});
+
 test('daily news Chinese normalization hard caps long first-sentence recaps', () => {
     const longSummary = `CEX 热门币种 CEX 成交额 Top 10 及 24 小时涨跌幅：${' BTC: -1.55% ETH: -1.7% SOL: -0.02%'.repeat(40)}。后续还有市场要闻。`;
     const digest = buildDailyNewsDigestFromResults([
