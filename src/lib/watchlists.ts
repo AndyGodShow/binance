@@ -20,6 +20,26 @@ export function createWatchlistsState(): WatchlistsState {
     };
 }
 
+export function parseStoredWatchlistsState(raw: string | null): WatchlistsState {
+    if (!raw) {
+        return createWatchlistsState();
+    }
+
+    try {
+        const parsed = JSON.parse(raw) as Partial<WatchlistsState> | null;
+        if (!parsed || !Array.isArray(parsed.watchlists)) {
+            return createWatchlistsState();
+        }
+
+        return {
+            watchlists: parsed.watchlists,
+            activeWatchlistId: parsed.activeWatchlistId ?? parsed.watchlists[0]?.id ?? null,
+        };
+    } catch {
+        return createWatchlistsState();
+    }
+}
+
 export function createWatchlist(state: WatchlistsState, name: string): WatchlistsState {
     const trimmedName = name.trim();
     if (!trimmedName) {

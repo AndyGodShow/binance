@@ -7,6 +7,7 @@ import {
     createWatchlist,
     createWatchlistsState,
     deleteWatchlist,
+    parseStoredWatchlistsState,
     removeSymbolFromWatchlist,
     renameWatchlist,
     selectWatchlist,
@@ -20,35 +21,36 @@ function readStoredState(): WatchlistsState {
     }
 
     try {
-        const raw = window.localStorage.getItem(STORAGE_KEY);
-        if (!raw) {
-            return createWatchlistsState();
-        }
-
-        const parsed = JSON.parse(raw) as WatchlistsState;
-        if (!parsed || !Array.isArray(parsed.watchlists)) {
-            return createWatchlistsState();
-        }
-
-        return {
-            watchlists: parsed.watchlists,
-            activeWatchlistId: parsed.activeWatchlistId ?? parsed.watchlists[0]?.id ?? null,
-        };
+        return parseStoredWatchlistsState(window.localStorage.getItem(STORAGE_KEY));
     } catch {
         return createWatchlistsState();
     }
 }
 
 export function useWatchlists() {
-    const [state, setState] = useState<WatchlistsState>(() => readStoredState());
+    const [state, setState] = useState<WatchlistsState>(() => createWatchlistsState());
+    const [storageReady, setStorageReady] = useState(false);
 
     useEffect(() => {
+        const loadStoredState = window.setTimeout(() => {
+            setState(readStoredState());
+            setStorageReady(true);
+        }, 0);
+
+        return () => window.clearTimeout(loadStoredState);
+    }, []);
+
+    useEffect(() => {
+        if (!storageReady) {
+            return;
+        }
+
         try {
             window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
         } catch {
             // Ignore persistence failures; runtime state remains usable.
         }
-    }, [state]);
+    }, [state, storageReady]);
 
     const addWatchlist = useCallback((name: string) => {
         setState((current) => createWatchlist(current, name));

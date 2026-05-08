@@ -7,6 +7,7 @@ import {
     createWatchlist,
     createWatchlistsState,
     filterTickersByWatchlist,
+    parseStoredWatchlistsState,
     removeSymbolFromWatchlist,
 } from './watchlists.ts';
 
@@ -34,6 +35,22 @@ test('createWatchlist adds a new list and selects it', () => {
     assert.equal(created.watchlists.length, 1);
     assert.equal(created.activeWatchlistId, created.watchlists[0].id);
     assert.equal(created.watchlists[0].name, '龙头');
+});
+
+test('parseStoredWatchlistsState restores persisted lists without falling back to generated ids', () => {
+    const stored = parseStoredWatchlistsState(JSON.stringify({
+        watchlists: [{
+            id: 'watchlist-stored',
+            name: '链上观察',
+            symbols: ['BTCUSDT'],
+            createdAt: 1,
+            updatedAt: 2,
+        }],
+        activeWatchlistId: null,
+    }));
+
+    assert.equal(stored.watchlists[0]?.id, 'watchlist-stored');
+    assert.equal(stored.activeWatchlistId, 'watchlist-stored');
 });
 
 test('addSymbolToWatchlist uppercases and deduplicates symbols', () => {
