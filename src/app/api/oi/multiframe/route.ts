@@ -8,6 +8,7 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 const REQUEST_TIMEOUT_MS = 20000;
+const REQUEST_BATCH_SIZE = process.env.NODE_ENV === 'development' ? 5 : 20;
 
 function parseRequestedSymbols(searchParams: URLSearchParams): string[] {
     const raw = searchParams.get('symbols');
@@ -39,7 +40,7 @@ export async function GET(request: Request) {
 
     try {
         const snapshotMap = await withTimeout(
-            fetchOpenInterestFrameSnapshotsBatch(requestedSymbols, 20),
+            fetchOpenInterestFrameSnapshotsBatch(requestedSymbols, REQUEST_BATCH_SIZE),
             REQUEST_TIMEOUT_MS,
             'oi multiframe batch build'
         );

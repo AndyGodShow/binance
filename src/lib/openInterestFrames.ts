@@ -6,13 +6,21 @@ import {
     buildOpenInterestFrameSnapshot,
 } from './openInterestFrameMath';
 import { buildOpenInterestHistoryPath } from './openInterestShared.ts';
+import { createOpenInterestFrameCircuitBreaker } from './openInterestFrameCircuit.ts';
 
 const OI_FRAME_CACHE_TTL = 5 * 60 * 1000;
 const OI_FRAME_HISTORY_LIMIT = 97;
 const OI_FRAME_PERIOD = '15m';
+const OI_FRAME_FAILURE_THRESHOLD = 3;
+const OI_FRAME_FAILURE_COOLDOWN_MS = 30_000;
 
 const oiFrameSnapshotCache = new LRUCache<OpenInterestFrameSnapshot>(1000, OI_FRAME_CACHE_TTL);
 const inflightFrameRequests = new Map<string, Promise<OpenInterestFrameSnapshot | null>>();
+
+const oiFrameCircuitBreaker = createOpenInterestFrameCircuitBreaker(
+    OI_FRAME_FAILURE_THRESHOLD,
+    OI_FRAME_FAILURE_COOLDOWN_MS
+);
 
 export async function fetchOpenInterestFrameSnapshot(symbol: string): Promise<OpenInterestFrameSnapshot | null> {
     const normalizedSymbol = symbol.toUpperCase();
@@ -28,6 +36,10 @@ export async function fetchOpenInterestFrameSnapshot(symbol: string): Promise<Op
     }
 
     const request = (async () => {
+        if (!oiFrameCircuitBreaker.canRequest()) {
+            return null;
+        }
+
         try {
             const response = await fetchBinanceJson<unknown>(
                 buildOpenInterestHistoryPath(normalizedSymbol, OI_FRAME_PERIOD, OI_FRAME_HISTORY_LIMIT),
@@ -40,8 +52,10 @@ export async function fetchOpenInterestFrameSnapshot(symbol: string): Promise<Op
 
             const snapshot = buildOpenInterestFrameSnapshot(normalizedSymbol, response);
             oiFrameSnapshotCache.set(cacheKey, snapshot, OI_FRAME_CACHE_TTL);
+            oiFrameCircuitBreaker.recordSuccess();
             return snapshot;
         } catch (error) {
+            oiFrameCircuitBreaker.recordFailure();
             logger.warn('Failed to fetch open interest frame snapshot', {
                 symbol: normalizedSymbol,
                 error: error instanceof Error ? error.message : String(error),

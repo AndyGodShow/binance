@@ -12,6 +12,8 @@ let warmupFallbackData: Record<string, string> | null = null;
 let warmupFallbackAt = 0;
 const LIVE_CACHE_DURATION = 15000;
 const BUILD_TIMEOUT_MS = 12000;
+const OPEN_INTEREST_CHUNK_SIZE = process.env.NODE_ENV === 'development' ? 5 : 20;
+const OPEN_INTEREST_FAILURE_BATCH_LIMIT = process.env.NODE_ENV === 'development' ? 1 : 3;
 
 interface BinanceTicker24h {
     symbol: string;
@@ -25,6 +27,12 @@ interface BinanceExchangeInfoSymbol {
 
 interface BinanceExchangeInfoResponse {
     symbols: BinanceExchangeInfoSymbol[];
+}
+
+interface OpenInterestFetchResult {
+    symbol: string;
+    oi: string;
+    failed: boolean;
 }
 
 function isBinanceTicker24h(value: unknown): value is BinanceTicker24h {
@@ -64,19 +72,26 @@ async function buildOpenInterestMap(): Promise<Record<string, string>> {
         );
     };
 
-    const chunks = chunkArray(activeSymbols, 20);
+    const chunks = chunkArray(activeSymbols, OPEN_INTEREST_CHUNK_SIZE);
     const oiData: Record<string, string> = {};
+    let failedBatches = 0;
 
     for (const chunk of chunks) {
-        const promises = chunk.map((s: string) =>
+        const promises = chunk.map((s: string): Promise<OpenInterestFetchResult> =>
             fetchBinanceJson<{ openInterest?: string }>(`/fapi/v1/openInterest?symbol=${s}`, { revalidate: 60 })
-                .then((d) => ({ symbol: s, oi: typeof d.openInterest === 'string' ? d.openInterest : '0' }))
-                .catch(() => ({ symbol: s, oi: '0' }))
+                .then((d) => ({ symbol: s, oi: typeof d.openInterest === 'string' ? d.openInterest : '0', failed: false }))
+                .catch(() => ({ symbol: s, oi: '0', failed: true }))
         );
         const batchResults = await Promise.all(promises);
+        const batchFailed = batchResults.every((result) => result.failed);
         batchResults.forEach(r => {
             if (r.oi) oiData[r.symbol] = r.oi;
         });
+
+        failedBatches = batchFailed ? failedBatches + 1 : 0;
+        if (failedBatches >= OPEN_INTEREST_FAILURE_BATCH_LIMIT) {
+            break;
+        }
 
         if (!lastSuccessfulData && Object.keys(oiData).length > 0) {
             const snapshot = { ...oiData };

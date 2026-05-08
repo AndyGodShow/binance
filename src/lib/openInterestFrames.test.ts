@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+import { createOpenInterestFrameCircuitBreaker } from './openInterestFrameCircuit.ts';
 import { buildOpenInterestFrameSnapshot } from './openInterestFrameMath.ts';
 
 function buildEntry(minutesAgo: number, value: number, baseTime: number) {
@@ -45,4 +46,29 @@ test('buildOpenInterestFrameSnapshot skips windows with non-positive baseline va
     assert.ok(snapshot);
     assert.equal(snapshot.change15m, undefined);
     assert.equal(snapshot.currentValue, 50);
+});
+
+test('open interest frame circuit breaker pauses after consecutive upstream failures', () => {
+    const breaker = createOpenInterestFrameCircuitBreaker(3, 30_000);
+
+    assert.equal(breaker.canRequest(1_000), true);
+    breaker.recordFailure(1_000);
+    breaker.recordFailure(1_100);
+    assert.equal(breaker.canRequest(1_200), true);
+
+    breaker.recordFailure(1_200);
+    assert.equal(breaker.canRequest(1_201), false);
+    assert.equal(breaker.canRequest(31_201), true);
+});
+
+test('open interest frame circuit breaker clears pause after a successful request', () => {
+    const breaker = createOpenInterestFrameCircuitBreaker(2, 30_000);
+
+    breaker.recordFailure(1_000);
+    breaker.recordFailure(1_100);
+    assert.equal(breaker.canRequest(1_200), false);
+
+    breaker.recordSuccess();
+    assert.equal(breaker.canRequest(1_300), true);
+    assert.deepEqual(breaker.getState(), { consecutiveFailures: 0, pausedUntil: 0 });
 });
