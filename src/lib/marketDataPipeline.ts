@@ -8,6 +8,11 @@ import { fetchOpenInterestMarketSnapshotsBatch } from '@/lib/openInterest';
 import { fetchSentimentHotspotContextMap } from '@/lib/sentimentHotspot';
 import { WEI_SHEN_UNIVERSE } from '@/lib/weiShenUniverse';
 import { buildWeiShenContext, getWeiShenTimeframes } from '@/lib/weiShenStrategy';
+import {
+    buildMarketKlineEnhancementStagePlan,
+    fetchMarketKlineEnhancementGroup,
+    resolveMarketKlineBatchSize,
+} from '@/lib/marketBuildConfig';
 
 interface BinanceExchangeInfoSymbol {
     symbol: string;
@@ -236,22 +241,28 @@ export async function buildMarketData(): Promise<TickerData[]> {
     const eligibleTickerInputs = selectEligibleTickerInputs(baseMarketData, oiSnapshotMap);
     const eligibleSymbols = eligibleTickerInputs.map((ticker) => ticker.symbol);
     const weiUniverseSymbols = resolveWeiUniverseSymbols(baseMarketData);
+    const klineBatchSize = resolveMarketKlineBatchSize(APP_CONFIG.API.BATCH_SIZE);
+    const klineStagePlan = buildMarketKlineEnhancementStagePlan({
+        eligibleSymbols,
+        weiUniverseSymbols,
+        weiShenTimeframes,
+    });
 
     const [
         klinesMap,
         trend5mKlinesMap,
         daily1dKlinesMap,
+    ] = await Promise.all(klineStagePlan.eligible.map((request) =>
+        fetchMarketKlineEnhancementGroup(request, klineBatchSize, fetchKlinesBatch, logger)
+    ));
+
+    const [
         wei1hKlinesMap,
         wei4hKlinesMap,
         wei1dKlinesMap,
-    ] = await Promise.all([
-        fetchKlinesBatch(eligibleSymbols, APP_CONFIG.API.BATCH_SIZE, '15m', 50),
-        fetchKlinesBatch(eligibleSymbols, APP_CONFIG.API.BATCH_SIZE, '5m', 120),
-        fetchKlinesBatch(eligibleSymbols, APP_CONFIG.API.BATCH_SIZE, '1d', 30),
-        fetchKlinesBatch(weiUniverseSymbols, APP_CONFIG.API.BATCH_SIZE, weiShenTimeframes.signalInterval, 180),
-        fetchKlinesBatch(weiUniverseSymbols, APP_CONFIG.API.BATCH_SIZE, weiShenTimeframes.confirmInterval, 180),
-        fetchKlinesBatch(weiUniverseSymbols, APP_CONFIG.API.BATCH_SIZE, weiShenTimeframes.dailyFilterInterval, 60),
-    ]);
+    ] = await Promise.all(klineStagePlan.weiShen.map((request) =>
+        fetchMarketKlineEnhancementGroup(request, klineBatchSize, fetchKlinesBatch, logger)
+    ));
 
     const sentimentHotspotMap = await fetchSentimentHotspotContextMap(baseMarketData, daily1dKlinesMap, klinesMap);
 
