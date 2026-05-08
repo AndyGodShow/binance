@@ -10,7 +10,7 @@ interface RssSource {
     tags: string[];
 }
 
-const RSS_TIMEOUT_MS = 5000;
+const RSS_TIMEOUT_MS = 8000;
 const GOOGLE_NEWS_BASE = 'https://news.google.com/rss/search';
 
 function buildGoogleNewsRssUrl(query: string): string {
@@ -152,6 +152,12 @@ async function fetchTextWithTimeout(url: string): Promise<string> {
         }
 
         return await response.text();
+    } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError'
+            || error instanceof Error && /aborted|aborterror/i.test(`${error.name} ${error.message}`)) {
+            throw new Error(`RSS timeout after ${RSS_TIMEOUT_MS}ms`);
+        }
+        throw error;
     } finally {
         clearTimeout(timer);
     }

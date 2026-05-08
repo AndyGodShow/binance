@@ -17,7 +17,7 @@ interface GdeltResponse {
 }
 
 const GDELT_ENDPOINT = 'https://api.gdeltproject.org/api/v2/doc/doc';
-const REQUEST_TIMEOUT_MS = 4000;
+const REQUEST_TIMEOUT_MS = 10000;
 const MAX_RECORDS = 75;
 const RETRY_DELAY_MS = 600;
 
@@ -66,6 +66,12 @@ async function fetchJsonWithTimeout(url: string, timeoutMs: number): Promise<Gde
         }
 
         return await response.json() as GdeltResponse;
+    } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError'
+            || error instanceof Error && /aborted|aborterror/i.test(`${error.name} ${error.message}`)) {
+            throw new Error(`GDELT timeout after ${timeoutMs}ms`);
+        }
+        throw error;
     } finally {
         clearTimeout(timer);
     }

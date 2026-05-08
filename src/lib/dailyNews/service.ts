@@ -8,9 +8,19 @@ import {
     sanitizeDailyNewsDigest,
 } from './pipeline.ts';
 import { fetchRssNewsCandidates } from './rss.ts';
+import { fetch6551NewsCandidates } from './sixFiveFiveOne.ts';
 import { createDailyNewsStorage } from './storage.ts';
 import { translateDailyNewsDigest } from './translate.ts';
-import { NEWS_CATEGORIES, type CategoryCollectionResult, type DailyNewsGenerationResult } from './types.ts';
+import {
+    NEWS_CATEGORIES,
+    type CategoryCollectionResult,
+    type DailyNewsGenerationResult,
+    type DailyNewsSourceAttempt,
+    type DailyNewsSourceName,
+    type DailyNewsWindow,
+    type NewsCandidate,
+    type NewsCategory,
+} from './types.ts';
 
 interface GenerateOptions {
     force?: boolean;
@@ -18,6 +28,29 @@ interface GenerateOptions {
 }
 
 let inflightGeneration: Promise<DailyNewsGenerationResult> | null = null;
+
+const SOURCE_TIMEOUT_MS: Record<DailyNewsSourceName, number> = {
+    rss: 8000,
+    '6551': 6000,
+    gdelt: 10000,
+};
+
+const SOURCE_LABELS: Record<DailyNewsSourceName, string> = {
+    rss: 'RSS',
+    '6551': '6551',
+    gdelt: 'GDELT',
+};
+
+interface NewsSourceCollector {
+    source: DailyNewsSourceName;
+    collect(category: NewsCategory, window: DailyNewsWindow): Promise<NewsCandidate[]>;
+}
+
+const DEFAULT_SOURCE_COLLECTORS: NewsSourceCollector[] = [
+    { source: 'rss', collect: fetchRssNewsCandidates },
+    { source: '6551', collect: fetch6551NewsCandidates },
+    { source: 'gdelt', collect: fetchGdeltNewsCandidates },
+];
 
 export async function readLatestDailyNewsDigest() {
     const storage = createDailyNewsStorage();
@@ -29,37 +62,87 @@ export async function readLatestDailyNewsDigest() {
     };
 }
 
-async function collectCategory(category: typeof NEWS_CATEGORIES[number], window: ReturnType<typeof calculateDailyNewsWindow>): Promise<CategoryCollectionResult> {
-    const candidates: CategoryCollectionResult['candidates'] = [];
-    let errorMessage: string | undefined;
+function isAbortError(error: unknown): boolean {
+    return error instanceof DOMException && error.name === 'AbortError'
+        || error instanceof Error && /aborted|aborterror/i.test(`${error.name} ${error.message}`);
+}
 
-    try {
-        candidates.push(...await fetchRssNewsCandidates(category, window));
-    } catch (error) {
-        errorMessage = error instanceof Error ? error.message : String(error);
-        logger.warn('Daily news RSS category collection failed', { category, error: errorMessage });
+function normalizeSourceError(source: DailyNewsSourceName, error: unknown): string {
+    if (isAbortError(error)) {
+        return `${SOURCE_LABELS[source]} timeout after ${SOURCE_TIMEOUT_MS[source]}ms`;
     }
 
-    if (candidates.length >= 5) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.toLowerCase().includes(SOURCE_LABELS[source].toLowerCase())) {
+        return message;
+    }
+    return `${SOURCE_LABELS[source]} ${message}`;
+}
+
+async function runSourceAttempt(
+    category: NewsCategory,
+    window: DailyNewsWindow,
+    collector: NewsSourceCollector
+): Promise<{ candidates: NewsCandidate[]; attempt: DailyNewsSourceAttempt }> {
+    const startedAt = Date.now();
+
+    try {
+        const candidates = await collector.collect(category, window);
+        const durationMs = Date.now() - startedAt;
         return {
-            category,
-            ok: true,
             candidates,
+            attempt: {
+                source: collector.source,
+                status: candidates.length > 0 ? 'success' : 'empty',
+                candidateCount: candidates.length,
+                durationMs,
+            },
+        };
+    } catch (error) {
+        const message = normalizeSourceError(collector.source, error);
+        logger.warn('Daily news source collection failed', {
+            category,
+            source: collector.source,
+            error: message,
+        });
+        return {
+            candidates: [],
+            attempt: {
+                source: collector.source,
+                status: 'failed',
+                candidateCount: 0,
+                durationMs: Date.now() - startedAt,
+                error: message,
+            },
         };
     }
+}
 
-    try {
-        candidates.push(...await fetchGdeltNewsCandidates(category, window));
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        errorMessage = errorMessage ? `${errorMessage}; ${message}` : message;
-        logger.warn('Daily news GDELT category collection failed', { category, error: message });
+async function collectCategory(
+    category: typeof NEWS_CATEGORIES[number],
+    window: DailyNewsWindow,
+    collectors = DEFAULT_SOURCE_COLLECTORS
+): Promise<CategoryCollectionResult> {
+    const candidates: CategoryCollectionResult['candidates'] = [];
+    const sourceAttempts: DailyNewsSourceAttempt[] = [];
+
+    for (const collector of collectors) {
+        const result = await runSourceAttempt(category, window, collector);
+        candidates.push(...result.candidates);
+        sourceAttempts.push(result.attempt);
     }
+
+    const degradedReasons = sourceAttempts
+        .filter((attempt) => attempt.status !== 'success')
+        .map((attempt) => attempt.error || `${SOURCE_LABELS[attempt.source]} returned no candidates`);
+    const errorMessage = degradedReasons.length > 0 ? degradedReasons.join('; ') : undefined;
 
     return {
         category,
         ok: candidates.length > 0,
         candidates,
+        sourceAttempts,
+        degradedReason: candidates.length > 0 ? errorMessage : undefined,
         error: candidates.length > 0 ? undefined : errorMessage,
     };
 }
@@ -90,6 +173,7 @@ async function generateDailyNewsDigestInner(options: GenerateOptions = {}): Prom
             logger.warn('Daily news generation produced no items; keeping previous digest', {
                 generatedAt: previousDigest.generatedAt,
             });
+            // TODO: consider category-level stale merges when a refresh only fails macro or AI.
             return {
                 digest: previousDigest,
                 generated: false,
@@ -117,6 +201,11 @@ async function generateDailyNewsDigestInner(options: GenerateOptions = {}): Prom
         storageMode: storage.mode,
     };
 }
+
+export const dailyNewsServiceInternals = {
+    collectCategory,
+    normalizeSourceError,
+};
 
 export async function generateDailyNewsDigest(options: GenerateOptions = {}): Promise<DailyNewsGenerationResult> {
     if (inflightGeneration) {

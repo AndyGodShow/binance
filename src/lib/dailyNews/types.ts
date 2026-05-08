@@ -1,6 +1,8 @@
 export type NewsCategory = 'macro' | 'ai' | 'crypto';
 export type ImportanceLevel = 'high' | 'medium' | 'low';
 export type CategoryStatus = 'ok' | 'partial' | 'failed';
+export type DailyNewsSourceName = 'rss' | '6551' | 'gdelt';
+export type DailyNewsSourceAttemptStatus = 'success' | 'partial' | 'empty' | 'failed';
 export type ImpactDirection = 'risk_on' | 'risk_off' | 'mixed' | 'neutral';
 export type ImpactHorizon = 'intraday' | '1-3d' | '1-4w';
 export type NewsRiskBias = ImpactDirection;
@@ -60,6 +62,14 @@ export interface NewsCandidate {
     rawSnippet?: string;
 }
 
+export interface DailyNewsSourceAttempt {
+    source: DailyNewsSourceName;
+    status: DailyNewsSourceAttemptStatus;
+    candidateCount: number;
+    durationMs: number;
+    error?: string;
+}
+
 export interface DailyNewsItem {
     id: string;
     category: NewsCategory;
@@ -104,6 +114,9 @@ export interface DailyNewsCategoryStatus {
         invalidUrl: number;
     };
     error?: string;
+    sourceAttempts?: DailyNewsSourceAttempt[];
+    totalCandidates?: number;
+    degradedReason?: string;
 }
 
 export interface DailyNewsBrief {
@@ -143,6 +156,8 @@ export interface CategoryCollectionResult {
     ok: boolean;
     candidates: NewsCandidate[];
     error?: string;
+    sourceAttempts?: DailyNewsSourceAttempt[];
+    degradedReason?: string;
 }
 
 export interface DailyNewsApiResponse {

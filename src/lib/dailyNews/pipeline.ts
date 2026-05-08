@@ -1508,7 +1508,12 @@ export function buildDailyNewsDigestFromResults(
         const result = byCategory.get(category);
         if (!result || !result.ok) {
             digest[category] = [];
-            digest.categoryStatus[category] = emptyStatus(result?.error || 'Category collection failed');
+            digest.categoryStatus[category] = {
+                ...emptyStatus(result?.error || 'Category collection failed'),
+                sourceAttempts: result?.sourceAttempts,
+                totalCandidates: result?.candidates.length ?? 0,
+                degradedReason: result?.degradedReason,
+            };
             return;
         }
 
@@ -1519,6 +1524,9 @@ export function buildDailyNewsDigestFromResults(
             requested: result.candidates.length,
             returned: ranked.items.length,
             dropped: ranked.dropped,
+            sourceAttempts: result.sourceAttempts,
+            totalCandidates: result.candidates.length,
+            degradedReason: result.degradedReason,
         };
     });
 
