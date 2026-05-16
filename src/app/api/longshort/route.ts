@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { withTimeout } from '@/lib/async';
 import { fetchBinanceJson } from '@/lib/binanceApi';
+import { invalidRequestBody, validateLongShortParams } from '@/lib/apiRequestValidation';
 
 interface BinanceLSEntry {
     symbol: string;
@@ -28,11 +29,15 @@ const routeCache = new Map<string, { data: LongShortResponseBody; timestamp: num
 const BUILD_TIMEOUT_MS = 10000;
 
 export async function GET(request: NextRequest) {
+    const { searchParams } = new URL(request.url);
+    const validated = validateLongShortParams(searchParams);
+    if (!validated.ok) {
+        return NextResponse.json(invalidRequestBody(validated.details), { status: 400 });
+    }
+
+    const { symbol, period, limit } = validated.value;
+
     try {
-        const { searchParams } = new URL(request.url);
-        const symbol = searchParams.get('symbol') || 'BTCUSDT';
-        const period = searchParams.get('period') || '1h';
-        const limit = Math.min(Number(searchParams.get('limit') || '30'), 500);
         const cacheKey = `${symbol}:${period}:${limit}`;
         const cached = routeCache.get(cacheKey);
         
@@ -117,10 +122,6 @@ export async function GET(request: NextRequest) {
         });
     } catch (error) {
         console.error('[LongShort API]', error);
-        const { searchParams } = new URL(request.url);
-        const symbol = searchParams.get('symbol') || 'BTCUSDT';
-        const period = searchParams.get('period') || '1h';
-        const limit = Math.min(Number(searchParams.get('limit') || '30'), 500);
         const cached = routeCache.get(`${symbol}:${period}:${limit}`);
         if (cached) {
             return NextResponse.json(cached.data, {

@@ -1,17 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { buildTokenResearchPayload } from '@/lib/onchain/service';
-import type { OnchainSearchScope } from '@/lib/onchain/types';
+import { invalidRequestBody, validateOnchainDashboardParams } from '@/lib/apiRequestValidation';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
     try {
         const { searchParams } = new URL(request.url);
-        const keyword = searchParams.get('keyword') || 'PEPE';
-        const tokenAddress = searchParams.get('tokenAddress');
-        const chainId = searchParams.get('chainId');
-        const scope = (searchParams.get('scope') === 'alpha' ? 'alpha' : 'contracts') as OnchainSearchScope;
+        const validated = validateOnchainDashboardParams(searchParams);
+        if (!validated.ok) {
+            return NextResponse.json(invalidRequestBody(validated.details), { status: 400 });
+        }
+
+        const { keyword, tokenAddress, chainId, scope } = validated.value;
 
         const payload = await buildTokenResearchPayload(keyword, { tokenAddress, chainId }, scope);
 
@@ -20,10 +22,9 @@ export async function GET(request: NextRequest) {
                 'X-Data-Source': payload.sourceMode === 'hybrid' ? 'dexscreener-moralis-token-intelligence' : 'fallback-token-intelligence',
             },
         });
-    } catch (err) {
-        const message = err instanceof Error ? err.message : 'Unknown error in onchain dashboard';
+    } catch {
         return NextResponse.json(
-            { error: message, generatedAt: Date.now() },
+            { error: 'Onchain dashboard request failed', generatedAt: Date.now() },
             { status: 500 }
         );
     }

@@ -4,6 +4,7 @@ import { withTimeout } from '@/lib/async';
 import { fetchBinanceJson } from '@/lib/binanceApi';
 import { logger } from '@/lib/logger';
 import { loadLocalKlineArchive } from '@/lib/services/klineArchive';
+import { invalidRequestBody, validateSymbolsParam } from '@/lib/apiRequestValidation';
 
 interface KlineResult {
     symbol: string;
@@ -19,20 +20,6 @@ export const maxDuration = 60; // Max duration for Vercel
 
 const BUILD_TIMEOUT_MS = 25000;
 const CUSTOM_SYMBOL_TIMEOUT_MS = 15000;
-
-function parseRequestedSymbols(searchParams: URLSearchParams): string[] | null {
-    const raw = searchParams.get('symbols');
-    if (!raw) {
-        return null;
-    }
-
-    const symbols = raw
-        .split(',')
-        .map((symbol) => symbol.trim().toUpperCase())
-        .filter(Boolean);
-
-    return symbols.length > 0 ? Array.from(new Set(symbols)) : null;
-}
 
 async function buildMultiframeData(requestedSymbols?: string[]): Promise<MultiframeData> {
     if (requestedSymbols && requestedSymbols.length > 0) {
@@ -210,7 +197,12 @@ const getCachedMultiframeData = unstable_cache(
 );
 
 export async function GET(request: Request) {
-    const requestedSymbols = parseRequestedSymbols(new URL(request.url).searchParams);
+    const validatedSymbols = validateSymbolsParam(new URL(request.url).searchParams, { maxSymbols: 20 });
+    if (!validatedSymbols.ok) {
+        return NextResponse.json(invalidRequestBody(validatedSymbols.details), { status: 400 });
+    }
+
+    const requestedSymbols = validatedSymbols.value.length > 0 ? validatedSymbols.value : null;
     if (requestedSymbols && requestedSymbols.length > 0) {
         try {
             const data = await withTimeout(

@@ -5,6 +5,7 @@ import { fetchBinanceJson } from '@/lib/binanceApi';
 import { fetchBinanceKlines } from '@/lib/binanceKlineFetcher';
 import { fetchCoinalyzeOpenInterestHistory } from '@/lib/coinalyze';
 import { logger } from '@/lib/logger';
+import { invalidRequestBody, validateBacktestKlinesParams } from '@/lib/apiRequestValidation';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,13 +13,16 @@ function buildRouteErrorResponse(error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     const upstreamRateLimited = /http (418|429)\b/i.test(message);
     const upstreamUnavailable = /all binance json endpoints failed/i.test(message);
+    const details = upstreamRateLimited || upstreamUnavailable
+        ? 'Upstream K-line source is temporarily unavailable'
+        : 'K-line request failed';
 
     return NextResponse.json(
         {
             error: upstreamRateLimited || upstreamUnavailable
                 ? '上游 K 线源暂时限流，请稍后重试'
                 : '获取历史数据失败',
-            details: message,
+            details,
             retryable: upstreamRateLimited || upstreamUnavailable,
         },
         { status: upstreamRateLimited || upstreamUnavailable ? 503 : 500 }
@@ -352,27 +356,20 @@ function mergeOpenInterestData(params: {
 export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
 
-    const symbol = searchParams.get('symbol');
-    const interval = searchParams.get('interval') || '1h';
-    const startTime = searchParams.get('startTime');
-    const endTime = searchParams.get('endTime');
-    const limit = searchParams.get('limit') || '500';
-    const includeAuxiliary = searchParams.get('includeAuxiliary') !== 'false';
-
-    // 参数验证
-    if (!symbol) {
-        return NextResponse.json(
-            { error: '缺少参数: symbol' },
-            { status: 400 }
-        );
+    const validated = validateBacktestKlinesParams(searchParams);
+    if (!validated.ok) {
+        return NextResponse.json(invalidRequestBody(validated.details), { status: 400 });
     }
 
     try {
-        const parsedLimit = Number.parseInt(limit, 10);
-        const parsedStartTime = startTime ? Number.parseInt(startTime, 10) : undefined;
-        const parsedEndTime = endTime ? Number.parseInt(endTime, 10) : undefined;
-        const normalizedSymbol = symbol.toUpperCase();
-        const normalizedLimit = Number.isFinite(parsedLimit) ? parsedLimit : 500;
+        const {
+            symbol: normalizedSymbol,
+            interval,
+            startTime: parsedStartTime,
+            endTime: parsedEndTime,
+            limit: normalizedLimit,
+            includeAuxiliary,
+        } = validated.value;
 
         const localRange = Number.isFinite(parsedStartTime) && Number.isFinite(parsedEndTime)
             ? getLocalKlinesInRange({
@@ -407,11 +404,11 @@ export async function GET(req: NextRequest) {
             const klineParams = new URLSearchParams({
                 symbol: normalizedSymbol,
                 interval,
-                limit,
+                limit: String(normalizedLimit),
             });
 
-            if (startTime) klineParams.append('startTime', startTime);
-            if (endTime) klineParams.append('endTime', endTime);
+            if (parsedStartTime !== undefined) klineParams.append('startTime', String(parsedStartTime));
+            if (parsedEndTime !== undefined) klineParams.append('endTime', String(parsedEndTime));
 
             const klineData = await fetchBinanceKlines(`/fapi/v1/klines?${klineParams.toString()}`, {
                 interval,
@@ -458,12 +455,12 @@ export async function GET(req: NextRequest) {
 
         if (!includeAuxiliary) {
             const diagnostics = buildEmptyAuxiliaryDiagnostics(
-                startTime ? parseInt(startTime, 10) : 0,
-                endTime ? parseInt(endTime, 10) : Date.now()
+                parsedStartTime ?? 0,
+                parsedEndTime ?? Date.now()
             );
 
             return NextResponse.json({
-                symbol,
+                symbol: normalizedSymbol,
                 interval,
                 count: klines.length,
                 data: klines,
@@ -475,11 +472,11 @@ export async function GET(req: NextRequest) {
         }
 
         // 2. 获取持仓量数据 (优先本地，失败则降级到 API)
-        const startTs = startTime ? parseInt(startTime) : Date.now() - 30 * 24 * 60 * 60 * 1000;
-        const endTs = endTime ? parseInt(endTime) : Date.now();
+        const startTs = parsedStartTime ?? Date.now() - 30 * 24 * 60 * 60 * 1000;
+        const endTs = parsedEndTime ?? Date.now();
         try {
             // 尝试从本地仓库读取 Metrics
-            const localOiPromise = dataCollector.getFormattedData(symbol!, 'metrics', startTs, endTs)
+            const localOiPromise = dataCollector.getFormattedData(normalizedSymbol, 'metrics', startTs, endTs)
                 .catch(err => { console.warn('Local OI fetch failed:', err); return []; });
 
             // API 降级方案 (仅最近30天)
@@ -500,15 +497,15 @@ export async function GET(req: NextRequest) {
             })();
 
             const apiOiPromise = oiPeriod
-                ? fetchOpenInterestHistory(symbol!, oiPeriod, String(lookbackStartTime), endTime || undefined).catch(() => [])
+                ? fetchOpenInterestHistory(normalizedSymbol, oiPeriod, String(lookbackStartTime), parsedEndTime !== undefined ? String(parsedEndTime) : undefined).catch(() => [])
                 : Promise.resolve([]);
 
             // 3. 获取资金费率数据 (优先本地，失败则降级到 API)
-            const localFundingPromise = dataCollector.getFormattedData(symbol!, 'fundingRate', startTs, endTs)
+            const localFundingPromise = dataCollector.getFormattedData(normalizedSymbol, 'fundingRate', startTs, endTs)
                 .catch(err => { console.warn('Local Funding fetch failed:', err); return []; });
 
-            const apiFundingPromise = startTime
-                ? fetchFundingRate(symbol!, startTime, endTime || undefined).catch(() => [])
+            const apiFundingPromise = parsedStartTime !== undefined
+                ? fetchFundingRate(normalizedSymbol, String(parsedStartTime), parsedEndTime !== undefined ? String(parsedEndTime) : undefined).catch(() => [])
                 : Promise.resolve([]);
 
             const [localOi, apiOi, localFunding, apiFunding] = await Promise.all([
@@ -534,13 +531,13 @@ export async function GET(req: NextRequest) {
                 : Number.POSITIVE_INFINITY;
 
             if (
-                startTime &&
+                parsedStartTime !== undefined &&
                 oiPeriod &&
                 oiPeriodMs &&
                 startTs + oiPeriodMs < earliestKnownOiTimestamp
             ) {
                 normalizedCoinalyzeOiData = await fetchCoinalyzeOpenInterestHistory(
-                    symbol!,
+                    normalizedSymbol,
                     oiPeriod,
                     startTs,
                     endTs
@@ -602,7 +599,7 @@ export async function GET(req: NextRequest) {
             });
 
             return NextResponse.json({
-                symbol,
+                symbol: normalizedSymbol,
                 interval,
                 count: klines.length,
                 data: klines,
@@ -614,13 +611,13 @@ export async function GET(req: NextRequest) {
             });
         } catch (auxiliaryError) {
             logger.warn('Backtest auxiliary data merge failed, returning core klines only', {
-                symbol,
+                symbol: normalizedSymbol,
                 interval,
                 error: auxiliaryError instanceof Error ? auxiliaryError.message : String(auxiliaryError),
             });
 
             return NextResponse.json({
-                symbol,
+                symbol: normalizedSymbol,
                 interval,
                 count: klines.length,
                 data: klines,

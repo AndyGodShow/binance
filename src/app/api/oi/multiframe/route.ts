@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { withTimeout } from '@/lib/async';
 import { fetchOpenInterestFrameSnapshotsBatch } from '@/lib/openInterestFrames';
 import { logger } from '@/lib/logger';
+import { invalidRequestBody, validateSymbolsParam } from '@/lib/apiRequestValidation';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -10,24 +11,13 @@ export const maxDuration = 60;
 const REQUEST_TIMEOUT_MS = 20000;
 const REQUEST_BATCH_SIZE = process.env.NODE_ENV === 'development' ? 5 : 20;
 
-function parseRequestedSymbols(searchParams: URLSearchParams): string[] {
-    const raw = searchParams.get('symbols');
-    if (!raw) {
-        return [];
+export async function GET(request: Request) {
+    const validatedSymbols = validateSymbolsParam(new URL(request.url).searchParams, { maxSymbols: 20 });
+    if (!validatedSymbols.ok) {
+        return NextResponse.json(invalidRequestBody(validatedSymbols.details), { status: 400 });
     }
 
-    return Array.from(
-        new Set(
-            raw
-                .split(',')
-                .map((symbol) => symbol.trim().toUpperCase())
-                .filter((symbol) => symbol.endsWith('USDT'))
-        )
-    );
-}
-
-export async function GET(request: Request) {
-    const requestedSymbols = parseRequestedSymbols(new URL(request.url).searchParams);
+    const requestedSymbols = validatedSymbols.value;
 
     if (requestedSymbols.length === 0) {
         return NextResponse.json({}, {

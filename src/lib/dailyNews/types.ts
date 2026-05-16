@@ -162,8 +162,10 @@ export interface CategoryCollectionResult {
 
 export interface DailyNewsApiResponse {
     digest: DailyNewsDigest | null;
-    status: 'ok' | 'empty';
+    status: 'ok' | 'partial' | 'degraded' | 'empty';
     storageMode: 'blob' | 'local-file';
+    isStale?: boolean;
+    sourceStatus?: Record<string, unknown>;
     message?: string;
 }
 
