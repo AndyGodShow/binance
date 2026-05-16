@@ -129,6 +129,19 @@ export function selectScannerSignalForSymbol(symbolSignals: StrategySignal[]): S
     };
 }
 
+export function filterScannerSignalsByEnabledStrategies(
+    signals: StrategySignal[],
+    enabledStrategyIds: ReadonlySet<string>,
+): StrategySignal[] {
+    return signals.filter((signal) => {
+        if (enabledStrategyIds.has(signal.strategyId)) {
+            return true;
+        }
+
+        return signal.stackedSignalDetails?.some((detail) => enabledStrategyIds.has(detail.strategyId)) ?? false;
+    });
+}
+
 export function createStrategySignalSnapshotDigest(signals: StrategySignal[]): string {
     return JSON.stringify(
         [...signals]

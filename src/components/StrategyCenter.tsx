@@ -7,6 +7,7 @@ import {
     buildReadinessDebugRows,
     isMarketDataStatusDegraded,
 } from '@/lib/strategyScannerDiagnostics';
+import { filterScannerSignalsByEnabledStrategies } from '@/lib/strategyScannerSnapshot';
 import type { StrategyInputReadinessSummary } from '@/lib/strategyInputs';
 import { strategyRegistry } from '@/strategies/registry';
 import SignalCard from './SignalCard';
@@ -44,7 +45,7 @@ export default function StrategyCenter({
     const enabledStrategyIds = new Set(allStrategies.filter(s => s.enabled).map(s => s.id));
 
     // 🔧 根据启用的策略过滤信号
-    const filteredSignals = signals.filter(signal => enabledStrategyIds.has(signal.strategyId));
+    const filteredSignals = filterScannerSignalsByEnabledStrategies(signals, enabledStrategyIds);
 
     // 重新计算统计数据（基于过滤后的信号）
     const filteredStats = {

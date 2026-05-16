@@ -6,6 +6,7 @@ import type { TickerData } from './types.ts';
 import {
     buildStrategyScannerTickerDigest,
     createStrategySignalSnapshotDigest,
+    filterScannerSignalsByEnabledStrategies,
     selectScannerSignalForSymbol,
 } from './strategyScannerSnapshot.ts';
 
@@ -91,6 +92,20 @@ test('selectScannerSignalForSymbol falls back to highest-confidence observation 
     assert.equal(selected.stackCount, 1);
     assert.deepEqual(selected.stackedStrategies, ['Observe B']);
     assert.equal(selected.comboBonus, 0);
+});
+
+test('filterScannerSignalsByEnabledStrategies keeps stacked signals when an enabled strategy is nested', () => {
+    const selected = selectScannerSignalForSymbol([
+        createSignal({ strategyId: 'strong-breakout', strategyName: 'Strong Breakout', confidence: 95 }),
+        createSignal({ strategyId: 'capital-inflow', strategyName: 'Capital Inflow', confidence: 88 }),
+    ]);
+
+    assert.ok(selected);
+
+    const filtered = filterScannerSignalsByEnabledStrategies([selected], new Set(['capital-inflow']));
+
+    assert.equal(filtered.length, 1);
+    assert.equal(filtered[0].symbol, 'BTCUSDT');
 });
 
 test('createStrategySignalSnapshotDigest is deterministic regardless of signal order', () => {
