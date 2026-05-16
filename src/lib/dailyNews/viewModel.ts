@@ -191,8 +191,8 @@ export function sortNewsItems(items: DailyNewsItem[]): DailyNewsItem[] {
 export function getFallbackTopEvents(digest: DailyNewsDigest): NewsTopEventsModel {
     if (digest.topStories && digest.topStories.length > 0) {
         return {
-            title: '过去 24 小时最重要的事件',
-            subtitle: '来自摘要生成链路的 Top Stories，按重要性排序。',
+            title: '过去 24 小时值得优先看的事件',
+            subtitle: '按影响程度、来源确认度和发布时间排序。',
             events: digest.topStories,
             source: 'digest',
         };
@@ -201,8 +201,8 @@ export function getFallbackTopEvents(digest: DailyNewsDigest): NewsTopEventsMode
     const fallbackItems = sortNewsItems(getAllNewsItems(digest)).slice(0, 3);
     if (fallbackItems.length === 0) {
         return {
-            title: '过去 24 小时暂无达到入选标准的重大事件',
-            subtitle: '请结合下方采集健康状态判断是确实为空，还是来源采集失败。',
+            title: '过去 24 小时暂无达到入选标准的事件',
+            subtitle: '请结合采集健康状态判断；来源失败不代表对应领域没有新闻。',
             events: [],
             source: 'empty',
         };
@@ -210,7 +210,7 @@ export function getFallbackTopEvents(digest: DailyNewsDigest): NewsTopEventsMode
 
     return {
         title: '当前最高优先级事件',
-        subtitle: 'Top Stories 未生成时，按重要性分数、确认度和发布时间回退展示。',
+        subtitle: '按影响程度、来源确认度和发布时间排序。',
         events: fallbackItems.map((item) => ({
             id: item.id,
             headline: item.title,
@@ -242,17 +242,19 @@ function buildCategoryHealth(digest: DailyNewsDigest, category: NewsCategory): N
     const selected = digest[category].length;
     const normalizedStatus: NewsCategoryHealth['status'] = status?.status === 'failed'
         ? 'failed'
+        : status?.status === 'partial'
+            ? 'partial'
         : selected === 0
             ? 'empty'
             : status?.status === 'ok'
                 ? 'success'
                 : 'partial';
 
-    let message = `${CATEGORY_LABELS[category]}采集正常，入选 ${selected} 条。`;
+    let message = `${CATEGORY_LABELS[category]}新闻源正常。`;
     if (normalizedStatus === 'failed') {
         message = categoryFailureMessage(category);
     } else if (normalizedStatus === 'empty') {
-        message = `${CATEGORY_LABELS[category]}本次没有达到入选标准的事件。`;
+        message = `${CATEGORY_LABELS[category]}本次没有达到入选标准的事件，需结合采集状态判断。`;
     } else if (normalizedStatus === 'partial') {
         message = `${CATEGORY_LABELS[category]}采集部分可用，结果可能不完整。`;
     }
@@ -288,9 +290,11 @@ export function getNewsHealthStatus(digest: DailyNewsDigest, now = new Date()): 
     const hasLimitedSample = allItems.length > 0 && allItems.length <= 1;
     const overallStatus: NewsHealthOverallStatus = hasFailures
         ? 'degraded'
+        : hasPartialCategories
+            ? 'partial'
         : allCategoriesEmpty || allItems.length === 0
             ? 'empty'
-            : hasPartialCategories || hasLimitedSample
+            : hasLimitedSample
                 ? 'partial'
                 : 'healthy';
     const message = overallStatus === 'healthy'
@@ -301,7 +305,7 @@ export function getNewsHealthStatus(digest: DailyNewsDigest, now = new Date()): 
                 ? hasLimitedSample
                     ? '样本不足，当前风险偏向参考价值有限'
                     : '部分可用，当前结果可能不完整'
-                : '数据不足，当前窗口暂无入选事件';
+                : '数据不足，当前窗口暂无达到入选标准的事件';
 
     return {
         overallStatus,
@@ -356,7 +360,7 @@ function getBriefNotices(digest: DailyNewsDigest, health: NewsHealthStatus): str
         notices.push('部分分类采集失败，本次摘要只反映已成功采集的来源。');
     }
     if (getAllNewsItems(digest).length <= 1) {
-        notices.push('当前入选事件较少，风险偏向参考价值有限。');
+        notices.push('当前入选事件较少，风险偏向参考价值有限；这不等同于对应领域没有新闻。');
     }
     return notices;
 }

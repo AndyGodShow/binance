@@ -119,7 +119,8 @@ test('getFallbackTopEvents returns highest score events when topStories is empty
 test('getFallbackTopEvents reports truly empty state when all categories have no items', () => {
     const model = getFallbackTopEvents(digest({ crypto: [], macro: [], ai: [] }));
 
-    assert.equal(model.title, '过去 24 小时暂无达到入选标准的重大事件');
+    assert.equal(model.title, '过去 24 小时暂无达到入选标准的事件');
+    assert.match(model.subtitle, /来源失败不代表对应领域没有新闻/);
     assert.equal(model.events.length, 0);
 });
 
@@ -173,6 +174,23 @@ test('getNewsHealthStatus marks success plus partial as partial', () => {
         },
     }));
 
+    assert.equal(health.overallStatus, 'partial');
+});
+
+test('getNewsHealthStatus keeps zero-result partial categories visible', () => {
+    const health = getNewsHealthStatus(digest({
+        crypto: [],
+        macro: [],
+        ai: [],
+        categoryStatus: {
+            crypto: status({ status: 'partial', returned: 0 }),
+            macro: status({ status: 'ok', returned: 0 }),
+            ai: status({ status: 'ok', returned: 0 }),
+        },
+    }));
+
+    assert.equal(health.categoryHealth.crypto.status, 'partial');
+    assert.match(health.categoryHealth.crypto.message, /采集部分可用/);
     assert.equal(health.overallStatus, 'partial');
 });
 
@@ -240,7 +258,7 @@ test('buildNewsViewModel marks one selected event as limited sample and incomple
     assert.match(model.briefNotice, /部分分类采集失败/);
     assert.deepEqual(model.briefNotices, [
         '部分分类采集失败，本次摘要只反映已成功采集的来源。',
-        '当前入选事件较少，风险偏向参考价值有限。',
+        '当前入选事件较少，风险偏向参考价值有限；这不等同于对应领域没有新闻。',
     ]);
     assert.equal(model.topEvents.title, '当前最高优先级事件');
 });
