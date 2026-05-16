@@ -11,6 +11,7 @@ import {
 import type { OHLC } from './indicators.ts';
 import { calculateVolumeProfile } from './volumeProfile.ts';
 import { calculateRsrsMetrics } from './rsrs.ts';
+import { normalizeReleaseBarsAgo } from './marketDataTransforms.ts';
 
 /**
  * 从K线数据计算技术指标
@@ -306,7 +307,7 @@ export class TechnicalIndicators {
                         }
                     }
 
-                    enhanced.releaseBarsAgo = releaseBarsAgo;
+                    enhanced.releaseBarsAgo = normalizeReleaseBarsAgo(releaseBarsAgo);
                     enhanced.lastSqueezeDuration = lastSqueezeDuration;
                     enhanced.squeezeBoxHigh = squeezeBoxHigh;
                     enhanced.squeezeBoxLow = squeezeBoxLow;

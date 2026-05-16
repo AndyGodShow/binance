@@ -32,6 +32,7 @@ import {
     calculateBreakoutMetrics,
     deriveTrendStructure,
 } from '@/lib/marketStructure';
+import { buildRsrsTickerFields, calculateRecentPriceChangePercent, normalizeReleaseBarsAgo } from '@/lib/marketDataTransforms';
 
 type BinanceKline = [
     number,
@@ -229,6 +230,21 @@ export function enhanceTickerData(
             klines.slice(-20).reduce((sum, kline) => sum + (kline.quoteVolume || 0), 0) /
             Math.min(20, klines.length);
 
+        const change15m = calculateRecentPriceChangePercent(klines, 1);
+        const change1h = calculateRecentPriceChangePercent(klines, 4);
+        const change4h = calculateRecentPriceChangePercent(klines, 16);
+        if (typeof change15m === 'number') {
+            enhanced.change15m = change15m;
+        }
+        if (typeof change1h === 'number') {
+            enhanced.change1h = change1h;
+        }
+        if (typeof change4h === 'number') {
+            enhanced.change4h = change4h;
+        }
+
+        Object.assign(enhanced, buildRsrsTickerFields(klines));
+
         if (Number.isFinite(volumeMA) && volumeMA > 0) {
             enhanced.volumeMA = volumeMA;
             if (Number.isFinite(currentQuoteVolume) && currentQuoteVolume > 0) {
@@ -414,7 +430,7 @@ export function enhanceTickerData(
             enhanced.squeezeDuration = squeeze.squeezeDuration;
             enhanced.lastSqueezeDuration = lastSqueezeDuration;
             enhanced.squeezeStrength = squeeze.squeezeStrength;
-            enhanced.releaseBarsAgo = releaseBarsAgo;
+            enhanced.releaseBarsAgo = normalizeReleaseBarsAgo(releaseBarsAgo);
             enhanced.squeezeBoxHigh = squeezeBoxHigh;
             enhanced.squeezeBoxLow = squeezeBoxLow;
 

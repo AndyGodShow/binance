@@ -13,6 +13,7 @@ import {
     fetchMarketKlineEnhancementGroup,
     resolveMarketKlineBatchSize,
 } from '@/lib/marketBuildConfig';
+import { attachOpenInterestSnapshotsToTickers } from '@/lib/marketDataTransforms';
 
 interface BinanceExchangeInfoSymbol {
     symbol: string;
@@ -264,7 +265,8 @@ export async function buildMarketData(): Promise<TickerData[]> {
         fetchMarketKlineEnhancementGroup(request, klineBatchSize, fetchKlinesBatch, logger)
     ));
 
-    const sentimentHotspotMap = await fetchSentimentHotspotContextMap(baseMarketData, daily1dKlinesMap, klinesMap);
+    const sentimentHotspotSourceTickers = attachOpenInterestSnapshotsToTickers(baseMarketData, oiSnapshotMap);
+    const sentimentHotspotMap = await fetchSentimentHotspotContextMap(sentimentHotspotSourceTickers, daily1dKlinesMap, klinesMap);
 
     logEnhancementUniverse(baseMarketData.length, eligibleSymbols);
 
