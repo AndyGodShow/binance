@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 import { ChevronDown, ChevronUp, ExternalLink, RefreshCw } from 'lucide-react';
 
 import { usePersistentSWR } from '@/hooks/usePersistentSWR';
-import type { DailyNewsApiResponse, DailyNewsBrief, DailyNewsDigest, DailyNewsItem, NewsCategory } from '@/lib/dailyNews/types';
+import type { DailyNewsApiResponse, DailyNewsBrief, DailyNewsDigest, NewsCategory } from '@/lib/dailyNews/types';
 import {
     buildNewsViewModel,
     filterNewsItems,
@@ -70,7 +70,7 @@ function formatWindow(digest: DailyNewsDigest): string {
 function healthLabel(status: NewsHealthStatus['overallStatus']): string {
     if (status === 'healthy') return '正常';
     if (status === 'partial') return '部分可用';
-    if (status === 'degraded') return '部分失败';
+    if (status === 'degraded') return '已降级';
     return '数据不足';
 }
 
@@ -81,9 +81,16 @@ function categoryStatusLabel(status: NewsCategoryHealth['status']): string {
     return '部分';
 }
 
+function formatCacheAge(minutes: number | null): string {
+    return minutes === null ? '缓存年龄未知' : `缓存约 ${minutes} 分钟`;
+}
+
 function NewsCommandHeader({
     digest,
     model,
+    status,
+    isStale,
+    storageMode,
     isRefreshing,
     isValidating,
     lastRefreshAt,
@@ -92,6 +99,9 @@ function NewsCommandHeader({
 }: {
     digest: DailyNewsDigest;
     model: NewsViewModel;
+    status?: DailyNewsApiResponse['status'];
+    isStale?: boolean;
+    storageMode?: DailyNewsApiResponse['storageMode'];
     isRefreshing: boolean;
     isValidating: boolean;
     lastRefreshAt: string | null;
@@ -99,13 +109,15 @@ function NewsCommandHeader({
     message?: string;
 }) {
     const highest = model.highestScoreItem;
+    const hasSourceWarning = model.health.overallStatus !== 'healthy' || status === 'partial' || status === 'degraded' || status === 'empty';
+    const cacheLabel = `${isStale ? '正在使用旧缓存' : storageMode ? `缓存：${storageMode}` : '缓存状态待确认'} · ${formatCacheAge(model.health.cacheAgeMinutes)}`;
 
     return (
         <header className={styles.commandHeader}>
             <div className={styles.commandIntro}>
                 <div className={styles.kicker}>24 小时事件摘要</div>
-                <h1 className={styles.title}>重要事件指挥台</h1>
-                <p className={styles.subtitle}>过去 24 小时加密、宏观、AI 事件过滤摘要。</p>
+                <h1 className={styles.title}>重要新闻</h1>
+                <p className={styles.subtitle}>过去 24 小时加密、宏观、AI 的关键事件。</p>
                 <div className={styles.windowMeta}>
                     <span>统计窗口：{formatWindow(digest)}</span>
                     <span>生成时间：{formatInTimeZone(digest.generatedAt, digest.timezone)}</span>
@@ -118,20 +130,8 @@ function NewsCommandHeader({
                     <strong>{digest.brief ? getDirectionLabel(digest.brief.riskBias) : '待确认'}</strong>
                 </div>
                 <div className={styles.metricTile}>
-                    <span>入选事件</span>
-                    <strong>{model.health.totalSelected} 条</strong>
-                </div>
-                <div className={styles.metricTile}>
-                    <span>重大事件</span>
-                    <strong>{model.health.highImpactCount} 条</strong>
-                </div>
-                <div className={styles.metricTile}>
-                    <span>最高分事件</span>
-                    <strong>{highest ? `${highest.importanceScore} · ${highest.title}` : '暂无'}</strong>
-                </div>
-                <div className={`${styles.metricTile} ${styles[model.health.overallStatus]}`}>
-                    <span>数据健康</span>
-                    <strong>{healthLabel(model.health.overallStatus)}</strong>
+                    <span>重点事件</span>
+                    <strong>{highest ? highest.title : '暂无'}</strong>
                 </div>
             </div>
 
@@ -148,12 +148,11 @@ function NewsCommandHeader({
                 </button>
                 <div className={styles.actionStatus}>
                     <span>上次刷新：{lastRefreshAt ? formatInTimeZone(lastRefreshAt, digest.timezone) : '本次会话尚未手动刷新'}</span>
-                    <span>缓存状态：{isValidating ? '正在校验最新摘要' : 'SWR 持久缓存可用'}</span>
-                    <span>缓存年龄：{model.health.cacheAgeMinutes === null ? '未知' : `${model.health.cacheAgeMinutes} 分钟`}</span>
+                    <span>{isValidating ? '正在读取最新新闻' : cacheLabel}</span>
                 </div>
-                {(model.health.overallStatus !== 'healthy' || message) && (
+                {(hasSourceWarning || message) && (
                     <div className={styles.degradedNotice}>
-                        {model.health.overallStatus !== 'healthy' ? `${model.health.message}。` : message}
+                        {hasSourceWarning ? `${model.health.message}。来源失败不代表对应领域没有新闻。` : message}
                     </div>
                 )}
             </aside>
@@ -161,11 +160,29 @@ function NewsCommandHeader({
     );
 }
 
-function NewsHealthStrip({ health }: { health: NewsHealthStatus }) {
-    const categories: NewsCategory[] = ['crypto', 'macro', 'ai'];
+function CompactNewsHealthStrip({
+    health,
+    isStale,
+}: {
+    health: NewsHealthStatus;
+    isStale?: boolean;
+}) {
+    const categories: NewsCategory[] = ['macro', 'ai', 'crypto'];
 
     return (
         <section className={styles.healthStrip} aria-label="新闻采集健康状态">
+            <div className={`${styles.healthItem} ${styles[health.overallStatus]}`}>
+                <div className={styles.healthTopline}>
+                    <strong>总状态</strong>
+                    <span>{healthLabel(health.overallStatus)}</span>
+                </div>
+                <p>{health.message}</p>
+                <div className={styles.healthCounts}>
+                    <span>入选 {health.totalSelected}</span>
+                    <span>重大 {health.highImpactCount}</span>
+                    <span>{isStale ? '旧缓存' : formatCacheAge(health.cacheAgeMinutes)}</span>
+                </div>
+            </div>
             {categories.map((category) => {
                 const item = health.categoryHealth[category];
                 return (
@@ -178,9 +195,6 @@ function NewsHealthStrip({ health }: { health: NewsHealthStatus }) {
                         <div className={styles.healthCounts}>
                             <span>候选 {item.requested}</span>
                             <span>入选 {item.selected}</span>
-                            <span>不相关 {item.irrelevant}</span>
-                            <span>不重要 {item.unimportant}</span>
-                            <span>重复 {item.duplicates}</span>
                         </div>
                         {item.error && <em>{item.error}</em>}
                     </div>
@@ -276,7 +290,7 @@ function TopEventsSection({
                 </div>
             ) : (
                 <div className={styles.emptyState}>
-                    过去 24 小时暂无达到入选标准的重大事件。请查看上方采集健康状态，失败分类不代表没有新闻。
+                    过去 24 小时暂无达到入选标准的事件。请结合采集健康状态判断；来源失败不代表对应领域没有新闻。
                 </div>
             )}
         </section>
@@ -304,32 +318,6 @@ function NewsFilterTabs({
                     <span>{filter.label}</span>
                     <strong>{filter.count}</strong>
                 </button>
-            ))}
-        </div>
-    );
-}
-
-function ScoreBreakdown({ item }: { item: DailyNewsItem }) {
-    if (!item.scoreBreakdown) {
-        return <div className={styles.scoreEmpty}>暂无评分拆解。</div>;
-    }
-
-    const entries = [
-        ['实体', item.scoreBreakdown.entityWeight],
-        ['来源', item.scoreBreakdown.sourceWeight],
-        ['确认', item.scoreBreakdown.confirmationWeight],
-        ['类别', item.scoreBreakdown.categoryWeight],
-        ['新信息', item.scoreBreakdown.noveltyWeight],
-        ['影响', item.scoreBreakdown.impactWeight],
-    ] as const;
-
-    return (
-        <div className={styles.scoreGrid}>
-            {entries.map(([label, value]) => (
-                <div key={label}>
-                    <span>{label}</span>
-                    <strong>{value}</strong>
-                </div>
             ))}
         </div>
     );
@@ -422,48 +410,12 @@ function EventCard({
                             {item.watchpoints.slice(0, 4).map((point) => <span key={point}>{point}</span>)}
                         </div>
                     )}
-
-                    <ScoreBreakdown item={item} />
-
                     <a className={styles.originalLink} href={item.url} target="_blank" rel="noreferrer">
                         打开原文 <ExternalLink size={14} aria-hidden="true" />
                     </a>
                 </div>
             )}
         </article>
-    );
-}
-
-function CategoryStatusPanel({ health }: { health: NewsHealthStatus }) {
-    const categories: NewsCategory[] = ['crypto', 'macro', 'ai'];
-
-    return (
-        <section className={styles.categoryStatusPanel}>
-            <div className={styles.sectionHeader}>
-                <div>
-                    <div className={styles.sectionEyebrow}>采集诊断</div>
-                    <h2>分类状态与过滤计数</h2>
-                </div>
-                <span className={styles.sourceBadge}>{health.message}</span>
-            </div>
-            <div className={styles.statusTable}>
-                {categories.map((category) => {
-                    const item = health.categoryHealth[category];
-                    return (
-                        <div key={category} className={styles.statusRow}>
-                            <strong>{item.label}</strong>
-                            <span>{categoryStatusLabel(item.status)}</span>
-                            <span>候选 {item.requested}</span>
-                            <span>入选 {item.selected}</span>
-                            <span>不相关 {item.irrelevant}</span>
-                            <span>不重要 {item.unimportant}</span>
-                            <span>重复 {item.duplicates}</span>
-                            <em>{item.error || item.message}</em>
-                        </div>
-                    );
-                })}
-            </div>
-        </section>
     );
 }
 
@@ -481,12 +433,12 @@ function EmptyOrDegradedState({
     if (model.allItems.length === 0) {
         return (
             <div className={styles.emptyState}>
-                过去 24 小时暂无达到入选标准的重大事件。若上方存在失败分类，请将其理解为采集失败，不代表对应领域没有新闻。
+                过去 24 小时暂无达到入选标准的事件。请结合采集健康状态判断；来源失败不代表对应领域没有新闻。
             </div>
         );
     }
 
-    return <div className={styles.emptyState}>当前筛选下没有入选事件，可切回“全部”查看。</div>;
+    return <div className={styles.emptyState}>当前筛选下暂无事件，可切回“全部”查看。</div>;
 }
 
 export default function DailyNewsView() {
@@ -564,13 +516,16 @@ export default function DailyNewsView() {
             <NewsCommandHeader
                 digest={digest}
                 model={model}
+                status={data?.status}
+                isStale={data?.isStale}
+                storageMode={data?.storageMode}
                 isRefreshing={isRefreshing}
                 isValidating={isValidating}
                 lastRefreshAt={lastRefreshAt}
                 onRefresh={handleRefresh}
                 message={data?.message}
             />
-            <NewsHealthStrip health={model.health} />
+            <CompactNewsHealthStrip health={model.health} isStale={data?.isStale} />
             <NewsDigestPanel brief={digest.brief} notices={model.briefNotices} />
             <TopEventsSection topEvents={model.topEvents} digest={digest} />
 
@@ -578,8 +533,8 @@ export default function DailyNewsView() {
                 <div className={styles.sectionHeader}>
                     <div>
                         <div className={styles.sectionEyebrow}>事件工作台</div>
-                        <h2>入选事件</h2>
-                        <p>按重要性分数、确认度和发布时间排序。</p>
+                        <h2>事件列表</h2>
+                        <p>按影响程度、来源确认度和发布时间排序。</p>
                     </div>
                     <span className={styles.sourceBadge}>显示 {filteredItems.length} / {model.allItems.length}</span>
                 </div>
@@ -599,8 +554,6 @@ export default function DailyNewsView() {
                     </div>
                 )}
             </section>
-
-            <CategoryStatusPanel health={model.health} />
         </section>
     );
 }
