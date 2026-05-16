@@ -66,14 +66,26 @@ test('daily news RSS sources include Chinese crypto media feeds', () => {
     assert.ok(urls.includes('https://rss.odaily.news/rss/post'));
 });
 
+test('daily news RSS sources include official and specialist AI feeds', () => {
+    const aiSources = rssInternals.getSourcesForCategory('ai');
+    const urls = aiSources.map((source) => source.url);
+
+    assert.ok(urls.includes('https://openai.com/news/rss.xml'));
+    assert.ok(urls.includes('https://blog.google/innovation-and-ai/technology/ai/rss/'));
+    assert.ok(urls.includes('https://blogs.nvidia.com/feed/'));
+    assert.ok(urls.includes('https://blogs.microsoft.com/ai/feed/'));
+    assert.ok(urls.includes('https://www.theverge.com/rss/ai-artificial-intelligence/index.xml'));
+    assert.ok(urls.includes('https://huggingface.co/blog/feed.xml'));
+});
+
 test('6551 hot news payload parser maps open news items into candidates', () => {
     const candidates = sixFiveFiveOneInternals.parse6551HotNewsPayload({
         success: true,
         data: {
             news: [
                 {
-                    title: '律动消息：某交易所披露钱包安全事件',
-                    summary: '交易所公告称已暂停提现并排查钱包基础设施。',
+                    title: '律动消息：某交易所披露钱包安全事件<br/>已暂停提现',
+                    summary_zh: '<span>交易所公告称已暂停提现并排查钱包基础设施。</span>',
                     url: 'https://www.theblockbeats.info/flash/123',
                     source: '律动 BlockBeats',
                     published_at: '2026-04-17T18:00:00.000Z',
@@ -95,6 +107,8 @@ test('6551 hot news payload parser maps open news items into candidates', () => 
     assert.equal(candidates[0]?.source, '律动 BlockBeats');
     assert.equal(candidates[0]?.domain, 'theblockbeats.info');
     assert.match(candidates[0]?.title || '', /钱包安全事件/);
+    assert.doesNotMatch(candidates[0]?.title || '', /<br|span/i);
+    assert.equal(candidates[0]?.summary, '交易所公告称已暂停提现并排查钱包基础设施。');
     assert.equal(candidates[1]?.source, '6551 Twitter');
     assert.equal(candidates[1]?.domain, 'x.com');
 });

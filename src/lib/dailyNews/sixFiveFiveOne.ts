@@ -24,6 +24,25 @@ function stringField(record: JsonRecord, keys: string[]): string {
     return '';
 }
 
+function cleanText(value: string): string {
+    return value
+        .replace(/<br\s*\/?>/gi, ' ')
+        .replace(/<\/(p|div|li|span|section)>/gi, '。')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/&amp;/g, '&')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/\s+/g, ' ')
+        .replace(/。{2,}/g, '。')
+        .trim();
+}
+
+function textField(record: JsonRecord, keys: string[]): string {
+    return cleanText(stringField(record, keys));
+}
+
 function normalizeDate(value: string): string | undefined {
     if (!value) return undefined;
     const timestamp = new Date(value).getTime();
@@ -59,7 +78,7 @@ function collectRecords(value: unknown, output: JsonRecord[] = []): JsonRecord[]
         return output;
     }
 
-    const title = stringField(value, ['title', 'headline', 'text', 'content', 'summary']);
+    const title = textField(value, ['title', 'headline', 'text', 'content', 'summary', 'summary_zh', 'summary_en']);
     const url = stringField(value, ['url', 'link', 'source_url', 'tweet_url']);
     if (title && url) {
         output.push(value);
@@ -76,8 +95,8 @@ function collectRecords(value: unknown, output: JsonRecord[] = []): JsonRecord[]
 }
 
 function toCandidate(record: JsonRecord, category: NewsCategory, window: DailyNewsWindow, collectedAt: string): NewsCandidate | null {
-    const title = stringField(record, ['title', 'headline', 'text', 'content']);
-    const summary = stringField(record, ['summary', 'description', 'abstract', 'brief']);
+    const title = textField(record, ['title', 'headline', 'text', 'content']);
+    const summary = textField(record, ['summary_zh', 'summary_en', 'summary', 'description', 'abstract', 'brief']);
     const url = stringField(record, ['url', 'link', 'source_url', 'tweet_url']);
     const publishedAt = normalizeDate(stringField(record, [
         'published_at',
