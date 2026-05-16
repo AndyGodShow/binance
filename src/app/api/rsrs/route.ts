@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { withTimeout } from '@/lib/async';
 import { fetchBinanceJson } from '@/lib/binanceApi';
 import { calculateRsrsMetrics, type RsrsMetrics } from '@/lib/rsrs';
+import { buildQualityHeaders } from '@/lib/dataQualityStatus';
 
 // RSRS now uses adaptive window, no fixed N_DAYS/M_DAYS needed
 
@@ -153,7 +154,12 @@ export async function GET() {
         return NextResponse.json(rsrsLiveCache.data, {
             headers: {
                 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=7200',
-                'X-Data-Source': 'memory-cache',
+                ...buildQualityHeaders({
+                    dataQuality: 'enriched',
+                    buildState: 'ready',
+                    dataSource: 'memory-cache',
+                    updatedAt: rsrsLiveCache.updatedAt,
+                }),
             }
         });
     }
@@ -166,8 +172,14 @@ export async function GET() {
         return NextResponse.json(rsrsLiveCache.data, {
             headers: {
                 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=7200',
-                'X-Data-Source': 'stale-memory-cache-refreshing',
-                'X-Cache-Age-Seconds': Math.floor((now - rsrsLiveCache.updatedAt) / 1000).toString(),
+                ...buildQualityHeaders({
+                    dataQuality: 'stale',
+                    buildState: 'building',
+                    dataSource: 'stale-memory-cache-refreshing',
+                    isStale: true,
+                    cacheAgeSeconds: Math.floor((now - rsrsLiveCache.updatedAt) / 1000),
+                    updatedAt: rsrsLiveCache.updatedAt,
+                }),
             }
         });
     }
@@ -180,8 +192,14 @@ export async function GET() {
         return NextResponse.json(rsrsWarmupCache.data, {
             headers: {
                 'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=600',
-                'X-Data-Source': 'warmup-partial-cache',
-                'X-Cache-Age-Seconds': Math.floor((now - rsrsWarmupCache.updatedAt) / 1000).toString(),
+                ...buildQualityHeaders({
+                    dataQuality: 'partial',
+                    buildState: 'building',
+                    dataSource: 'warmup-partial-cache',
+                    isFallback: true,
+                    cacheAgeSeconds: Math.floor((now - rsrsWarmupCache.updatedAt) / 1000),
+                    updatedAt: rsrsWarmupCache.updatedAt,
+                }),
             }
         });
     }
@@ -195,7 +213,13 @@ export async function GET() {
         return NextResponse.json(data, {
             headers: {
                 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=7200',
-                'X-Data-Source': 'live',
+                ...buildQualityHeaders({
+                    dataQuality: Object.keys(data).length > 0 ? 'enriched' : 'unavailable',
+                    buildState: Object.keys(data).length > 0 ? 'ready' : 'failed',
+                    dataSource: 'live',
+                    errorKind: Object.keys(data).length > 0 ? undefined : 'empty_response',
+                    updatedAt: Date.now(),
+                }),
             }
         });
     } catch (error) {
@@ -207,7 +231,14 @@ export async function GET() {
             return NextResponse.json(rsrsStaleCache, {
                 headers: {
                     'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=600',
-                    'X-Data-Source': 'stale-memory-cache'
+                    ...buildQualityHeaders({
+                        dataQuality: 'stale',
+                        buildState: 'stale',
+                        dataSource: 'stale-memory-cache',
+                        isStale: true,
+                        errorKind: 'timeout',
+                        updatedAt: Date.now(),
+                    }),
                 }
             });
         }
@@ -216,8 +247,15 @@ export async function GET() {
             return NextResponse.json(rsrsWarmupCache.data, {
                 headers: {
                     'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=600',
-                    'X-Data-Source': 'warmup-partial-cache-timeout',
-                    'X-Cache-Age-Seconds': Math.floor((now - rsrsWarmupCache.updatedAt) / 1000).toString(),
+                    ...buildQualityHeaders({
+                        dataQuality: 'partial',
+                        buildState: 'building',
+                        dataSource: 'warmup-partial-cache-timeout',
+                        isFallback: true,
+                        errorKind: 'timeout',
+                        cacheAgeSeconds: Math.floor((now - rsrsWarmupCache.updatedAt) / 1000),
+                        updatedAt: rsrsWarmupCache.updatedAt,
+                    }),
                 }
             });
         }

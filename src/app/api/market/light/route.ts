@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { TickerData, PremiumIndex } from '@/lib/types';
 import { fetchBinanceJson } from '@/lib/binanceApi';
 import { logger } from '@/lib/logger';
+import { buildQualityHeaders } from '@/lib/dataQualityStatus';
 
 interface BinanceExchangeInfoSymbol {
     symbol: string;
@@ -85,7 +86,12 @@ export async function GET() {
         return NextResponse.json(lightMarketCache.data, {
             headers: {
                 'Cache-Control': 'public, s-maxage=3, stale-while-revalidate=10',
-                'X-Data-Source': 'memory-cache',
+                ...buildQualityHeaders({
+                    dataQuality: 'lightweight',
+                    buildState: 'ready',
+                    dataSource: 'memory-cache',
+                    updatedAt: lightMarketCache.time,
+                }),
             }
         });
     }
@@ -98,8 +104,14 @@ export async function GET() {
         return NextResponse.json(lastSuccessfulLightMarketData, {
             headers: {
                 'Cache-Control': 'public, s-maxage=3, stale-while-revalidate=10',
-                'X-Data-Source': 'stale-memory-cache-refreshing',
-                'X-Cache-Age-Seconds': Math.floor((Date.now() - lastSuccessfulLightMarketAt) / 1000).toString(),
+                ...buildQualityHeaders({
+                    dataQuality: 'stale',
+                    buildState: 'building',
+                    dataSource: 'stale-memory-cache-refreshing',
+                    isStale: true,
+                    cacheAgeSeconds: Math.floor((Date.now() - lastSuccessfulLightMarketAt) / 1000),
+                    updatedAt: lastSuccessfulLightMarketAt,
+                }),
             }
         });
     }
@@ -109,7 +121,12 @@ export async function GET() {
         return NextResponse.json(data, {
             headers: {
                 'Cache-Control': 'public, s-maxage=3, stale-while-revalidate=10',
-                'X-Data-Source': 'live',
+                ...buildQualityHeaders({
+                    dataQuality: 'lightweight',
+                    buildState: 'ready',
+                    dataSource: 'live',
+                    updatedAt: Date.now(),
+                }),
             }
         });
     } catch (error) {

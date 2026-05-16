@@ -5,6 +5,7 @@ import { fetchBinanceJson } from '@/lib/binanceApi';
 import { logger } from '@/lib/logger';
 import { loadLocalKlineArchive } from '@/lib/services/klineArchive';
 import { invalidRequestBody, validateSymbolsParam } from '@/lib/apiRequestValidation';
+import { buildQualityHeaders } from '@/lib/dataQualityStatus';
 
 interface KlineResult {
     symbol: string;
@@ -210,19 +211,61 @@ export async function GET(request: Request) {
                 CUSTOM_SYMBOL_TIMEOUT_MS,
                 'multiframe batch build'
             );
+            const failedSymbols = requestedSymbols.filter((symbol) => !data[symbol]);
+            const dataQuality = failedSymbols.length === 0 ? 'enriched' : Object.keys(data).length > 0 ? 'partial' : 'unavailable';
+            const buildState = dataQuality === 'unavailable' ? 'failed' : 'ready';
 
-            return NextResponse.json(data, {
+            return NextResponse.json({
+                ...data,
+                dataQuality,
+                buildState,
+                failedSymbols,
+                sourceStatus: {
+                    marketMultiframe: {
+                        ok: dataQuality !== 'unavailable',
+                        status: dataQuality === 'enriched' ? 'ok' : dataQuality === 'partial' ? 'partial' : 'failed',
+                        errorKind: dataQuality === 'unavailable' ? 'empty_response' : undefined,
+                        updatedAt: Date.now(),
+                    },
+                },
+            }, {
                 headers: {
                     'Cache-Control': 'public, s-maxage=15, stale-while-revalidate=30',
-                    'X-Data-Source': 'symbols-batch',
+                    ...buildQualityHeaders({
+                        dataQuality,
+                        buildState,
+                        dataSource: 'symbols-batch',
+                        errorKind: dataQuality === 'unavailable' ? 'empty_response' : undefined,
+                        updatedAt: Date.now(),
+                    }),
                 }
             });
         } catch (error) {
             logger.error('Failed to fetch batched multiframe market data', error as Error);
-            return NextResponse.json({}, {
+            return NextResponse.json({
+                dataQuality: 'unavailable',
+                buildState: 'failed',
+                failedSymbols: requestedSymbols,
+                errorKind: 'timeout',
+                sourceStatus: {
+                    marketMultiframe: {
+                        ok: false,
+                        status: 'timeout',
+                        errorKind: 'timeout',
+                        updatedAt: Date.now(),
+                    },
+                },
+            }, {
                 headers: {
                     'Cache-Control': 'no-store, max-age=0',
-                    'X-Data-Source': 'symbols-batch-error',
+                    ...buildQualityHeaders({
+                        dataQuality: 'unavailable',
+                        buildState: 'failed',
+                        dataSource: 'symbols-batch-error',
+                        isFallback: true,
+                        errorKind: 'timeout',
+                        updatedAt: Date.now(),
+                    }),
                 }
             });
         }
@@ -237,16 +280,40 @@ export async function GET(request: Request) {
         return NextResponse.json(data, {
             headers: {
                 'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=120',
-                'X-Data-Source': 'next-unstable-cache',
+                ...buildQualityHeaders({
+                    dataQuality: 'enriched',
+                    buildState: 'ready',
+                    dataSource: 'next-unstable-cache',
+                    updatedAt: Date.now(),
+                }),
             }
         });
     } catch (error) {
         logger.error('Failed to fetch multiframe market data', error as Error);
         // Do not cache the empty response if it times out
-        return NextResponse.json({}, {
+        return NextResponse.json({
+            dataQuality: 'unavailable',
+            buildState: 'failed',
+            errorKind: 'timeout',
+            sourceStatus: {
+                marketMultiframe: {
+                    ok: false,
+                    status: 'timeout',
+                    errorKind: 'timeout',
+                    updatedAt: Date.now(),
+                },
+            },
+        }, {
             headers: {
                 'Cache-Control': 'no-store, max-age=0',
-                'X-Data-Source': 'empty-fallback-timeout',
+                ...buildQualityHeaders({
+                    dataQuality: 'unavailable',
+                    buildState: 'failed',
+                    dataSource: 'empty-fallback-timeout',
+                    isFallback: true,
+                    errorKind: 'timeout',
+                    updatedAt: Date.now(),
+                }),
             }
         });
     }

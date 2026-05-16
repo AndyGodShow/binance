@@ -1,4 +1,5 @@
 import type { OpenInterestFrameSnapshot, TickerData } from './types.ts';
+import { extractSymbolValueMap } from './dataQualityStatus.ts';
 
 export type MultiFrameDataMap = Record<string, { o15m: number; o1h: number; o4h: number }>;
 export type OpenInterestFrameDataMap = Record<string, OpenInterestFrameSnapshot>;
@@ -26,6 +27,9 @@ export type TimedPayload<T> = {
     dataSource?: string;
     dataQuality?: string;
     buildState?: string;
+    isStale?: boolean;
+    isFallback?: boolean;
+    errorKind?: string;
 };
 
 export function pruneTimedPayloadData<T>(
@@ -63,6 +67,9 @@ export function mergeTimedPayloadData<T>(
         dataSource: next.dataSource || 'client-batched',
         dataQuality: next.dataQuality,
         buildState: next.buildState,
+        isStale: next.isStale,
+        isFallback: next.isFallback,
+        errorKind: next.errorKind,
     };
 }
 
@@ -188,14 +195,16 @@ export function isLiquidTicker(ticker: TickerData): boolean {
 
 export function mergeLightMarketOpenInterest(
     lightMarketData: TickerData[] | undefined,
-    openInterestData: Record<string, string> | undefined
+    openInterestData: Record<string, unknown> | undefined
 ): TickerData[] | undefined {
     if (!lightMarketData || lightMarketData.length === 0) {
         return undefined;
     }
 
+    const symbolOpenInterestData = extractSymbolValueMap(openInterestData);
+
     return lightMarketData.map((ticker) => {
-        const openInterest = openInterestData?.[ticker.symbol];
+        const openInterest = symbolOpenInterestData[ticker.symbol];
         if (!openInterest) {
             return ticker;
         }

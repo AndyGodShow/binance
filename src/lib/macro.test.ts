@@ -247,6 +247,28 @@ test('normalizeMacroDashboardData makes legacy persisted arrays safe to render',
     assert.deepEqual(normalized.etfFlow?.flows, []);
 });
 
+test('normalizeMacroDashboardData preserves degraded macro data quality metadata', () => {
+    const normalized = normalizeMacroDashboardData({
+        updatedAt: '2026-04-18T00:00:00.000Z',
+        dataQuality: 'partial',
+        groups: [],
+        insights: [],
+        sourceStatus: [
+            {
+                key: 'btc',
+                label: 'BTC 行情与费率',
+                provider: 'Binance Futures',
+                status: 'unavailable',
+                errorKind: 'timeout',
+            },
+        ],
+    });
+
+    assert.equal(normalized.dataQuality, 'partial');
+    assert.equal(normalized.sourceStatus[0].status, 'unavailable');
+    assert.equal(normalized.sourceStatus[0].errorKind, 'timeout');
+});
+
 test('parseBtcEtfFlowText extracts latest day and rolling 7d totals', () => {
     const parsed = parseBtcEtfFlowText(`
 Bitcoin ETF Flow (US$m)

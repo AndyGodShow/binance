@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { fetchBinanceJson } from '@/lib/binanceApi';
 import { withTimeout } from '@/lib/async';
 import { logger } from '@/lib/logger';
+import { buildOpenInterestAllPayload, buildQualityHeaders } from '@/lib/dataQualityStatus';
 
 // Keep a short live cache plus a stale snapshot so repeat visits can render immediately.
 let liveCache: { time: number; data: Record<string, string> } | null = null;
@@ -123,10 +124,21 @@ function ensureOpenInterestBuild(): Promise<Record<string, string>> {
 export async function GET() {
     const now = Date.now();
     if (liveCache && (now - liveCache.time < LIVE_CACHE_DURATION)) {
-        return NextResponse.json(liveCache.data, {
+        return NextResponse.json(buildOpenInterestAllPayload({
+            data: liveCache.data,
+            dataQuality: 'enriched',
+            buildState: 'ready',
+            dataSource: 'memory-cache',
+            updatedAt: liveCache.time,
+        }), {
             headers: {
                 'Cache-Control': 'public, s-maxage=15, stale-while-revalidate=30',
-                'X-Data-Source': 'memory-cache',
+                ...buildQualityHeaders({
+                    dataQuality: 'enriched',
+                    buildState: 'ready',
+                    dataSource: 'memory-cache',
+                    updatedAt: liveCache.time,
+                }),
             }
         });
     }
@@ -136,11 +148,26 @@ export async function GET() {
             logger.error('Background open interest refresh failed', error as Error);
         });
 
-        return NextResponse.json(lastSuccessfulData, {
+        const cacheAgeSeconds = Math.floor((Date.now() - lastSuccessfulAt) / 1000);
+        return NextResponse.json(buildOpenInterestAllPayload({
+            data: lastSuccessfulData,
+            dataQuality: 'stale',
+            buildState: 'stale',
+            dataSource: 'stale-memory-cache-refreshing',
+            isStale: true,
+            updatedAt: lastSuccessfulAt,
+            cacheAgeSeconds,
+        }), {
             headers: {
                 'Cache-Control': 'public, s-maxage=15, stale-while-revalidate=30',
-                'X-Data-Source': 'stale-memory-cache-refreshing',
-                'X-Cache-Age-Seconds': Math.floor((Date.now() - lastSuccessfulAt) / 1000).toString(),
+                ...buildQualityHeaders({
+                    dataQuality: 'stale',
+                    buildState: 'stale',
+                    dataSource: 'stale-memory-cache-refreshing',
+                    isStale: true,
+                    updatedAt: lastSuccessfulAt,
+                    cacheAgeSeconds,
+                }),
             }
         });
     }
@@ -150,11 +177,26 @@ export async function GET() {
             logger.error('Background open interest warmup refresh failed', error as Error);
         });
 
-        return NextResponse.json(warmupFallbackData, {
+        const cacheAgeSeconds = Math.floor((Date.now() - warmupFallbackAt) / 1000);
+        return NextResponse.json(buildOpenInterestAllPayload({
+            data: warmupFallbackData,
+            dataQuality: 'partial',
+            buildState: 'building',
+            dataSource: 'warmup-partial-cache',
+            isFallback: true,
+            updatedAt: warmupFallbackAt,
+            cacheAgeSeconds,
+        }), {
             headers: {
                 'Cache-Control': 'public, s-maxage=5, stale-while-revalidate=15',
-                'X-Data-Source': 'warmup-partial-cache',
-                'X-Cache-Age-Seconds': Math.floor((Date.now() - warmupFallbackAt) / 1000).toString(),
+                ...buildQualityHeaders({
+                    dataQuality: 'partial',
+                    buildState: 'building',
+                    dataSource: 'warmup-partial-cache',
+                    isFallback: true,
+                    updatedAt: warmupFallbackAt,
+                    cacheAgeSeconds,
+                }),
             }
         });
     }
@@ -166,36 +208,100 @@ export async function GET() {
             BUILD_TIMEOUT_MS,
             'open interest build'
         );
-        return NextResponse.json(data, {
+        return NextResponse.json(buildOpenInterestAllPayload({
+            data,
+            dataQuality: Object.keys(data).length > 0 ? 'enriched' : 'unavailable',
+            buildState: Object.keys(data).length > 0 ? 'ready' : 'failed',
+            dataSource: ownsInflight ? 'live' : 'live-coalesced',
+            isFallback: Object.keys(data).length === 0,
+            errorKind: Object.keys(data).length > 0 ? undefined : 'empty_response',
+            updatedAt: Date.now(),
+        }), {
             headers: {
                 'Cache-Control': 'public, s-maxage=15, stale-while-revalidate=30',
-                'X-Data-Source': ownsInflight ? 'live' : 'live-coalesced',
+                ...buildQualityHeaders({
+                    dataQuality: Object.keys(data).length > 0 ? 'enriched' : 'unavailable',
+                    buildState: Object.keys(data).length > 0 ? 'ready' : 'failed',
+                    dataSource: ownsInflight ? 'live' : 'live-coalesced',
+                    isFallback: Object.keys(data).length === 0,
+                    errorKind: Object.keys(data).length > 0 ? undefined : 'empty_response',
+                    updatedAt: Date.now(),
+                }),
             }
         });
     } catch (error) {
         logger.error('Failed to fetch open interest data', error as Error);
         if (lastSuccessfulData && Object.keys(lastSuccessfulData).length > 0) {
-            return NextResponse.json(lastSuccessfulData, {
+            const cacheAgeSeconds = Math.floor((Date.now() - lastSuccessfulAt) / 1000);
+            return NextResponse.json(buildOpenInterestAllPayload({
+                data: lastSuccessfulData,
+                dataQuality: 'stale',
+                buildState: 'stale',
+                dataSource: 'stale-memory-cache-timeout',
+                isStale: true,
+                errorKind: 'timeout',
+                updatedAt: lastSuccessfulAt,
+                cacheAgeSeconds,
+            }), {
                 headers: {
                     'Cache-Control': 'public, s-maxage=15, stale-while-revalidate=30',
-                    'X-Data-Source': 'stale-memory-cache-timeout',
-                    'X-Cache-Age-Seconds': Math.floor((Date.now() - lastSuccessfulAt) / 1000).toString(),
+                    ...buildQualityHeaders({
+                        dataQuality: 'stale',
+                        buildState: 'stale',
+                        dataSource: 'stale-memory-cache-timeout',
+                        isStale: true,
+                        errorKind: 'timeout',
+                        updatedAt: lastSuccessfulAt,
+                        cacheAgeSeconds,
+                    }),
                 }
             });
         }
         if (warmupFallbackData && Object.keys(warmupFallbackData).length > 0) {
-            return NextResponse.json(warmupFallbackData, {
+            const cacheAgeSeconds = Math.floor((Date.now() - warmupFallbackAt) / 1000);
+            return NextResponse.json(buildOpenInterestAllPayload({
+                data: warmupFallbackData,
+                dataQuality: 'partial',
+                buildState: 'building',
+                dataSource: 'warmup-partial-cache-timeout',
+                isFallback: true,
+                errorKind: 'timeout',
+                updatedAt: warmupFallbackAt,
+                cacheAgeSeconds,
+            }), {
                 headers: {
                     'Cache-Control': 'public, s-maxage=5, stale-while-revalidate=15',
-                    'X-Data-Source': 'warmup-partial-cache-timeout',
-                    'X-Cache-Age-Seconds': Math.floor((Date.now() - warmupFallbackAt) / 1000).toString(),
+                    ...buildQualityHeaders({
+                        dataQuality: 'partial',
+                        buildState: 'building',
+                        dataSource: 'warmup-partial-cache-timeout',
+                        isFallback: true,
+                        errorKind: 'timeout',
+                        updatedAt: warmupFallbackAt,
+                        cacheAgeSeconds,
+                    }),
                 }
             });
         }
-        return NextResponse.json({}, {
+        return NextResponse.json(buildOpenInterestAllPayload({
+            data: {},
+            dataQuality: 'unavailable',
+            buildState: 'failed',
+            dataSource: 'empty-fallback',
+            isFallback: true,
+            errorKind: 'upstream_error',
+            updatedAt: Date.now(),
+        }), {
             headers: {
                 'Cache-Control': 'public, s-maxage=5, stale-while-revalidate=15',
-                'X-Data-Source': 'empty-fallback',
+                ...buildQualityHeaders({
+                    dataQuality: 'unavailable',
+                    buildState: 'failed',
+                    dataSource: 'empty-fallback',
+                    isFallback: true,
+                    errorKind: 'upstream_error',
+                    updatedAt: Date.now(),
+                }),
             }
         });
     }

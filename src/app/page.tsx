@@ -34,6 +34,7 @@ import {
   type TimedPayload,
 } from '@/lib/liveMarketData';
 import { buildMarketDataStatus } from '@/lib/strategyScannerDiagnostics';
+import { summarizeTimedPayloadQuality } from '@/lib/dataQualityStatus';
 
 type AppTab = 'dashboard' | 'leaderboard' | 'macro' | 'news' | 'watchlists' | 'longshort' | 'onchain' | 'strategies' | 'trading';
 
@@ -112,14 +113,30 @@ async function readSuccessfulJson<T>(res: Response): Promise<T> {
 
 async function fetcherWithMeta<T>(url: string): Promise<TimedPayload<T>> {
   const res = await fetch(url);
-
-  return {
-    data: await readSuccessfulJson<T>(res),
-    fetchedAt: Date.now(),
-    cacheAgeSeconds: parseOptionalSeconds(res.headers.get('X-Cache-Age-Seconds')),
-    dataSource: res.headers.get('X-Data-Source') || undefined,
+  const body = await readSuccessfulJson<T>(res);
+  const bodyRecord = body && typeof body === 'object' && !Array.isArray(body)
+    ? body as Record<string, unknown>
+    : null;
+  const qualitySummary = summarizeTimedPayloadQuality({
     dataQuality: res.headers.get('X-Data-Quality') || undefined,
     buildState: res.headers.get('X-Build-State') || undefined,
+    dataSource: res.headers.get('X-Data-Source') || undefined,
+    isStale: res.headers.get('X-Is-Stale') ? res.headers.get('X-Is-Stale') === '1' : undefined,
+    isFallback: res.headers.get('X-Is-Fallback') ? res.headers.get('X-Is-Fallback') === '1' : undefined,
+    errorKind: res.headers.get('X-Error-Kind') || undefined,
+    body: bodyRecord,
+  });
+
+  return {
+    data: body,
+    fetchedAt: Date.now(),
+    cacheAgeSeconds: parseOptionalSeconds(res.headers.get('X-Cache-Age-Seconds')),
+    dataSource: qualitySummary.dataSource,
+    dataQuality: qualitySummary.dataQuality,
+    buildState: qualitySummary.buildState,
+    isStale: qualitySummary.isStale,
+    isFallback: qualitySummary.isFallback,
+    errorKind: qualitySummary.errorKind,
   };
 }
 
@@ -173,7 +190,7 @@ export default function Home() {
     }
   );
 
-  const { data: openInterestData } = usePersistentSWR<Record<string, string>>(
+  const { data: openInterestData } = usePersistentSWR<Record<string, unknown>>(
     shouldRunLiveMarketRequests ? '/api/oi/all' : null,
     shouldRunLiveMarketRequests ? ((url: string) => fetcher<Record<string, string>>(url)) : null,
     {
@@ -352,6 +369,10 @@ export default function Home() {
     () => mergeBaseAndHeavyMarketData(baseMarketData, heavyMarketData),
     [baseMarketData, heavyMarketData]
   );
+  const openInterestQuality = useMemo(
+    () => summarizeTimedPayloadQuality({ body: openInterestData ?? null }),
+    [openInterestData]
+  );
 
   // Process and merge all data
   const processedData = useMemo(
@@ -476,6 +497,21 @@ export default function Home() {
           }}
         >
           当前未获取到有效行情数据，请稍后重试。
+        </div>
+      )}
+      {shouldRunLiveMarketRequests && openInterestData && openInterestQuality.isDegraded && (
+        <div
+          style={{
+            marginBottom: 12,
+            padding: '10px 12px',
+            borderRadius: 8,
+            border: '1px solid rgba(245, 158, 11, 0.4)',
+            background: 'rgba(245, 158, 11, 0.1)',
+            color: '#fcd34d',
+            fontSize: 13,
+          }}
+        >
+          OI 数据源暂不可用，不代表市场没有持仓数据。
         </div>
       )}
 

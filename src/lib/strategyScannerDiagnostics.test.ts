@@ -21,6 +21,63 @@ test('buildMarketDataStatus marks lightweight market data as degraded for scanne
     assert.equal(isMarketDataStatusDegraded(status), true);
 });
 
+test('buildMarketDataStatus marks building enriched data as degraded for scanner UI', () => {
+    const status = buildMarketDataStatus({
+        dataQuality: 'enriched',
+        buildState: 'building',
+        dataSource: 'stale-memory-cache-refreshing',
+    });
+
+    assert.equal(status.dataQuality, 'enriched');
+    assert.equal(status.buildState, 'building');
+    assert.equal(isMarketDataStatusDegraded(status), true);
+});
+
+test('buildMarketDataStatus accepts partial degraded and unavailable qualities', () => {
+    const partial = buildMarketDataStatus({
+        dataQuality: 'partial',
+        buildState: 'ready',
+        dataSource: 'symbols-batch',
+    });
+    const unavailable = buildMarketDataStatus({
+        dataQuality: 'unavailable',
+        buildState: 'failed',
+        dataSource: 'empty-fallback',
+    });
+
+    assert.equal(partial.dataQuality, 'partial');
+    assert.equal(unavailable.dataQuality, 'unavailable');
+    assert.equal(isMarketDataStatusDegraded(partial), true);
+    assert.equal(isMarketDataStatusDegraded(unavailable), true);
+});
+
+test('buildMarketDataStatusMessage explains degraded market states', () => {
+    assert.equal(
+        buildMarketDataStatus({
+            dataQuality: 'lightweight',
+            buildState: 'ready',
+            dataSource: 'light',
+        }).message,
+        '市场数据为轻量模式，部分策略字段暂不可用'
+    );
+    assert.equal(
+        buildMarketDataStatus({
+            dataQuality: 'enriched',
+            buildState: 'building',
+            dataSource: 'stale-memory-cache-refreshing',
+        }).message,
+        '正在重建完整市场数据，当前结果可能不完整'
+    );
+    assert.equal(
+        buildMarketDataStatus({
+            dataQuality: 'stale',
+            buildState: 'stale',
+            dataSource: 'stale-memory-cache',
+        }).message,
+        '正在使用旧缓存'
+    );
+});
+
 test('buildMarketDataStatus does not mark enriched ready market data as degraded', () => {
     const status = buildMarketDataStatus({
         dataQuality: 'enriched',
@@ -40,14 +97,20 @@ test('buildMarketDataStatus falls back safely when headers are missing or unknow
     });
 
     assert.deepEqual(missing, {
-        dataQuality: 'unknown',
-        buildState: 'unknown',
+        dataQuality: 'unavailable',
+        buildState: 'idle',
         dataSource: 'unknown',
+        isDegraded: false,
+        isUnavailable: false,
+        message: undefined,
     });
     assert.deepEqual(unknown, {
-        dataQuality: 'unknown',
-        buildState: 'unknown',
+        dataQuality: 'partial',
+        buildState: 'idle',
         dataSource: 'unknown',
+        isDegraded: true,
+        isUnavailable: false,
+        message: '部分外部数据源失败，结果已降级',
     });
     assert.equal(isMarketDataStatusDegraded(missing), false);
 });

@@ -127,6 +127,8 @@ export default function MacroView() {
         return null;
     }
 
+    const isMacroDegraded = data.dataQuality && data.dataQuality !== 'enriched';
+
     return (
         <section className={pageClassName}>
             <header className={styles.hero}>
@@ -154,6 +156,12 @@ export default function MacroView() {
                     </div>
                 </div>
             </header>
+
+            {isMacroDegraded && (
+                <div className={styles.degradedNotice}>
+                    部分外部数据源失败，宏观视图已降级。
+                </div>
+            )}
 
             <section className={styles.utilityBar}>
                 <div className={styles.insightPanel}>

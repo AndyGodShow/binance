@@ -82,6 +82,8 @@ export interface MacroSourceStatus {
     provider: string;
     status: 'live' | 'fallback' | 'unavailable';
     detail?: string;
+    errorKind?: 'timeout' | 'upstream_error' | 'empty_response' | 'invalid_response' | 'unknown';
+    updatedAt?: number;
 }
 
 export function buildEtfFlowSourceStatus(input: {
@@ -120,6 +122,7 @@ export function buildEtfFlowSourceStatus(input: {
 
 export interface MacroDashboardData {
     updatedAt: string;
+    dataQuality?: 'enriched' | 'partial' | 'degraded' | 'unavailable';
     groups: MacroBoardGroup[];
     regime: {
         code: 'RISK_ON' | 'NEUTRAL' | 'RISK_OFF';

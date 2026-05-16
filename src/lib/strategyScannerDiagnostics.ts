@@ -1,8 +1,9 @@
 import type { StrategyId } from './strategyParameters.ts';
 import type { StrategyInputReadinessSummary } from './strategyInputs.ts';
+import { summarizeTimedPayloadQuality, type UnifiedBuildState, type UnifiedDataQuality } from './dataQualityStatus.ts';
 
-export type MarketDataQuality = 'enriched' | 'lightweight' | 'unknown';
-export type MarketBuildState = 'ready' | 'building' | 'stale' | 'unknown';
+export type MarketDataQuality = UnifiedDataQuality;
+export type MarketBuildState = UnifiedBuildState;
 
 export interface MarketDataStatusInput {
     dataQuality?: string;
@@ -14,6 +15,9 @@ export interface MarketDataStatus {
     dataQuality: MarketDataQuality;
     buildState: MarketBuildState;
     dataSource: string;
+    isDegraded: boolean;
+    isUnavailable: boolean;
+    message?: string;
 }
 
 export interface StrategyReadinessDebugRow {
@@ -23,24 +27,20 @@ export interface StrategyReadinessDebugRow {
     sampleSymbols: string[];
 }
 
-function normalizeDataQuality(value: string | undefined): MarketDataQuality {
-    return value === 'enriched' || value === 'lightweight' ? value : 'unknown';
-}
-
-function normalizeBuildState(value: string | undefined): MarketBuildState {
-    return value === 'ready' || value === 'building' || value === 'stale' ? value : 'unknown';
-}
-
 export function buildMarketDataStatus(input: MarketDataStatusInput): MarketDataStatus {
+    const summary = summarizeTimedPayloadQuality(input);
     return {
-        dataQuality: normalizeDataQuality(input.dataQuality),
-        buildState: normalizeBuildState(input.buildState),
-        dataSource: input.dataSource || 'unknown',
+        dataQuality: summary.dataQuality,
+        buildState: summary.buildState,
+        dataSource: summary.dataSource,
+        isDegraded: summary.isDegraded,
+        isUnavailable: summary.isUnavailable,
+        message: summary.message,
     };
 }
 
 export function isMarketDataStatusDegraded(status: MarketDataStatus): boolean {
-    return status.dataQuality === 'lightweight' || status.buildState === 'stale';
+    return status.isDegraded;
 }
 
 export function buildReadinessDebugRows(

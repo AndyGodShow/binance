@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { fetchBinanceJson } from '@/lib/binanceApi';
+import { withTimeout } from '@/lib/async';
 import { logger } from '@/lib/logger';
 import {
     BTC_LONG_SHORT_RATIO_PERIOD,
@@ -10,6 +11,7 @@ import {
     parseBitboBtcEtfFlowHtml,
     parseBtcEtfFlowText,
     type BtcEtfFlowSnapshot,
+    type EthBtcSnapshot,
     type FearGreedSnapshot,
     type MacroSourceAsset,
     type MacroSourceStatus,
@@ -80,6 +82,7 @@ const YAHOO_ASSETS: YahooAssetConfig[] = [
 
 const ETF_FLOWS_URL = 'https://farside.co.uk/btc/';
 const ETF_FLOWS_BITBO_URL = 'https://bitbo.io/treasuries/etf-flows/';
+const MACRO_SOURCE_TIMEOUT_MS = 8000;
 
 interface EtfFlowFetchResult {
     snapshot?: BtcEtfFlowSnapshot;
@@ -105,13 +108,13 @@ async function fetchYahooAsset(asset: YahooAssetConfig): Promise<MacroSourceAsse
     for (const querySymbol of querySymbols) {
         try {
             const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(querySymbol)}?interval=1d&range=5d&includePrePost=false`;
-            const response = await fetch(url, {
+            const response = await withTimeout(fetch(url, {
                 headers: {
                     'User-Agent': 'Mozilla/5.0',
                     'Accept': 'application/json',
                 },
                 next: { revalidate: 60 },
-            });
+            }), MACRO_SOURCE_TIMEOUT_MS, `macro yahoo ${querySymbol}`);
 
             if (!response.ok) {
                 throw new Error(`Yahoo request failed for ${querySymbol}: ${response.status}`);
@@ -161,9 +164,9 @@ async function fetchYahooAsset(asset: YahooAssetConfig): Promise<MacroSourceAsse
 }
 
 async function fetchFearGreed(): Promise<FearGreedSnapshot> {
-    const response = await fetch('https://api.alternative.me/fng/?limit=1&format=json', {
+    const response = await withTimeout(fetch('https://api.alternative.me/fng/?limit=1&format=json', {
         next: { revalidate: 1800 },
-    });
+    }), MACRO_SOURCE_TIMEOUT_MS, 'macro fear greed');
 
     if (!response.ok) {
         throw new Error(`Fear & Greed request failed: ${response.status}`);
@@ -187,11 +190,11 @@ async function fetchFearGreed(): Promise<FearGreedSnapshot> {
 }
 
 async function fetchBtcSnapshot() {
-    const [ticker, premium, lsRatioData] = await Promise.all([
+    const [ticker, premium, lsRatioData] = await withTimeout(Promise.all([
         fetchBinanceJson<Binance24hTicker>('/fapi/v1/ticker/24hr?symbol=BTCUSDT', { revalidate: 30 }),
         fetchBinanceJson<BinancePremiumIndex>('/fapi/v1/premiumIndex?symbol=BTCUSDT', { revalidate: 30 }),
         fetchBinanceJson<Array<{ longShortRatio: string }>>(`/futures/data/globalLongShortAccountRatio?symbol=BTCUSDT&period=${BTC_LONG_SHORT_RATIO_PERIOD}`, { revalidate: 60 }),
-    ]);
+    ]), MACRO_SOURCE_TIMEOUT_MS, 'macro btc');
 
     const lsRatio = (Array.isArray(lsRatioData) && lsRatioData.length > 0)
         ? Number.parseFloat(lsRatioData[lsRatioData.length - 1].longShortRatio)
@@ -208,7 +211,11 @@ async function fetchBtcSnapshot() {
 }
 
 async function fetchEthBtcSnapshot() {
-    const ticker = await fetchBinanceJson<Binance24hTicker>('/api/v3/ticker/24hr?symbol=ETHBTC', { revalidate: 30 });
+    const ticker = await withTimeout(
+        fetchBinanceJson<Binance24hTicker>('/api/v3/ticker/24hr?symbol=ETHBTC', { revalidate: 30 }),
+        MACRO_SOURCE_TIMEOUT_MS,
+        'macro ethbtc'
+    );
     return {
         price: Number.parseFloat(ticker.lastPrice),
         changePercent: Number.parseFloat(ticker.priceChangePercent),
@@ -217,13 +224,13 @@ async function fetchEthBtcSnapshot() {
 
 async function fetchFarsideBtcEtfFlow(): Promise<BtcEtfFlowSnapshot | undefined> {
     try {
-        const response = await fetch(ETF_FLOWS_URL, {
+        const response = await withTimeout(fetch(ETF_FLOWS_URL, {
             headers: {
                 'User-Agent': 'Mozilla/5.0',
                 'Accept': 'text/html,application/xhtml+xml',
             },
             next: { revalidate: 15 * 60 },
-        });
+        }), MACRO_SOURCE_TIMEOUT_MS, 'macro farside etf');
 
         if (!response.ok) {
             throw new Error(`ETF flow request failed: ${response.status}`);
@@ -244,13 +251,13 @@ async function fetchFarsideBtcEtfFlow(): Promise<BtcEtfFlowSnapshot | undefined>
 
 async function fetchBitboBtcEtfFlow(): Promise<BtcEtfFlowSnapshot | undefined> {
     try {
-        const response = await fetch(ETF_FLOWS_BITBO_URL, {
+        const response = await withTimeout(fetch(ETF_FLOWS_BITBO_URL, {
             headers: {
                 'User-Agent': 'Mozilla/5.0',
                 'Accept': 'text/html,application/xhtml+xml',
             },
             next: { revalidate: 15 * 60 },
-        });
+        }), MACRO_SOURCE_TIMEOUT_MS, 'macro bitbo etf');
 
         if (!response.ok) {
             throw new Error(`Bitbo ETF flow request failed: ${response.status}`);
@@ -286,6 +293,48 @@ function chooseLatestEtfFlow(primary?: BtcEtfFlowSnapshot, secondary?: BtcEtfFlo
     return primary;
 }
 
+function classifyMacroErrorKind(error: unknown): MacroSourceStatus['errorKind'] {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/timed out|timeout/i.test(message)) {
+        return 'timeout';
+    }
+    if (/missing|empty/i.test(message)) {
+        return 'empty_response';
+    }
+    if (/invalid|unexpected/i.test(message)) {
+        return 'invalid_response';
+    }
+    if (/request failed|http|upstream/i.test(message)) {
+        return 'upstream_error';
+    }
+    return 'unknown';
+}
+
+function fallbackFearGreed(): FearGreedSnapshot {
+    return {
+        value: 50,
+        valueText: 'Unavailable',
+    };
+}
+
+function fallbackBtcSnapshot(): Awaited<ReturnType<typeof fetchBtcSnapshot>> {
+    return {
+        price: 0,
+        changePercent: 0,
+        high24h: 0,
+        low24h: 0,
+        fundingRate: 0,
+        longShortRatio: 1.5,
+    };
+}
+
+function fallbackEthBtcSnapshot(): EthBtcSnapshot {
+    return {
+        price: 0,
+        changePercent: 0,
+    };
+}
+
 async function fetchBtcEtfFlow(): Promise<EtfFlowFetchResult> {
     const [primary, secondary] = await Promise.all([
         fetchFarsideBtcEtfFlow(),
@@ -302,14 +351,26 @@ async function fetchBtcEtfFlow(): Promise<EtfFlowFetchResult> {
 
 export async function GET() {
     try {
-        const [fearGreedResult, btcResult, ethBtcResult, etfFlowResult, yahooAssetResults] = await Promise.all([
-            fetchFearGreed(),
-            fetchBtcSnapshot(),
-            fetchEthBtcSnapshot(),
-            fetchBtcEtfFlow(),
+        const [fearGreedSettled, btcSettled, ethBtcSettled, etfFlowSettled, yahooAssetResults] = await Promise.all([
+            Promise.allSettled([fetchFearGreed()]).then(([result]) => result),
+            Promise.allSettled([fetchBtcSnapshot()]).then(([result]) => result),
+            Promise.allSettled([fetchEthBtcSnapshot()]).then(([result]) => result),
+            Promise.allSettled([fetchBtcEtfFlow()]).then(([result]) => result),
             Promise.allSettled(YAHOO_ASSETS.map((asset) => fetchYahooAsset(asset))),
         ]);
 
+        const fearGreedResult = fearGreedSettled.status === 'fulfilled' ? fearGreedSettled.value : fallbackFearGreed();
+        const btcResult = btcSettled.status === 'fulfilled' ? btcSettled.value : fallbackBtcSnapshot();
+        const ethBtcResult = ethBtcSettled.status === 'fulfilled' ? ethBtcSettled.value : fallbackEthBtcSnapshot();
+        const etfFlowResult = etfFlowSettled.status === 'fulfilled'
+            ? etfFlowSettled.value
+            : { snapshot: undefined, primaryAvailable: false, secondaryAvailable: false };
+        const sourceErrorKinds = {
+            fearGreed: fearGreedSettled.status === 'rejected' ? classifyMacroErrorKind(fearGreedSettled.reason) : undefined,
+            btc: btcSettled.status === 'rejected' ? classifyMacroErrorKind(btcSettled.reason) : undefined,
+            ethBtc: ethBtcSettled.status === 'rejected' ? classifyMacroErrorKind(ethBtcSettled.reason) : undefined,
+            etf: etfFlowSettled.status === 'rejected' ? classifyMacroErrorKind(etfFlowSettled.reason) : undefined,
+        };
         const assets = Object.fromEntries(
             yahooAssetResults
                 .map((result) => result.status === 'fulfilled' ? result.value : null)
@@ -317,7 +378,9 @@ export async function GET() {
                 .map((asset) => [asset.symbol, asset])
         );
 
-        if (Object.keys(assets).length === 0) {
+        const assetCount = Object.keys(assets).length;
+        const minimumAssetCount = Math.ceil(YAHOO_ASSETS.length * 0.75);
+        if (assetCount === 0 && btcSettled.status === 'rejected' && fearGreedSettled.status === 'rejected') {
             throw new Error('No macro assets could be fetched');
         }
 
@@ -335,33 +398,50 @@ export async function GET() {
                 : undefined,
         };
 
+        const etfSourceStatus = buildEtfFlowSourceStatus(etfFlowResult);
         const sourceStatus: MacroSourceStatus[] = [
             {
                 key: 'market',
                 label: '跨市场行情',
                 provider: 'Yahoo Finance',
-                status: Object.keys(assets).length >= Math.ceil(YAHOO_ASSETS.length * 0.75) ? 'live' : 'fallback',
-                detail: `${Object.keys(assets).length} 个市场读数`,
+                status: assetCount >= minimumAssetCount ? 'live' : assetCount > 0 ? 'fallback' : 'unavailable',
+                detail: `${assetCount} 个市场读数`,
+                errorKind: assetCount > 0 ? undefined : 'empty_response',
+                updatedAt: Date.now(),
             },
             {
                 key: 'fear-greed',
                 label: '恐贪指数',
                 provider: 'Alternative.me',
-                status: 'live',
+                status: fearGreedSettled.status === 'fulfilled' ? 'live' : 'unavailable',
                 detail: fearGreedResult.valueText || fearGreedResult.value.toString(),
+                errorKind: sourceErrorKinds.fearGreed,
+                updatedAt: Date.now(),
             },
             {
                 key: 'btc',
                 label: 'BTC 行情与费率',
                 provider: 'Binance Futures',
-                status: 'live',
-                detail: `BTC ${btcResult.price.toFixed(0)}`,
+                status: btcSettled.status === 'fulfilled' ? 'live' : 'unavailable',
+                detail: btcSettled.status === 'fulfilled' ? `BTC ${btcResult.price.toFixed(0)}` : 'BTC 数据暂不可用',
+                errorKind: sourceErrorKinds.btc,
+                updatedAt: Date.now(),
             },
-            buildEtfFlowSourceStatus(etfFlowResult),
+            {
+                ...etfSourceStatus,
+                status: etfFlowSettled.status === 'fulfilled' ? etfSourceStatus.status : 'unavailable',
+                errorKind: sourceErrorKinds.etf ?? etfSourceStatus.errorKind,
+                updatedAt: Date.now(),
+            },
         ];
 
         const dashboard = buildMacroDashboard(payload);
         dashboard.sourceStatus = sourceStatus;
+        dashboard.dataQuality = sourceStatus.every((source) => source.status === 'live')
+            ? 'enriched'
+            : sourceStatus.some((source) => source.status === 'live' || source.status === 'fallback')
+                ? 'partial'
+                : 'unavailable';
 
         return NextResponse.json(dashboard, {
             headers: {

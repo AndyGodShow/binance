@@ -64,6 +64,12 @@ export default function StrategyCenter({
     const isDevelopment = process.env.NODE_ENV === 'development';
     const isDegraded = isMarketDataStatusDegraded(marketDataStatus);
     const readinessRows = buildReadinessDebugRows(readinessSummary);
+    const missingStrategyCount = readinessRows.length;
+    const missingFieldCount = readinessRows.reduce((sum, row) => sum + row.missingFields.length, 0);
+    const missingFieldPreview = readinessRows
+        .flatMap((row) => row.missingFields.map((field) => `${row.strategyId}:${field}`))
+        .slice(0, 4)
+        .join('，');
 
     const handleToggle = (id: string) => {
         strategyRegistry.toggleStrategy(id);
@@ -117,7 +123,13 @@ export default function StrategyCenter({
                         </div>
                         {isDegraded && (
                             <div className={styles.degradedHint}>
-                                当前策略信号可能不完整
+                                {marketDataStatus.message || '部分外部数据源失败，结果已降级'}
+                            </div>
+                        )}
+                        {missingStrategyCount > 0 && (
+                            <div className={styles.degradedHint}>
+                                策略输入缺字段：影响 {missingStrategyCount} 个策略，{missingFieldCount} 类字段
+                                {missingFieldPreview ? `（${missingFieldPreview}）` : ''}
                             </div>
                         )}
                     </div>
