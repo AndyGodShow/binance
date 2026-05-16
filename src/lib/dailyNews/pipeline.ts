@@ -161,6 +161,65 @@ const AI_PERSONNEL_OR_ROUTINE_PARTNERSHIP_TERMS = [
     'shares down', 'chip stocks are tumbling', 'blame openai', '股价下跌',
     '芯片股正在暴跌', '归咎于 OpenAI',
 ];
+const EDITORIAL_ANALYSIS_NOISE_TERMS = [
+    'opinion', 'columnist', 'explainer', 'what to know', 'what to expect',
+    'should you buy', 'survey shows', 'poll shows', 'top stories', 'top articles',
+    'market recap', 'daily recap', 'roundup', 'preview', 'incoming',
+    'drama', 'price prediction', 'analyst predicts', 'trader predicts',
+    'ceo says', 'ceo：', 'research:', 'research：', 'research article',
+    'tiger research', 'report:', 'report：', '研究院：', '调查显示',
+    '民调显示', '盘点', '一文读懂', '深度解读',
+    '带来了多大变量', '已死', '值得关注', '即将到来',
+];
+const NEGATED_EVENT_EVIDENCE_TERMS = [
+    'no new official', 'without a new', 'without new', 'no released data',
+    'no filing', 'no product launch', 'no regulatory event', '缺少新官方',
+    '没有新规', '没有发布', '没有备案',
+];
+const MACRO_LOW_INFORMATION_TERMS = [
+    'await', 'awaits', 'ahead of', 'preview', 'incoming', 'drama',
+    'investigation', 'changes course', 'unlikely to satisfy', 'new worry',
+    'seen holding coupon sizes', 'leaning on bills', 'market opens',
+    'traders await', 'investors assess',
+];
+const MACRO_EVENT_TERMS = [
+    'holds rates', 'raises rates', 'hikes rates', 'cuts rates', 'rate decision',
+    'rate cut', 'rate cuts', 'minutes', 'statement', 'dot plot', 'press conference',
+    'powell says', 'fed says', 'ecb says', 'boj says', 'pboc says',
+    'cpi', 'ppi', 'payrolls', 'nonfarm', 'jobs report', 'pmi', 'gdp',
+    'treasury yields', 'yield', 'yields', 'dollar', 'dxy', 'tariff', 'tariffs',
+    'sanction', 'sanctions', 'war', 'oil', 'gold', 'auction', 'coupon',
+    'refunds', 'debt ceiling', 'default',
+];
+const AI_EVENT_TERMS = [
+    'launch', 'launches', 'release', 'releases', 'rollout', 'begins',
+    'open-source', 'model', 'reasoning', 'agent', 'chip', 'gpu', 'semiconductor',
+    'data center', 'datacenter', 'compute', 'regulation', 'lawsuit', 'settlement',
+    'funding', 'raise', 'acquisition', 'merger', 'partnership', 'contract',
+    'deploy', 'deploys', 'deployment', 'legal action', 'chip controls', 'restrictions',
+    'urges', 'considers',
+    '发布', '推出', '模型', '芯片', '算力', '融资', '收购', '监管', '诉讼',
+];
+const CRYPTO_EVENT_TERMS = [
+    'sec', 'cftc', 'lawsuit', 'charges', 'settlement', 'approve', 'approved',
+    'approval', 'reject', 'rejected', 'delay', 'delayed', 'filing', 'court',
+    'etf', 'stablecoin', 'depeg', 'reserve', 'reserves', 'proof-of-reserves',
+    'hack', 'exploit', 'breach', 'outage', 'withdrawal pause', 'custody',
+    'liquidation', 'bankruptcy', 'default', 'acquisition', 'merger', 'launch',
+    'rollout', 'upgrade', '安全', '黑客', '攻击', '漏洞', '宕机', '提现',
+    '钱包', '储备', '监管', '稳定币', '脱锚', '清算', '收购', '升级',
+];
+const CONCRETE_NEWS_ACTION_TERMS = [
+    'announce', 'announces', 'announced', 'approve', 'approved', 'reject',
+    'rejected', 'delay', 'delayed', 'filed', 'filing', 'sues', 'lawsuit',
+    'charges', 'settlement', 'launch', 'launches', 'released', 'release',
+    'rollout', 'begins', 'raises', 'funding', 'acquires', 'acquisition',
+    'merger', 'hack', 'exploit', 'breach', 'outage', 'pause', 'paused',
+    'holds rates', 'cuts rates', 'hikes rates', 'raises rates', 'reports',
+    'reported', 'data showed', '公布', '宣布', '批准', '拒绝', '推迟',
+    '提交', '起诉', '指控', '和解', '发布', '推出', '融资', '收购',
+    '攻击', '漏洞', '宕机', '暂停', '公布数据',
+];
 const LISTING_PRICE_REACTION_TERMS = [
     'will list', 'to list', 'lists', 'listing', 'new listing', '上线',
     '将上线', '新增交易对', '永续合约',
@@ -202,16 +261,16 @@ const LOW_VALUE_CRYPTO_TERMS = ['small defi', 'low market cap', 'tiny token', 'a
 const OFFICIAL_SOURCE_DOMAINS = [
     'federalreserve.gov', 'ecb.europa.eu', 'boj.or.jp', 'pbc.gov.cn', 'sec.gov',
     'treasury.gov', 'whitehouse.gov', 'openai.com', 'anthropic.com', 'nvidia.com',
-    'microsoft.com', 'blog.google', 'binance.com', 'coinbase.com', 'circle.com',
-    'tether.to',
+    'blogs.nvidia.com', 'microsoft.com', 'blogs.microsoft.com', 'blog.google',
+    'huggingface.co', 'binance.com', 'coinbase.com', 'circle.com', 'tether.to',
 ];
 const MAJOR_SOURCE_DOMAINS = [
     'reuters.com', 'bloomberg.com', 'apnews.com', 'ft.com', 'wsj.com', 'cnbc.com',
-    'marketwatch.com',
+    'marketwatch.com', 'theverge.com', 'techcrunch.com',
 ];
 const SPECIALIST_SOURCE_DOMAINS = [
     'coindesk.com', 'theblock.co', 'decrypt.co', 'cointelegraph.com', 'bitcoinmagazine.com',
-    'theblockbeats.news', 'theblockbeats.info', 'odaily.news', 'ai.6551.io',
+    'venturebeat.com', 'theblockbeats.news', 'theblockbeats.info', 'odaily.news', 'ai.6551.io',
 ];
 const CORE_ENTITY_RULES: Array<[string, string[]]> = [
     ['BTC', ['bitcoin', 'btc']],
@@ -501,6 +560,19 @@ function newsText(value: NewsCandidate | DailyNewsItem): string {
     return `${value.title} ${value.summary || ''} ${tags.join(' ')} ${extra.join(' ')}`.toLowerCase();
 }
 
+function dailyItemEvidenceText(item: DailyNewsItem): string {
+    return [
+        item.title,
+        item.summary,
+        item.tags.join(' '),
+        item.subcategory || '',
+        item.editorialReason || '',
+        item.summarySections?.whatHappened || '',
+        item.summarySections?.whyImportant || '',
+        item.timeline?.map((entry) => entry.title).join(' ') || '',
+    ].join(' ').toLowerCase();
+}
+
 export function isHardMarketingNoise(value: NewsCandidate | DailyNewsItem): boolean {
     return hasAnyTerm(newsText(value), HARD_MARKETING_NOISE_TERMS);
 }
@@ -561,6 +633,39 @@ function isWeakMarketRecap(value: NewsCandidate | DailyNewsItem): boolean {
         && sourceTier !== 'official';
 }
 
+function isMacroCryptoCarryTradeNoise(value: NewsCandidate | DailyNewsItem): boolean {
+    if ('category' in value && value.category !== 'macro') {
+        return false;
+    }
+
+    const text = newsText(value);
+    const sourceTier = 'sourceTier' in value ? value.sourceTier : inferSourceTier(value);
+    return sourceTier !== 'major'
+        && (text.includes('bitcoin') || text.includes(' btc') || text.includes('etf') || text.includes('比特币') || text.includes('加密'))
+        && (text.includes('treasury yield') || text.includes('treasury yields') || text.includes('yields') || text.includes('美债收益率'))
+        && !(text.includes('cpi') || text.includes('inflation data') || includesTerm(text, 'fed') || text.includes('federal reserve') || text.includes('rate decision') || includesTerm(text, 'dollar') || text.includes('oil') || text.includes('通胀') || text.includes('美元') || text.includes('油价'));
+}
+
+function isSingleStockMacroNoise(value: NewsCandidate | DailyNewsItem): boolean {
+    if ('category' in value && value.category !== 'macro') {
+        return false;
+    }
+
+    const text = newsText(value);
+    return (text.includes('nvidia') || text.includes('英伟达') || text.includes('stock') || text.includes('stocks') || text.includes('shares') || text.includes('bulls') || text.includes('market cap') || text.includes('trillion-dollar'))
+        && !(text.includes('treasury') || text.includes('yield') || text.includes('dxy') || text.includes('cpi') || text.includes('inflation') || includesTerm(text, 'fed') || text.includes('rate decision') || text.includes('oil') || text.includes('tariff') || text.includes('美债') || text.includes('美元') || text.includes('通胀') || text.includes('油价'));
+}
+
+function isCryptoRoundupNoise(value: NewsCandidate | DailyNewsItem): boolean {
+    if ('category' in value && value.category !== 'crypto') {
+        return false;
+    }
+
+    const text = `${value.title} ${value.summary || ''}`.toLowerCase();
+    return hasAnyTerm(text, ['星球午讯', '星球晚讯', '午讯', '晚讯', 'top stories', 'daily recap', 'roundup'])
+        && hasAnyTerm(text, ['1.', '2.', '3.', '总净流出', '要闻']);
+}
+
 function isListingPriceReaction(value: NewsCandidate | DailyNewsItem): boolean {
     if ('category' in value && value.category !== 'crypto') {
         return false;
@@ -598,6 +703,45 @@ function isLowValueAiIndustryNoise(value: NewsCandidate | DailyNewsItem): boolea
     const sourceTier = 'sourceTier' in value ? value.sourceTier : inferSourceTier(value);
     return sourceTier !== 'official'
         && hasAnyTerm(`${value.title} ${value.summary || ''}`.toLowerCase(), AI_PERSONNEL_OR_ROUTINE_PARTNERSHIP_TERMS);
+}
+
+function isAnalysisOrOpinionWithoutEvent(item: DailyNewsItem): boolean {
+    const text = dailyItemEvidenceText(item);
+    if (!hasAnyTerm(text, EDITORIAL_ANALYSIS_NOISE_TERMS)) {
+        return false;
+    }
+
+    if (hasAnyTerm(text, NEGATED_EVENT_EVIDENCE_TERMS)) {
+        return true;
+    }
+
+    return !hasAnyTerm(text, CONCRETE_NEWS_ACTION_TERMS)
+        || (item.confirmationLevel === 'single_source' && item.sourceTier !== 'official' && item.importanceScore < 72);
+}
+
+function hasCategoryEventEvidence(item: DailyNewsItem): boolean {
+    const text = dailyItemEvidenceText(item);
+    const authoritative = item.sourceTier === 'official'
+        || item.confirmationLevel === 'multi_source'
+        || item.confirmationLevel === 'single_authoritative';
+
+    if (item.category === 'macro') {
+        const hasMacroEvent = hasAnyTerm(text, MACRO_EVENT_TERMS);
+        const lowInformation = hasAnyTerm(text, MACRO_LOW_INFORMATION_TERMS)
+            && !hasAnyTerm(text, ['released', 'reported', 'official', 'decision', 'holds rates', 'cuts rates', 'hikes rates']);
+
+        if (lowInformation && item.importanceScore < 74) {
+            return false;
+        }
+
+        return hasMacroEvent && (authoritative || item.importanceScore >= 72);
+    }
+
+    if (item.category === 'ai') {
+        return hasAnyTerm(text, AI_EVENT_TERMS) && (authoritative || item.importanceScore >= 70);
+    }
+
+    return hasAnyTerm(text, CRYPTO_EVENT_TERMS) && (authoritative || item.importanceScore >= 70);
 }
 
 function inferSubcategory(candidate: NewsCandidate, category: NewsCategory, tags: string[]): string {
@@ -711,7 +855,14 @@ function buildWhyItMatters(category: NewsCategory, subcategory: string, assets: 
     };
 
     if (category === 'macro') {
-        return `${topic}会影响市场对利率、通胀和全球流动性的理解，${contextText[direction]}。`;
+        const macroImpactText: Record<string, string> = {
+            央行: '会直接改写降息/加息路径、美元流动性和风险资产折现率。',
+            通胀: '会影响实际利率、名义收益率和市场对政策转向时点的定价。',
+            就业: '会改变增长韧性与工资通胀判断，进而影响美联储反应函数。',
+            地缘: '会通过能源、航运、避险美元和通胀预期传导到风险资产。',
+            商品: '会影响输入型通胀、资源股预期和美元计价资产的风险偏好。',
+        };
+        return `${topic}${macroImpactText[subcategory] || '会影响利率、通胀和全球流动性预期。'}当前判断是${contextText[direction]}。`;
     }
 
     if (category === 'ai') {
@@ -725,8 +876,8 @@ function buildWatchpoints(category: NewsCategory, assets: string[], direction: I
     const points: string[] = [];
 
     if (category === 'macro') {
-        points.push('后续看官方口径、关键数据修正和主要央行是否给出一致信号。');
-        points.push('确认这件事是单次扰动，还是会改变未来数周的政策预期。');
+        points.push('后续看原始数据、官员讲话和利率期货是否同步修正。');
+        points.push('确认美元、美债收益率、黄金和美股期货是否出现同向验证。');
     } else if (category === 'ai') {
         points.push('后续看产品、算力、监管或商业化细节是否有官方文件确认。');
         points.push('确认它影响的是单家公司，还是会改变模型、芯片或云服务竞争格局。');
@@ -755,7 +906,7 @@ function inferSourceTier(candidate: NewsCandidate): NewsSourceTier {
     if (domainMatches(domain, OFFICIAL_SOURCE_DOMAINS)) return 'official';
     if (domainMatches(domain, MAJOR_SOURCE_DOMAINS)) return 'major';
     if (domainMatches(domain, SPECIALIST_SOURCE_DOMAINS)) return 'specialist';
-    if (domain.includes('news.google') || candidate.source.toLowerCase().includes('google news')) return 'aggregated';
+    if (domain.includes('news.google') || (candidate.source || '').toLowerCase().includes('google news')) return 'aggregated';
     return 'unknown';
 }
 
@@ -877,17 +1028,31 @@ function buildSummarySections(
     };
 }
 
-function cleanChineseStyle(value: string): string {
-    const decoded = value
+function decodeHtmlEntities(value: string): string {
+    return value
         .replace(/&apos;|&#39;/g, "'")
         .replace(/&quot;/g, '"')
         .replace(/&nbsp;/g, ' ')
         .replace(/&amp;/g, '&')
         .replace(/&lt;/g, '<')
         .replace(/&gt;/g, '>')
+        .replace(/&#x([0-9a-f]+);/gi, (_, hex: string) => {
+            const codePoint = Number.parseInt(hex, 16);
+            return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : '';
+        })
+        .replace(/&#(\d+);/g, (_, decimal: string) => {
+            const codePoint = Number.parseInt(decimal, 10);
+            return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : '';
+        });
+}
+
+function cleanChineseStyle(value: string): string {
+    const decoded = decodeHtmlEntities(value)
         .replace(/\s*[-|]\s*[A-Z][A-Za-z0-9 .&/]{2,}$/g, '')
         .replace(/([A-Za-z0-9])([\u3400-\u9FFF])/g, '$1 $2')
         .replace(/([\u3400-\u9FFF])([A-Za-z0-9])/g, '$1 $2')
+        .replace(/\b(\d+)\s+年/g, '$1年')
+        .replace(/\b(\d{4})年\s+(\d{1,2})\s+月/g, '$1年$2月')
         .replace(/\bETF\s*ETF\b/g, 'ETF')
         .replace(/ETFETF/g, 'ETF')
         .replace(/事件事件/g, '事件')
@@ -898,6 +1063,23 @@ function cleanChineseStyle(value: string): string {
         (text, banned) => text.replaceAll(banned, '中性影响'),
         decoded
     );
+}
+
+function cleanEventSource<T extends DailyNewsEventSource | undefined>(source: T): T {
+    if (!source) {
+        return source;
+    }
+
+    const withOptionalTitle = source as T & { title?: string };
+    return {
+        ...source,
+        source: cleanChineseStyle(source.source),
+        ...(withOptionalTitle.title ? { title: cleanChineseStyle(withOptionalTitle.title) } : {}),
+    } as T;
+}
+
+function getEventSourceTitle(source: DailyNewsEventSource | undefined): string | undefined {
+    return (source as (DailyNewsEventSource & { title?: string }) | undefined)?.title;
 }
 
 function compactNewsSummary(summary: string, title: string): string {
@@ -1040,6 +1222,47 @@ function extractHeadlineTopic(title: string, item: DailyNewsItem): string {
             : '以太坊 ETF';
     }
     if (includesTerm(lowerTitle, 'treasury yield') || includesTerm(lowerTitle, 'treasury yields') || includesTerm(lowerTitle, 'yields')) {
+        if (includesTerm(lowerTitle, 'may 2025 highs')) {
+            return '美债收益率升至 2025年5月以来高位';
+        }
+        if (includesTerm(lowerTitle, '30-year') || includesTerm(lowerTitle, '30 year')) {
+            return includesTerm(lowerTitle, 'tops') || includesTerm(lowerTitle, 'top') || includesTerm(lowerTitle, 'hit') || includesTerm(lowerTitle, 'hits')
+                ? '30年期美债收益率升破 5.1%'
+                : '30年期美债收益率上行';
+        }
+        if (includesTerm(lowerTitle, 'uk') && (includesTerm(lowerTitle, '10-year') || includesTerm(lowerTitle, '10 year'))) {
+            return includesTerm(lowerTitle, '2008')
+                ? '英国10年期国债收益率创 2008年以来高位'
+                : '英国10年期国债收益率上行';
+        }
+        if (includesTerm(lowerTitle, '10-year') || includesTerm(lowerTitle, '10 year')) {
+            return includesTerm(lowerTitle, 'highest')
+                ? '10年期美债收益率升至阶段高位'
+                : '10年期美债收益率上行';
+        }
+        if (includesTerm(lowerTitle, 'middle east')) {
+            return '中东僵局推高全球债券收益率，美元走强';
+        }
+        if ((includesTerm(lowerTitle, 'global markets') || includesTerm(lowerTitle, 'u.s. futures'))
+            && includesTerm(lowerTitle, 'oil rise')) {
+            return '美股期货和全球市场下跌，美债收益率与油价上行';
+        }
+        if (includesTerm(lowerTitle, 'tricky rates path') || includesTerm(lowerTitle, 'fed chair')) {
+            return '通胀数据令美联储利率路径更棘手，美债收益率跳升';
+        }
+        if (includesTerm(lowerTitle, 'japan')) {
+            return '日本国债收益率升至多年高位';
+        }
+        if (includesTerm(lowerTitle, 'dollar') && (includesTerm(lowerTitle, 'weekly gain') || includesTerm(lowerTitle, 'largest weekly gain'))) {
+            return '美元受美债收益率上行支撑创两个月最大周涨幅';
+        }
+        if ((includesTerm(lowerTitle, 'nasdaq') || includesTerm(lowerTitle, 's&p 500') || includesTerm(lowerTitle, 'futures'))
+            && (includesTerm(lowerTitle, 'tumble') || includesTerm(lowerTitle, 'slide'))) {
+            return '美债收益率跳升压低纳指与标普期货';
+        }
+        if (includesTerm(lowerTitle, 'bitcoin') && (includesTerm(lowerTitle, '12-month high') || includesTerm(lowerTitle, '200-day average'))) {
+            return '美债收益率创阶段高位，比特币承压';
+        }
         return includesTerm(lowerTitle, '5%')
             ? '美债收益率接近 5%'
             : '美债收益率变化';
@@ -1077,6 +1300,22 @@ function extractHeadlineTopic(title: string, item: DailyNewsItem): string {
         return includesTerm(lowerTitle, 'inflation')
             ? '通胀数据后的降息预期'
             : '降息预期';
+    }
+    if (includesTerm(lowerTitle, 'cpi')) {
+        return includesTerm(lowerTitle, 'hotter') || includesTerm(lowerTitle, 'jumps') || includesTerm(lowerTitle, 'rise')
+            ? 'CPI 通胀升温'
+            : 'CPI 通胀数据';
+    }
+    if (includesTerm(lowerTitle, 'payrolls') || includesTerm(lowerTitle, 'nonfarm') || includesTerm(lowerTitle, 'jobs')) {
+        return '美国就业数据';
+    }
+    if (includesTerm(lowerTitle, 'tariff') || includesTerm(lowerTitle, 'tariffs')) {
+        return '关税冲击';
+    }
+    if (includesTerm(lowerTitle, 'oil')) {
+        return includesTerm(lowerTitle, 'war')
+            ? '战争风险推升油价'
+            : '油价变化';
     }
     if (includesTerm(lowerTitle, 'staff')) {
         return '运营人员调整';
@@ -1124,6 +1363,9 @@ function buildActionHeadline(actor: string, topic: string, text: string): string
     if (includesTerm(text, 'announce') || includesTerm(text, 'announces')) {
         return `${actor} 宣布${topic}`;
     }
+    if (includesTerm(text, 'signal') || includesTerm(text, 'signals') || includesTerm(text, 'signaled')) {
+        return `${actor}释放${topic}信号`;
+    }
     if (includesTerm(text, 'reportedly follows suit')) {
         return `${actor} 据称跟进${topic}布局`;
     }
@@ -1134,15 +1376,131 @@ function buildActionHeadline(actor: string, topic: string, text: string): string
     return null;
 }
 
-function buildObjectiveChineseTitle(item: DailyNewsItem): string {
-    if (hasCjkText(item.title)) {
-        return cleanChineseStyle(item.title.trim());
+function buildAiObjectiveHeadline(item: DailyNewsItem, actor: string, topic: string, text: string): string | null {
+    const subject = actor || extractHeadlineActor(item.title, item);
+
+    if ((includesTerm(text, 'legal action') || includesTerm(text, 'lawsuit')) && includesTerm(text, 'apple')) {
+        return `${subject}考虑对 Apple 采取法律行动`;
+    }
+    if (includesTerm(text, 'codex') && (includesTerm(text, 'phone') || includesTerm(text, 'mobile'))) {
+        return `${subject}推进 Codex 移动端`;
+    }
+    if ((includesTerm(text, 'chip controls') || includesTerm(text, 'chip restrictions') || includesTerm(text, 'restrictions'))
+        && (includesTerm(text, 'china') || includesTerm(text, 'h200'))) {
+        return `${subject}推动 AI 芯片出口限制议题`;
+    }
+    if (includesTerm(text, 'h200') && (includesTerm(text, 'china') || includesTerm(text, 'beijing'))) {
+        return 'Nvidia H200 对华销售许可受关注';
+    }
+    if (includesTerm(text, 'funding') || includesTerm(text, 'valuation') || includesTerm(text, 'raise')) {
+        return `${subject}融资估值更新`;
+    }
+    if (includesTerm(text, 'ipo') && (includesTerm(text, 'cerebras') || includesTerm(text, 'chip'))) {
+        return 'Cerebras AI 芯片 IPO 吸引资金';
+    }
+    if (includesTerm(text, 'deploy') || includesTerm(text, 'deploying') || includesTerm(text, 'deployment')) {
+        const product = includesTerm(text, 'claude')
+            ? 'Claude'
+            : topic;
+        return `${subject}推进 ${product} 企业落地`;
+    }
+    if (includesTerm(text, 'data center') || includesTerm(text, 'data centres') || includesTerm(text, 'datacenter')) {
+        return `${subject}推进 AI 数据中心计划`;
+    }
+    if (includesTerm(text, 'compute crunch') || includesTerm(text, 'compute gamble') || includesTerm(text, 'compute demand')) {
+        return `${subject}算力需求压力升温`;
+    }
+    if (includesTerm(text, 'education') && (includesTerm(text, 'policy') || includesTerm(text, 'practice'))) {
+        return `${subject}发布 AI 教育政策实践`;
+    }
+    if (includesTerm(text, 'genkit') || includesTerm(text, 'middleware')) {
+        return `${subject}发布 AI 应用中间件`;
+    }
+    if (includesTerm(text, 'agent') && (includesTerm(text, 'launch') || includesTerm(text, 'releases') || includesTerm(text, 'coding'))) {
+        return `${subject}推出 AI Agent 工具`;
     }
 
-    const text = newsText(item);
-    const title = item.title.trim();
-    const subject = extractHeadlineActor(title, item);
-    const topic = extractHeadlineTopic(title, item);
+    return null;
+}
+
+function buildMacroObjectiveHeadline(item: DailyNewsItem, topic: string, text: string): string | null {
+    const title = cleanChineseStyle(item.title);
+    const lowerTitle = title.toLowerCase();
+
+    if (includesTerm(lowerTitle, '30-year') || includesTerm(lowerTitle, '30 year')) {
+        const yieldMatch = title.match(/\b(5(?:\.\d+)?)\s*%/);
+        return yieldMatch
+            ? `30年期美债收益率升破 ${yieldMatch[1]}%`
+            : '30年期美债收益率上行';
+    }
+    if ((includesTerm(lowerTitle, 'nasdaq') || includesTerm(lowerTitle, 's&p 500') || includesTerm(lowerTitle, 'futures'))
+        && (includesTerm(lowerTitle, 'tumble') || includesTerm(lowerTitle, 'slide'))) {
+        return '美债收益率跳升压低纳指与标普期货';
+    }
+    if (includesTerm(lowerTitle, 'may 2025 highs')) {
+        return '美债收益率升至 2025年5月以来高位';
+    }
+    if (includesTerm(lowerTitle, 'dollar') && (includesTerm(lowerTitle, 'weekly gain') || includesTerm(lowerTitle, 'largest weekly gain'))) {
+        return '美元受美债收益率上行支撑创两个月最大周涨幅';
+    }
+    if (includesTerm(lowerTitle, 'middle east')) {
+        return '中东僵局推高全球债券收益率，美元走强';
+    }
+    if ((includesTerm(lowerTitle, 'global markets') || includesTerm(lowerTitle, 'u.s. futures'))
+        && includesTerm(lowerTitle, 'oil rise')) {
+        return '美股期货和全球市场下跌，美债收益率与油价上行';
+    }
+    if (includesTerm(lowerTitle, 'tricky rates path') || includesTerm(lowerTitle, 'fed chair')) {
+        return '通胀数据令美联储利率路径更棘手，美债收益率跳升';
+    }
+    if (includesTerm(lowerTitle, 'japan') && includesTerm(lowerTitle, 'yields')) {
+        return '日本国债收益率因全球通胀担忧升至多年高位';
+    }
+    if (includesTerm(lowerTitle, 'uk') && includesTerm(lowerTitle, '10-year')) {
+        return '英国10年期国债收益率创 2008年以来高位';
+    }
+    if (includesTerm(lowerTitle, 'bitcoin') && includesTerm(lowerTitle, 'treasury yields')) {
+        return '美债收益率走高令比特币承压';
+    }
+    if (includesTerm(text, 'cpi') && (includesTerm(text, 'hotter') || includesTerm(text, 'inflation worries'))) {
+        return '通胀担忧推高美债收益率';
+    }
+
+    return topic === item.subcategory || topic === CATEGORY_LABELS[item.category]
+        ? null
+        : topic;
+}
+
+function buildObjectiveChineseTitle(item: DailyNewsItem): string {
+    const cleanedCurrentTitle = cleanChineseStyle(item.title.trim());
+    if (hasCjkText(item.title) && !isGenericNormalizedFallback(item)) {
+        return cleanedCurrentTitle;
+    }
+
+    const evidenceTitle = [
+        getEventSourceTitle(item.earliestSource),
+        getEventSourceTitle(item.latestSource),
+        ...(item.timeline || []).map((entry) => entry.title),
+    ].find((candidate) => candidate && !hasCjkText(candidate));
+    const objectiveItem = evidenceTitle ? { ...item, title: evidenceTitle } : item;
+    const text = newsText(objectiveItem);
+    const title = objectiveItem.title.trim();
+    const subject = extractHeadlineActor(title, objectiveItem);
+    const topic = extractHeadlineTopic(title, objectiveItem);
+    const macroHeadline = objectiveItem.category === 'macro'
+        ? buildMacroObjectiveHeadline(objectiveItem, topic, text)
+        : null;
+    if (macroHeadline) {
+        return macroHeadline;
+    }
+
+    const aiHeadline = objectiveItem.category === 'ai'
+        ? buildAiObjectiveHeadline(objectiveItem, subject, topic, text)
+        : null;
+    if (aiHeadline) {
+        return aiHeadline;
+    }
+
     const actionHeadline = buildActionHeadline(subject, topic, text);
 
     if (actionHeadline) {
@@ -1150,10 +1508,10 @@ function buildObjectiveChineseTitle(item: DailyNewsItem): string {
     }
 
     if (includesTerm(text, 'reject') || includesTerm(text, 'rejected') || includesTerm(text, 'delay') || includesTerm(text, 'delays')) {
-        return `${subject}${item.subcategory || CATEGORY_LABELS[item.category]}出现监管进展`;
+        return `${subject}${objectiveItem.subcategory || CATEGORY_LABELS[objectiveItem.category]}出现监管进展`;
     }
     if (includesTerm(text, 'approve') || includesTerm(text, 'approval') || includesTerm(text, 'approved')) {
-        return `${subject}${item.subcategory || CATEGORY_LABELS[item.category]}获得批准`;
+        return `${subject}${objectiveItem.subcategory || CATEGORY_LABELS[objectiveItem.category]}获得批准`;
     }
     if (includesTerm(text, 'launch') || includesTerm(text, 'release') || includesTerm(text, 'rollout')) {
         return `${subject}${topic}开始落地`;
@@ -1165,22 +1523,95 @@ function buildObjectiveChineseTitle(item: DailyNewsItem): string {
         return `${subject}监管或法律事件披露细节`;
     }
 
-    if (item.category === 'macro') {
-        return `${topic}受到关注`;
+    if (objectiveItem.category === 'macro') {
+        return topic === objectiveItem.subcategory || topic === CATEGORY_LABELS[objectiveItem.category]
+            ? cleanedCurrentTitle
+            : topic;
     }
-    if (item.category === 'crypto') {
+    if (objectiveItem.category === 'crypto') {
         return `${subject}${topic}出现新进展`;
     }
-    if (item.category === 'ai') {
+    if (objectiveItem.category === 'ai') {
         return `${subject}${topic}出现新进展`;
     }
 
     return cleanChineseStyle(title);
 }
 
+function extractNumericFacts(text: string): string[] {
+    const facts = new Set<string>();
+    const patterns = [
+        /\b\d{1,2}\s*-\s*year\b/gi,
+        /\b\d{1,2}\s*year\b/gi,
+        /\b\d+(?:\.\d+)?\s*%/g,
+        /\$\s?\d+(?:\.\d+)?\s?(?:bn|billion|tn|trillion|m|million|t)\b/gi,
+        /\b\d+(?:\.\d+)?\s?(?:bn|billion|tn|trillion)\b/gi,
+    ];
+
+    patterns.forEach((pattern) => {
+        text.match(pattern)?.forEach((match) => facts.add(match.replace(/\s+/g, ' ').trim()));
+    });
+
+    return [...facts].slice(0, 3);
+}
+
+function localizeNumericFact(fact: string): string {
+    return fact
+        .replace(/\b(\d{1,2})\s*-\s*year\b/i, '$1年期')
+        .replace(/\b(\d{1,2})\s*year\b/i, '$1年期')
+        .replace(/\bbn\b/i, '十亿')
+        .replace(/\bbillion\b/i, '十亿')
+        .replace(/\btn\b/i, '万亿')
+        .replace(/\btrillion\b/i, '万亿')
+        .replace(/\bmillion\b/i, '百万')
+        .replace(/\bm\b/i, '百万')
+        .replace(/\bt\b/i, '万亿')
+        .replace(/\$\s?/g, '');
+}
+
+function buildMacroFactSummary(item: DailyNewsItem, title: string): string {
+    const sourceText = `${item.title} ${item.summary || ''} ${(item.tags || []).join(' ')}`;
+    const lowerText = sourceText.toLowerCase();
+    const facts = extractNumericFacts(sourceText).map(localizeNumericFact);
+    const factText = facts.length > 0 ? `，关键数字包括 ${facts.join('、')}` : '';
+
+    if ((includesTerm(lowerText, 'fed') || includesTerm(lowerText, 'federal reserve'))
+        && (includesTerm(lowerText, 'rate cut') || includesTerm(lowerText, 'rate cuts') || includesTerm(lowerText, 'rates'))) {
+        const inflationText = includesTerm(lowerText, 'cpi') || includesTerm(lowerText, 'inflation')
+            ? '，背景是 CPI/通胀数据仍偏黏'
+            : '';
+        return `报道称，美联储相关信号使降息路径重新定价${inflationText}${factText}。`;
+    }
+
+    if (includesTerm(lowerText, 'treasury yield') || includesTerm(lowerText, 'treasury yields') || includesTerm(lowerText, 'yields')) {
+        const costText = includesTerm(lowerText, 'interest bill') || includesTerm(lowerText, 'interest costs')
+            ? '，同时抬高美国财政利息支出压力'
+            : '';
+        return `报道称，美债收益率上行${costText}${factText}，会压缩风险资产估值空间。`;
+    }
+
+    if (includesTerm(lowerText, 'cpi') || includesTerm(lowerText, 'inflation') || includesTerm(lowerText, 'ppi')) {
+        return `报道称，通胀读数改变市场对实际利率和政策转向时点的判断${factText}。`;
+    }
+
+    if (includesTerm(lowerText, 'payrolls') || includesTerm(lowerText, 'nonfarm') || includesTerm(lowerText, 'jobs')) {
+        return `报道称，就业数据会影响工资通胀、增长韧性和美联储政策反应判断${factText}。`;
+    }
+
+    if (includesTerm(lowerText, 'oil') || includesTerm(lowerText, 'war') || includesTerm(lowerText, 'sanction') || includesTerm(lowerText, 'tariff')) {
+        return `报道称，能源、地缘或关税冲击正在影响通胀预期、美元避险需求和全球风险偏好${factText}。`;
+    }
+
+    return `${title}。报道指向利率、美元流动性或通胀预期的重新定价${factText}。`;
+}
+
 function buildObjectiveChineseSummary(item: DailyNewsItem, title: string): string {
     if (hasCjkText(item.summary)) {
         return compactNewsSummary(item.summary.trim(), title);
+    }
+
+    if (item.category === 'macro') {
+        return buildMacroFactSummary(item, title);
     }
 
     if (item.summary && item.summary.trim()) {
@@ -1215,6 +1646,14 @@ export function normalizeToChinese(item: DailyNewsItem): DailyNewsItem {
             whatToWatch: cleanChineseStyle(normalized.summarySections.whatToWatch),
             sourceAndConfirmation: cleanChineseStyle(normalized.summarySections.sourceAndConfirmation),
         },
+        earliestSource: cleanEventSource(normalized.earliestSource),
+        latestSource: cleanEventSource(normalized.latestSource),
+        officialSource: cleanEventSource(normalized.officialSource),
+        timeline: normalized.timeline?.map((entry) => ({
+            ...entry,
+            title: cleanChineseStyle(entry.title),
+            source: cleanChineseStyle(entry.source),
+        })),
     };
 }
 
@@ -1264,7 +1703,8 @@ function toItem(candidate: NewsCandidate, category: NewsCategory, window: DailyN
     const officialSource = timeline.find((entry) => entry.sourceTier === 'official');
     const coreEntities = [...new Set(groupCandidates.flatMap((groupCandidate) => extractCoreEntities(groupCandidate, tags)))].slice(0, 8);
     const text = candidateText(candidate, tags);
-    const hasRoutineNoise = ROUTINE_NOISE_TERMS.some((term) => includesTerm(text, term));
+    const hasRoutineNoise = category !== 'macro'
+        && ROUTINE_NOISE_TERMS.some((term) => includesTerm(text, term));
     const scoreBreakdown: DailyNewsScoreBreakdown = {
         entityWeight: Math.min(16, coreEntities.length * 4),
         sourceWeight: sourceWeight(sourceTier),
@@ -1383,9 +1823,13 @@ function buildLatestSignals(items: DailyNewsItem[]): string[] {
             && !isKolOpinionNoise(item)
             && !isAdviceExplainerNoise(item)
             && !isWeakMarketRecap(item)
+            && !isMacroCryptoCarryTradeNoise(item)
+            && !isSingleStockMacroNoise(item)
+            && !isCryptoRoundupNoise(item)
             && !isCryptoAdjacentBusinessNoise(item)
             && !isAiProductRumorNoise(item)
-            && !isLowValueAiIndustryNoise(item))
+            && !isLowValueAiIndustryNoise(item)
+            && !isAnalysisOrOpinionWithoutEvent(item))
         .sort(compareItemsByTimeThenScore)
         .slice(0, 3)
         .map((item) => {
@@ -1397,7 +1841,13 @@ function buildLatestSignals(items: DailyNewsItem[]): string[] {
 }
 
 function isEditoriallyImportant(item: DailyNewsItem): boolean {
-    const text = `${item.title} ${item.summary} ${item.tags.join(' ')} ${item.subcategory || ''}`.toLowerCase();
+    const text = dailyItemEvidenceText(item);
+    const sourceText = [
+        item.title,
+        item.summary,
+        item.tags.join(' '),
+        item.timeline?.map((entry) => entry.title).join(' ') || '',
+    ].join(' ').toLowerCase();
     const hasSystemicSignal = SYSTEMIC_IMPORTANCE_TERMS.some((term) => includesTerm(text, term));
     const hasRoutineNoise = ROUTINE_NOISE_TERMS.some((term) => includesTerm(text, term));
     const hasSocialRumorSource = item.earliestSource?.domain
@@ -1405,6 +1855,17 @@ function isEditoriallyImportant(item: DailyNewsItem): boolean {
         : false;
     const hasLowValueAiSignal = item.category === 'ai' && LOW_VALUE_AI_TERMS.some((term) => includesTerm(text, term));
     const hasLowValueCryptoSignal = item.category === 'crypto' && LOW_VALUE_CRYPTO_TERMS.some((term) => includesTerm(text, term));
+    const hasMacroCryptoCarryTradeNoise = item.category === 'macro'
+        && item.sourceTier !== 'major'
+        && (sourceText.includes('bitcoin') || sourceText.includes(' btc') || sourceText.includes('etf') || sourceText.includes('比特币') || sourceText.includes('加密'))
+        && (sourceText.includes('treasury yield') || sourceText.includes('treasury yields') || sourceText.includes('yields') || sourceText.includes('美债收益率'))
+        && !(sourceText.includes('cpi') || sourceText.includes('inflation data') || includesTerm(sourceText, 'fed') || sourceText.includes('federal reserve') || sourceText.includes('rate decision') || sourceText.includes('dollar') || sourceText.includes('oil') || sourceText.includes('通胀') || sourceText.includes('美元') || sourceText.includes('油价'));
+    const hasSingleStockMacroNoise = item.category === 'macro'
+        && (sourceText.includes('nvidia') || sourceText.includes('英伟达') || sourceText.includes('stock') || sourceText.includes('stocks') || sourceText.includes('shares') || sourceText.includes('bulls') || sourceText.includes('market cap') || sourceText.includes('trillion-dollar'))
+        && !(sourceText.includes('treasury') || sourceText.includes('yield') || sourceText.includes('dxy') || sourceText.includes('cpi') || sourceText.includes('inflation') || includesTerm(sourceText, 'fed') || sourceText.includes('rate decision') || sourceText.includes('oil') || sourceText.includes('tariff') || sourceText.includes('美债') || sourceText.includes('美元') || sourceText.includes('通胀') || sourceText.includes('油价'));
+    const hasCryptoRoundupNoise = item.category === 'crypto'
+        && (sourceText.includes('星球午讯') || sourceText.includes('星球晚讯') || sourceText.includes('午讯') || sourceText.includes('晚讯') || sourceText.includes('top stories') || sourceText.includes('daily recap') || sourceText.includes('roundup'))
+        && (sourceText.includes('1.') || sourceText.includes('2.') || sourceText.includes('3.') || sourceText.includes('总净流出') || sourceText.includes('要闻'));
 
     if (isHardMarketingNoise(item)
         || isKolOpinionNoise(item)
@@ -1412,9 +1873,16 @@ function isEditoriallyImportant(item: DailyNewsItem): boolean {
         || isPurePriceMove(item)
         || isListingPriceReaction(item)
         || isWeakMarketRecap(item)
+        || isMacroCryptoCarryTradeNoise(item)
+        || isSingleStockMacroNoise(item)
+        || isCryptoRoundupNoise(item)
+        || hasMacroCryptoCarryTradeNoise
+        || hasSingleStockMacroNoise
+        || hasCryptoRoundupNoise
         || isCryptoAdjacentBusinessNoise(item)
         || isAiProductRumorNoise(item)
         || isLowValueAiIndustryNoise(item)
+        || isAnalysisOrOpinionWithoutEvent(item)
         || isGenericNormalizedFallback(item)) {
         return false;
     }
@@ -1427,14 +1895,21 @@ function isEditoriallyImportant(item: DailyNewsItem): boolean {
         return false;
     }
 
+    if (item.category === 'macro' && !hasCategoryEventEvidence(item)) {
+        return false;
+    }
+
     return item.importanceScore >= MIN_EDITORIAL_IMPORTANCE_SCORE
-        || hasSystemicSignal
+        || (hasSystemicSignal && item.importanceScore >= 50)
         || (item.importanceScore >= 45 && item.sourceTier !== 'unknown' && item.confirmationLevel !== 'single_source');
 }
 
 function isGenericNormalizedFallback(item: DailyNewsItem): boolean {
     const title = item.title.trim();
-    if (/^(监管|芯片|模型|加密|宏观|交易所|稳定币|ETF)$/.test(title)) {
+    if (/^(监管|芯片|模型|加密|宏观|交易所|稳定币|ETF|央行|通胀|就业|商品|美债收益率变化)$/.test(title)) {
+        return true;
+    }
+    if (/^\d+年期美债收益率升至阶段高位$/.test(title)) {
         return true;
     }
     if (/出现新进展$/.test(title)) {
@@ -1464,9 +1939,14 @@ export function isTopStoryEligible(item: DailyNewsItem): boolean {
         && !isListingPriceReaction(item)
         && !isPriceFramedWithoutConcreteEvent(item)
         && !isWeakMarketRecap(item)
+        && !isMacroCryptoCarryTradeNoise(item)
+        && !isSingleStockMacroNoise(item)
+        && !isCryptoRoundupNoise(item)
         && !isCryptoAdjacentBusinessNoise(item)
         && !isAiProductRumorNoise(item)
-        && !isLowValueAiIndustryNoise(item);
+        && !isLowValueAiIndustryNoise(item)
+        && !isAnalysisOrOpinionWithoutEvent(item)
+        && hasCategoryEventEvidence(item);
 }
 
 function buildDailyNewsBrief(digest: DailyNewsDigest): DailyNewsBrief {
@@ -1550,6 +2030,11 @@ export function dedupeAndRankCandidates(
 
         if (!isNewsCandidateRelevant(candidate, category)) {
             dropped.irrelevant += 1;
+            continue;
+        }
+
+        if (isMacroCryptoCarryTradeNoise(candidate) || isSingleStockMacroNoise(candidate) || isCryptoRoundupNoise(candidate)) {
+            dropped.unimportant += 1;
             continue;
         }
 
@@ -1688,6 +2173,7 @@ export function buildDailyNewsDigestFromResults(
 
 export function sanitizeDailyNewsDigest(digest: DailyNewsDigest): DailyNewsDigest {
     NEWS_CATEGORIES.forEach((category) => {
+        digest[category] = digest[category].map(normalizeToChinese);
         const before = digest[category].length;
         digest[category] = digest[category].filter(isEditoriallyImportant);
         const removed = before - digest[category].length;

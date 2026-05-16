@@ -1102,6 +1102,17 @@ test('daily news Chinese normalization cleans html entities and avoids untransla
                     tags: ['Treasury', 'yields'],
                     rawSnippet: '',
                 }),
+                candidate({
+                    category: 'macro',
+                    title: 'Nasdaq, S&P 500 futures tumble as yields jump on inflation worries &#x2014; Reuters',
+                    summary: 'US equity futures fell as Treasury yields jumped on renewed inflation worries.',
+                    source: 'Reuters',
+                    domain: 'reuters.com',
+                    url: 'https://www.reuters.com/markets/us/futures-yields-inflation-worries-2026-04-17/',
+                    publishedAt: '2026-04-17T20:00:00.000Z',
+                    tags: ['Treasury', 'yields', 'inflation'],
+                    rawSnippet: '',
+                }),
             ],
         },
         { category: 'crypto', ok: true, candidates: [] },
@@ -1114,9 +1125,404 @@ test('daily news Chinese normalization cleans html entities and avoids untransla
         ...(digest.topStories || []).map((story) => story.headline),
         ...(digest.brief?.latestSignals || []),
     ].join('\n');
+    const timelineText = digest.macro
+        .flatMap((item) => item.timeline?.map((entry) => entry.title) || [])
+        .join('\n');
 
     assert.doesNotMatch(combined, /&apos;|&#39;|&quot;|Jerome Powell making|30-Year Treasury Yields Hit/i);
+    assert.doesNotMatch(combined, /&#x2014;|&#8217;|&[a-z]+;/i);
+    assert.doesNotMatch(timelineText, /&#x2014;|&#8217;|&[a-z]+;/i);
+    assert.match(combined, /30年期美债收益率升破 5%/);
+    assert.match(combined, /美债收益率跳升压低纳指与标普期货/);
     assert.match(combined, /美联储|收益率|利率/);
+});
+
+test('daily news macro normalization preserves concrete policy and market facts', () => {
+    const digest = buildDailyNewsDigestFromResults([
+        {
+            category: 'macro',
+            ok: true,
+            candidates: [
+                candidate({
+                    category: 'macro',
+                    title: 'Federal Reserve signals fewer rate cuts after hotter CPI inflation data',
+                    summary: 'The Fed signal can reshape rate expectations and dollar liquidity conditions.',
+                    source: 'Reuters',
+                    domain: 'reuters.com',
+                    url: 'https://www.reuters.com/markets/fed-cpi-rate-cuts-2026-04-17/',
+                    publishedAt: '2026-04-17T21:00:00.000Z',
+                    tags: ['Fed', 'CPI', 'rates'],
+                    rawSnippet: '',
+                }),
+                candidate({
+                    category: 'macro',
+                    title: "30-Year Treasury Yields Hit 5%: Trump's Interest Bill Top $1.2T",
+                    summary: 'Thirty-year Treasury yields moved near 5%, renewing concern about US interest costs.',
+                    source: 'MarketWatch',
+                    domain: 'marketwatch.com',
+                    url: 'https://www.marketwatch.com/story/treasury-yields-hit-5-percent',
+                    publishedAt: '2026-04-17T19:00:00.000Z',
+                    tags: ['Treasury', 'yields'],
+                    rawSnippet: '',
+                }),
+            ],
+        },
+        { category: 'crypto', ok: true, candidates: [] },
+        { category: 'ai', ok: true, candidates: [] },
+    ], WINDOW);
+
+    const combined = digest.macro
+        .flatMap((item) => [
+            item.title,
+            item.summary,
+            item.summarySections?.whatHappened || '',
+            item.summarySections?.whyImportant || '',
+            item.summarySections?.whatToWatch || '',
+        ])
+        .join('\n');
+
+    assert.match(combined, /美联储|降息|CPI|通胀/);
+    assert.match(combined, /美债收益率|5%|1\.2/);
+    assert.match(combined, /利率期货|美元|黄金|美股期货|风险资产/);
+    assert.doesNotMatch(combined, /受到关注|相关变化|产生影响|具体细节未公开|美债收益率变化|^央行$/m);
+});
+
+test('daily news macro normalization keeps specific yield market triggers in titles', () => {
+    const digest = buildDailyNewsDigestFromResults([
+        {
+            category: 'macro',
+            ok: true,
+            candidates: [
+                candidate({
+                    category: 'macro',
+                    title: 'Yields surge to May 2025 highs as oil prices and inflation data rattle markets',
+                    summary: 'Treasury yields rose as oil and inflation data rattled markets.',
+                    source: 'Reuters',
+                    domain: 'reuters.com',
+                    url: 'https://www.reuters.com/markets/yields-surge-may-2025-highs-2026-04-17/',
+                    publishedAt: '2026-04-17T21:00:00.000Z',
+                    tags: ['Treasury', 'yields', 'inflation'],
+                    rawSnippet: '',
+                }),
+                candidate({
+                    category: 'macro',
+                    title: 'Global Bond Yields Jump, Dollar Firms on Middle East Stalemate',
+                    summary: 'Global bond yields rose and the dollar firmed as Middle East talks stalled.',
+                    source: 'WSJ',
+                    domain: 'wsj.com',
+                    url: 'https://www.wsj.com/markets/global-bond-yields-dollar-middle-east-2026-04-17/',
+                    publishedAt: '2026-04-17T20:00:00.000Z',
+                    tags: ['yields', 'dollar', 'oil'],
+                    rawSnippet: '',
+                }),
+                candidate({
+                    category: 'macro',
+                    title: 'U.S. Futures, Global Markets Fall; Treasury Yields, Oil Rise',
+                    summary: 'US futures and global markets fell while Treasury yields and oil rose.',
+                    source: 'WSJ',
+                    domain: 'wsj.com',
+                    url: 'https://www.wsj.com/markets/us-futures-global-markets-yields-oil-2026-04-17/',
+                    publishedAt: '2026-04-17T19:00:00.000Z',
+                    tags: ['futures', 'yields', 'oil'],
+                    rawSnippet: '',
+                }),
+                candidate({
+                    category: 'macro',
+                    title: 'Treasury yields surge as inflation data points to tricky rates path for new Fed chair Warsh',
+                    summary: 'Inflation data pointed to a tricky policy path and pushed Treasury yields higher.',
+                    source: 'CNBC',
+                    domain: 'cnbc.com',
+                    url: 'https://www.cnbc.com/2026/04/17/treasury-yields-fed-chair-warsh.html',
+                    publishedAt: '2026-04-17T18:00:00.000Z',
+                    tags: ['Fed', 'yields', 'inflation'],
+                    rawSnippet: '',
+                }),
+            ],
+        },
+        { category: 'crypto', ok: true, candidates: [] },
+        { category: 'ai', ok: true, candidates: [] },
+    ], WINDOW);
+
+    const titles = digest.macro.map((item) => item.title).join('\n');
+
+    assert.match(titles, /美债收益率升至 2025年5月以来高位/);
+    assert.match(titles, /中东僵局推高全球债券收益率，美元走强/);
+    assert.match(titles, /美股期货和全球市场下跌，美债收益率与油价上行/);
+    assert.match(titles, /通胀数据令美联储利率路径更棘手，美债收益率跳升/);
+    assert.doesNotMatch(titles, /美债收益率变化|^央行$/m);
+});
+
+test('sanitizeDailyNewsDigest repairs persisted generic macro yield titles from source evidence', () => {
+    const digest = buildDailyNewsDigestFromResults([
+        {
+            category: 'macro',
+            ok: true,
+            candidates: [
+                candidate({
+                    category: 'macro',
+                    title: 'Yields surge to May 2025 highs as oil prices and inflation data rattle markets',
+                    summary: 'Treasury yields rose as oil and inflation data rattled markets.',
+                    source: 'Reuters',
+                    domain: 'reuters.com',
+                    url: 'https://www.reuters.com/markets/yields-surge-may-2025-highs-2026-04-17/',
+                    publishedAt: '2026-04-17T21:00:00.000Z',
+                    tags: ['Treasury', 'yields', 'inflation'],
+                    rawSnippet: '',
+                }),
+            ],
+        },
+        { category: 'crypto', ok: true, candidates: [] },
+        { category: 'ai', ok: true, candidates: [] },
+    ], WINDOW);
+    digest.macro[0] = {
+        ...digest.macro[0],
+        title: '美债收益率变化',
+        summary: '报道称，美债收益率上行，会压缩风险资产估值空间。',
+    };
+
+    const sanitized = sanitizeDailyNewsDigest(digest);
+
+    assert.equal(sanitized.macro[0]?.title, '美债收益率升至 2025年5月以来高位');
+});
+
+test('dedupeAndRankCandidates rejects macro category drift and crypto roundup bundles', () => {
+    const macroResult = dedupeAndRankCandidates('macro', [
+        candidate({
+            category: 'macro',
+            title: 'Bitcoin Shrugs Off CLARITY Gains as Institutions Sell Amid Surging Treasury Yields',
+            summary: 'Bitcoin ETFs saw selling as Treasury yields rose.',
+            source: 'Decrypt',
+            domain: 'decrypt.co',
+            url: 'https://decrypt.co/bitcoin-yields-etf-selling',
+            publishedAt: '2026-04-17T18:00:00.000Z',
+            tags: ['BTC', 'ETF', 'Treasury'],
+            rawSnippet: '',
+        }),
+        candidate({
+            category: 'macro',
+            title: "Nvidia's trillion-dollar run puts pressure on the bulls",
+            summary: 'The stock market story focused on Nvidia valuation and bulls.',
+            source: 'CNBC',
+            domain: 'cnbc.com',
+            url: 'https://www.cnbc.com/2026/04/17/nvidia-trillion-dollar-run.html',
+            publishedAt: '2026-04-17T17:00:00.000Z',
+            tags: ['NVIDIA', 'stocks'],
+            rawSnippet: '',
+        }),
+        candidate({
+            category: 'macro',
+            title: 'Yields surge to May 2025 highs as oil prices and inflation data rattle markets',
+            summary: 'Treasury yields rose as oil and inflation data rattled markets.',
+            source: 'Reuters',
+            domain: 'reuters.com',
+            url: 'https://www.reuters.com/markets/yields-surge-may-2025-highs-2026-04-17/',
+            publishedAt: '2026-04-17T19:00:00.000Z',
+            tags: ['Treasury', 'yields', 'inflation'],
+            rawSnippet: '',
+        }),
+    ], WINDOW, 10);
+    const cryptoResult = dedupeAndRankCandidates('crypto', [
+        candidate({
+            category: 'crypto',
+            title: '星球午讯',
+            summary: '1. 比特币现货 ETF 昨日总净流出； 2. Hyperliquid 领跑； 3. 多协议开始迁移。',
+            source: 'Odaily 星球日报',
+            domain: 'odaily.news',
+            url: 'https://www.odaily.news/zh-CN/newsflash/noon',
+            publishedAt: '2026-04-17T18:00:00.000Z',
+            tags: ['BTC', 'ETF'],
+            rawSnippet: '',
+        }),
+        candidate({
+            category: 'crypto',
+            title: 'Chainalysis traces THORChain attack source after cross-chain fund movements',
+            summary: 'Chainalysis said wallets moved funds across chains before a THORChain attack.',
+            source: 'Odaily 星球日报',
+            domain: 'odaily.news',
+            url: 'https://www.odaily.news/zh-CN/newsflash/thorchain-attack',
+            publishedAt: '2026-04-17T19:00:00.000Z',
+            tags: ['THORChain', 'hack'],
+            rawSnippet: '',
+        }),
+    ], WINDOW, 10);
+
+    assert.equal(macroResult.items.length, 1);
+    assert.match(macroResult.items[0]?.title || '', /Yields surge to May 2025 highs/);
+    assert.doesNotMatch(macroResult.items.map((item) => item.title).join('\n'), /Bitcoin|Nvidia|比特币承压|英伟达/);
+    assert.equal(cryptoResult.items.length, 1);
+    assert.match(cryptoResult.items[0]?.title || '', /THORChain|攻击/i);
+    assert.doesNotMatch(cryptoResult.items.map((item) => item.title).join('\n'), /星球午讯/);
+});
+
+test('dedupeAndRankCandidates rejects macro previews politics and opinion without tradeable event evidence', () => {
+    const result = dedupeAndRankCandidates('macro', [
+        candidate({
+            category: 'macro',
+            title: 'Pirro changes course in Fed investigation, move unlikely to satisfy Powell',
+            summary: 'The article focuses on a political investigation rather than a policy decision or macro data release.',
+            source: 'CNBC',
+            domain: 'cnbc.com',
+            url: 'https://www.cnbc.com/2026/04/17/pirro-fed-investigation-powell.html',
+            publishedAt: '2026-04-17T16:00:00.000Z',
+            tags: ['Fed'],
+            rawSnippet: '',
+        }),
+        candidate({
+            category: 'macro',
+            title: 'CPI Shock Incoming May 12: Trump vs Powell Drama Fuel Market',
+            summary: 'The article previews a future CPI event with political drama framing but no released data.',
+            source: 'Coin Gabbar',
+            domain: 'coingabbar.com',
+            url: 'https://www.coingabbar.com/en/crypto-currency-news/cpi-shock-incoming-may-12',
+            publishedAt: '2026-04-17T17:00:00.000Z',
+            tags: ['CPI', 'Fed'],
+            rawSnippet: '',
+        }),
+        candidate({
+            category: 'macro',
+            title: 'Federal Reserve holds rates steady as Powell says inflation remains sticky',
+            summary: 'The Fed held rates steady and Powell said sticky inflation keeps policy restrictive.',
+            source: 'Reuters',
+            domain: 'reuters.com',
+            url: 'https://www.reuters.com/markets/us/fed-holds-rates-inflation-2026-04-17/',
+            publishedAt: '2026-04-17T18:00:00.000Z',
+            tags: ['Fed', 'rates', 'inflation'],
+            rawSnippet: '',
+        }),
+    ], WINDOW, 10);
+
+    const titles = result.items.map((item) => item.title).join('\n');
+    assert.equal(result.items.length, 1);
+    assert.match(titles, /美联储|利率|通胀|Fed/i);
+    assert.doesNotMatch(titles, /Pirro|investigation|CPI Shock|Drama/i);
+    assert.equal(result.dropped.unimportant, 2);
+});
+
+test('dedupeAndRankCandidates rejects research opinion pieces that only borrow crypto and AI keywords', () => {
+    const cryptoResult = dedupeAndRankCandidates('crypto', [
+        candidate({
+            category: 'crypto',
+            title: 'Bitwise CEO：法币货币体系“已死”',
+            summary: 'Bitwise CEO expressed an opinion about fiat currency and Bitcoin without a filing, product launch or regulatory event.',
+            source: 'Odaily 星球日报',
+            domain: 'odaily.news',
+            url: 'https://www.odaily.news/zh-CN/newsflash/bitwise-ceo-fiat-dead',
+            publishedAt: '2026-04-17T16:00:00.000Z',
+            tags: ['BTC'],
+            rawSnippet: '',
+        }),
+        candidate({
+            category: 'crypto',
+            title: 'Tiger Research：AI 智能体也要查身份证了',
+            summary: 'The research article discusses KYA standards and identity verification but cites no new official rule or product launch.',
+            source: 'Odaily 星球日报',
+            domain: 'odaily.news',
+            url: 'https://www.odaily.news/zh-CN/post/kya-ai-agent-identity',
+            publishedAt: '2026-04-17T17:00:00.000Z',
+            tags: ['USDT', 'USDC', 'OpenAI', 'stablecoin'],
+            rawSnippet: '',
+        }),
+        candidate({
+            category: 'crypto',
+            title: 'SEC charges major crypto exchange over stablecoin reserve disclosures',
+            summary: 'The enforcement action can change compliance expectations for exchanges and stablecoin issuers.',
+            source: 'Reuters',
+            domain: 'reuters.com',
+            url: 'https://www.reuters.com/technology/sec-crypto-exchange-stablecoin-charges-2026-04-17/',
+            publishedAt: '2026-04-17T18:00:00.000Z',
+            tags: ['SEC', 'stablecoin', 'exchange'],
+            rawSnippet: '',
+        }),
+    ], WINDOW, 10);
+
+    const aiResult = dedupeAndRankCandidates('ai', [
+        candidate({
+            category: 'ai',
+            title: 'AI researchers explain why agent identity will matter for stablecoin payments',
+            summary: 'A research commentary discusses future agent payments without a new model, rule, launch or financing event.',
+            source: 'Example Research',
+            domain: 'example.com',
+            url: 'https://example.com/ai-agent-identity-explainer',
+            publishedAt: '2026-04-17T16:00:00.000Z',
+            tags: ['AI', 'agent'],
+            rawSnippet: '',
+        }),
+        candidate({
+            category: 'ai',
+            title: 'OpenAI releases new reasoning model for enterprise developers',
+            summary: 'OpenAI released a new reasoning model that changes enterprise developer platform competition.',
+            source: 'OpenAI',
+            domain: 'openai.com',
+            url: 'https://openai.com/index/new-reasoning-model-2026-04-17/',
+            publishedAt: '2026-04-17T18:00:00.000Z',
+            tags: ['OpenAI', 'model'],
+            rawSnippet: '',
+        }),
+    ], WINDOW, 10);
+
+    assert.equal(cryptoResult.items.length, 1);
+    assert.match(cryptoResult.items[0]?.title || '', /SEC|稳定币|交易所|监管/);
+    assert.doesNotMatch(cryptoResult.items.map((item) => item.title).join('\n'), /Bitwise|Tiger Research|已死|身份证/);
+    assert.equal(cryptoResult.dropped.unimportant, 2);
+
+    assert.equal(aiResult.items.length, 1);
+    assert.match(aiResult.items[0]?.title || '', /OpenAI|模型|reasoning/i);
+    assert.doesNotMatch(aiResult.items.map((item) => item.title).join('\n'), /explain|identity will matter/i);
+});
+
+test('sanitizeDailyNewsDigest keeps concrete AI model chip and legal events', () => {
+    const digest = buildDailyNewsDigestFromResults([
+        { category: 'macro', ok: true, candidates: [] },
+        { category: 'crypto', ok: true, candidates: [] },
+        {
+            category: 'ai',
+            ok: true,
+            candidates: [
+                candidate({
+                    category: 'ai',
+                    title: 'OpenAI explores legal options against Apple, source says',
+                    summary: 'The potential legal action reflects pressure around AI platform distribution.',
+                    source: 'Reuters',
+                    domain: 'reuters.com',
+                    url: 'https://www.reuters.com/technology/openai-apple-legal-options-2026-04-17/',
+                    publishedAt: '2026-04-17T18:00:00.000Z',
+                    tags: ['OpenAI', 'legal action'],
+                    rawSnippet: '',
+                }),
+                candidate({
+                    category: 'ai',
+                    title: 'Anthropic urges tough chip controls as Nvidia CEO joins Trump in China',
+                    summary: 'Anthropic called for tighter chip restrictions while H200 export policy remains in focus.',
+                    source: 'The Information',
+                    domain: 'theinformation.com',
+                    url: 'https://www.theinformation.com/briefings/anthropic-chip-controls-china',
+                    publishedAt: '2026-04-17T17:00:00.000Z',
+                    tags: ['Anthropic', 'NVIDIA', 'chips'],
+                    rawSnippet: '',
+                }),
+                candidate({
+                    category: 'ai',
+                    title: 'PwC is deploying Claude to build technology and execute deals for clients',
+                    summary: 'Anthropic said PwC is deploying Claude across enterprise technology and deal workflows.',
+                    source: 'Anthropic',
+                    domain: 'anthropic.com',
+                    url: 'https://www.anthropic.com/news/pwc-deploying-claude',
+                    publishedAt: '2026-04-17T16:00:00.000Z',
+                    tags: ['Anthropic', 'Claude', 'enterprise'],
+                    rawSnippet: '',
+                }),
+            ],
+        },
+    ], WINDOW);
+
+    const sanitized = sanitizeDailyNewsDigest(digest);
+    const titles = sanitized.ai.map((item) => item.title).join('\n');
+
+    assert.equal(sanitized.ai.length, 3);
+    assert.match(titles, /OpenAI.*Apple.*法律行动/);
+    assert.match(titles, /Anthropic.*芯片出口限制/);
+    assert.match(titles, /PwC.*Claude.*企业落地/);
+    assert.doesNotMatch(titles, /出现新进展|^模型$/m);
 });
 
 test('daily news Chinese normalization avoids duplicated ETF wording in generic crypto fallbacks', () => {
