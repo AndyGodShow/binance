@@ -67,6 +67,7 @@ export default function StrategyCenter({
     const readinessRows = buildReadinessDebugRows(readinessSummary);
     const missingStrategyCount = readinessRows.length;
     const missingFieldCount = readinessRows.reduce((sum, row) => sum + row.missingFields.length, 0);
+    const shouldShowReadinessWarning = isDevelopment && filteredSignals.length === 0 && missingStrategyCount > 0;
     const missingFieldPreview = readinessRows
         .flatMap((row) => row.missingFields.map((field) => `${row.strategyId}:${field}`))
         .slice(0, 4)
@@ -127,7 +128,7 @@ export default function StrategyCenter({
                                 {marketDataStatus.message || '部分外部数据源失败，结果已降级'}
                             </div>
                         )}
-                        {missingStrategyCount > 0 && (
+                        {shouldShowReadinessWarning && (
                             <div className={styles.degradedHint}>
                                 策略输入缺字段：影响 {missingStrategyCount} 个策略，{missingFieldCount} 类字段
                                 {missingFieldPreview ? `（${missingFieldPreview}）` : ''}

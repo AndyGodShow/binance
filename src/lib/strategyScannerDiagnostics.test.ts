@@ -88,6 +88,18 @@ test('buildMarketDataStatus does not mark enriched ready market data as degraded
     assert.equal(isMarketDataStatusDegraded(status), false);
 });
 
+test('buildMarketDataStatus treats enriched refresh cache as usable', () => {
+    const status = buildMarketDataStatus({
+        dataQuality: 'enriched',
+        buildState: 'ready',
+        dataSource: 'stale-memory-cache-refreshing',
+    });
+
+    assert.equal(status.dataSource, 'stale-memory-cache-refreshing');
+    assert.equal(isMarketDataStatusDegraded(status), false);
+    assert.equal(status.message, undefined);
+});
+
 test('buildMarketDataStatus falls back safely when headers are missing or unknown', () => {
     const missing = buildMarketDataStatus({});
     const unknown = buildMarketDataStatus({

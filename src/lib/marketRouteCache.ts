@@ -53,11 +53,15 @@ export function commitFallbackMarketData(
 export function ensureCachedMarketBuild(
     state: MarketDataRouteState,
     buildMarketData: () => Promise<TickerData[]>,
-    now: number = Date.now(),
+    now: number | (() => number) = Date.now,
 ): Promise<TickerData[]> {
     if (!state.inflightMarketBuild) {
         state.inflightMarketBuild = buildMarketData()
-            .then((data) => commitSuccessfulMarketData(state, data, now))
+            .then((data) => commitSuccessfulMarketData(
+                state,
+                data,
+                typeof now === 'function' ? now() : now,
+            ))
             .finally(() => {
                 state.inflightMarketBuild = null;
             });

@@ -6,6 +6,7 @@ import { logger } from '@/lib/logger';
 import { loadLocalKlineArchive } from '@/lib/services/klineArchive';
 import { invalidRequestBody, validateSymbolsParam } from '@/lib/apiRequestValidation';
 import { buildQualityHeaders } from '@/lib/dataQualityStatus';
+import { fetchRequestedMultiframeData, type MultiframeData } from '@/lib/marketMultiframe';
 
 interface KlineResult {
     symbol: string;
@@ -14,54 +15,23 @@ interface KlineResult {
     o4h: number;
 }
 
-type MultiframeData = Record<string, { o15m: number, o1h: number, o4h: number }>;
-
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // Max duration for Vercel
 
 const BUILD_TIMEOUT_MS = 25000;
 const CUSTOM_SYMBOL_TIMEOUT_MS = 15000;
+const CUSTOM_SYMBOL_CONCURRENCY = process.env.NODE_ENV === 'development' ? 4 : 10;
 
 async function buildMultiframeData(requestedSymbols?: string[]): Promise<MultiframeData> {
     if (requestedSymbols && requestedSymbols.length > 0) {
-        const resultData: MultiframeData = {};
-        const uniqueSymbols = requestedSymbols
-            .filter((symbol) => symbol.endsWith('USDT'))
-            .map((symbol) => symbol.trim().toUpperCase())
-            .filter(Boolean);
-
-        for (const symbol of uniqueSymbols) {
-            const archive = loadLocalKlineArchive(symbol, '15m');
-            if (archive?.klines?.length) {
-                const currentIdx = archive.klines.length - 1;
-                const idx1h = Math.max(0, currentIdx - 4);
-                const idx4h = Math.max(0, currentIdx - 16);
-                resultData[symbol] = {
-                    o15m: Number.parseFloat(archive.klines[currentIdx].open),
-                    o1h: Number.parseFloat(archive.klines[idx1h].open),
-                    o4h: Number.parseFloat(archive.klines[idx4h].open),
-                };
-                continue;
-            }
-
-            try {
-                const klines = await fetchBinanceJson<unknown>(`/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=18`, { init: { cache: 'no-store' } });
-                if (Array.isArray(klines) && klines.length > 0) {
-                    const currentIdx = klines.length - 1;
-                    const idx1h = Math.max(0, currentIdx - 4);
-                    const idx4h = Math.max(0, currentIdx - 16);
-                    resultData[symbol] = {
-                        o15m: Number.parseFloat(klines[currentIdx][1]),
-                        o1h: Number.parseFloat(klines[idx1h][1]),
-                        o4h: Number.parseFloat(klines[idx4h][1]),
-                    };
-                }
-            } catch {
-                // If both archive and upstream fail, omit the symbol so callers can decide whether to fall back.
-            }
-        }
-
-        return resultData;
+        return fetchRequestedMultiframeData(requestedSymbols, {
+            concurrency: CUSTOM_SYMBOL_CONCURRENCY,
+            loadArchive: (symbol) => loadLocalKlineArchive(symbol, '15m'),
+            fetchKlines: (symbol) => fetchBinanceJson<unknown>(
+                `/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=18`,
+                { init: { cache: 'no-store' } }
+            ),
+        });
     }
 
     // 1. Prefer exchangeInfo so we only query active perpetual contracts.

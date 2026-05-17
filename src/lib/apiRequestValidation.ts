@@ -2,7 +2,7 @@ export type ValidationResult<T> =
     | { ok: true; value: T }
     | { ok: false; details: string };
 
-const FUTURES_SYMBOL_PATTERN = /^[A-Z0-9]{2,20}USDT$/;
+const FUTURES_SYMBOL_PATTERN = /^[A-Z0-9]{1,20}USDT$/;
 const BACKTEST_INTERVALS = new Set(['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '8h', '12h', '1d']);
 const LONG_SHORT_PERIODS = new Set(['5m', '15m', '30m', '1h', '2h', '4h', '6h', '12h', '1d']);
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;

@@ -45,7 +45,7 @@ test('buildOpenInterestAllPayload marks empty failures as unavailable fallback',
 
 test('extractSymbolValueMap ignores quality metadata', () => {
     const payload = buildOpenInterestAllPayload({
-        data: { BTCUSDT: '100' },
+        data: { BTCUSDT: '100', BUSDT: '50' },
         dataQuality: 'stale',
         buildState: 'stale',
         dataSource: 'stale-memory-cache',
@@ -53,7 +53,7 @@ test('extractSymbolValueMap ignores quality metadata', () => {
         updatedAt: 123,
     });
 
-    assert.deepEqual(extractSymbolValueMap(payload), { BTCUSDT: '100' });
+    assert.deepEqual(extractSymbolValueMap(payload), { BTCUSDT: '100', BUSDT: '50' });
 });
 
 test('buildQualityHeaders exposes consistent response headers', () => {

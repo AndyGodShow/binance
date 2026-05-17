@@ -64,6 +64,28 @@ test('ensureCachedMarketBuild reuses an in-flight heavy market build', async () 
     assert.equal(state.lastSuccessfulMarketData, data);
 });
 
+test('ensureCachedMarketBuild stamps cache when the build completes', async () => {
+    const state = createMarketDataRouteState();
+    const data = [createTicker('BNBUSDT')];
+    let now = 1000;
+    let resolveBuild: ((value: TickerData[]) => void) | undefined;
+
+    const build = ensureCachedMarketBuild(
+        state,
+        () => new Promise<TickerData[]>((resolve) => {
+            resolveBuild = resolve;
+        }),
+        () => now,
+    );
+
+    now = 7000;
+    resolveBuild?.(data);
+
+    assert.equal(await build, data);
+    assert.equal(state.lastSuccessfulAt, 7000);
+    assert.deepEqual(state.liveMarketCache, { time: 7000, data, quality: 'enriched', source: 'heavy' });
+});
+
 test('fallback market data is returned as temporary data without replacing enriched cache', () => {
     const state = createMarketDataRouteState();
     const enriched = [createTicker('BTCUSDT')];

@@ -5,6 +5,7 @@ import type {
     OpenInterestFrameSnapshot,
     TickerData,
 } from './types';
+import { selectOpenInterestCoverageSymbols } from './liveMarketData.ts';
 
 type OpenInterestWindowKey = 'change15m' | 'change1h' | 'change4h' | 'change24h';
 
@@ -36,6 +37,21 @@ function takeBottom(entries: LeaderboardEntry[], limit: number): LeaderboardEntr
     return entries
         .sort((a, b) => a.value - b.value)
         .slice(0, limit);
+}
+
+export function getOpenInterestCoverageSummary(
+    tickers: TickerData[],
+    openInterestFrames: Record<string, OpenInterestFrameSnapshot> = {}
+): { covered: number; compatible: number } {
+    const compatibleSymbols = selectOpenInterestCoverageSymbols(tickers);
+
+    return {
+        compatible: compatibleSymbols.length,
+        covered: compatibleSymbols.reduce(
+            (count, symbol) => count + (openInterestFrames[symbol] ? 1 : 0),
+            0
+        ),
+    };
 }
 
 export function buildDashboardLeaderboards(

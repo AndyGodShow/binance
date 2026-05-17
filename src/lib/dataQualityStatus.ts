@@ -25,7 +25,7 @@ export interface QualityMeta {
 
 export type OpenInterestAllPayload = Record<string, unknown> & QualityMeta;
 
-const SYMBOL_KEY_PATTERN = /^[A-Z0-9]{2,20}USDT$/;
+const SYMBOL_KEY_PATTERN = /^[A-Z0-9]{1,20}USDT$/;
 
 function normalizeSourceStatus(input: QualityMeta): Record<string, UnifiedSourceStatus> {
     if (input.sourceStatus) {

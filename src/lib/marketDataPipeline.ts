@@ -12,6 +12,7 @@ import {
     buildMarketKlineEnhancementStagePlan,
     fetchMarketKlineEnhancementGroup,
     resolveMarketKlineBatchSize,
+    selectMarketKlineEligibleSymbols,
 } from '@/lib/marketBuildConfig';
 import { attachOpenInterestSnapshotsToTickers } from '@/lib/marketDataTransforms';
 
@@ -29,6 +30,9 @@ interface MarketTickerInput {
     symbol: string;
     price: string;
 }
+
+const MARKET_OI_SNAPSHOT_SYMBOL_LIMIT = process.env.NODE_ENV === 'development' ? 80 : 240;
+const MARKET_KLINE_ENHANCEMENT_SYMBOL_LIMIT = process.env.NODE_ENV === 'development' ? 40 : 160;
 
 interface MarketEnhancementResources {
     btcReturns: number[];
@@ -232,16 +236,24 @@ function attachHistoricalTrackerChanges(
 export async function buildMarketData(): Promise<TickerData[]> {
     const weiShenTimeframes = getWeiShenTimeframes();
     const baseMarketData = await fetchBaseMarketData();
-    const oiTickerInputs = buildTickerInputs(baseMarketData);
+    const oiTickerInputs = buildTickerInputs(
+        [...baseMarketData]
+            .sort((a, b) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
+            .slice(0, MARKET_OI_SNAPSHOT_SYMBOL_LIMIT)
+    );
 
     const [btcReturns, oiSnapshotMap] = await Promise.all([
         getBTCReturns(),
         fetchOpenInterestMarketSnapshotsBatch(oiTickerInputs, 25),
     ]);
 
-    const eligibleTickerInputs = selectEligibleTickerInputs(baseMarketData, oiSnapshotMap);
-    const eligibleSymbols = eligibleTickerInputs.map((ticker) => ticker.symbol);
     const weiUniverseSymbols = resolveWeiUniverseSymbols(baseMarketData);
+    const eligibleTickerInputs = selectEligibleTickerInputs(baseMarketData, oiSnapshotMap);
+    const eligibleSymbols = selectMarketKlineEligibleSymbols({
+        eligibleSymbols: eligibleTickerInputs.map((ticker) => ticker.symbol),
+        weiUniverseSymbols,
+        maxEligibleSymbols: MARKET_KLINE_ENHANCEMENT_SYMBOL_LIMIT,
+    });
     const klineBatchSize = resolveMarketKlineBatchSize(APP_CONFIG.API.BATCH_SIZE);
     const klineStagePlan = buildMarketKlineEnhancementStagePlan({
         eligibleSymbols,

@@ -42,7 +42,7 @@ export async function GET() {
                 'Cache-Control': 'public, s-maxage=3, stale-while-revalidate=10',
                 'X-Data-Source': 'stale-memory-cache-refreshing',
                 'X-Data-Quality': 'enriched',
-                'X-Build-State': 'building',
+                'X-Build-State': 'ready',
                 'X-Cache-Age-Seconds': Math.floor((Date.now() - marketRouteState.lastSuccessfulAt) / 1000).toString(),
             }
         });

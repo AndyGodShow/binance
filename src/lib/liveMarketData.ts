@@ -1,6 +1,8 @@
 import type { OpenInterestFrameSnapshot, TickerData } from './types.ts';
 import { extractSymbolValueMap } from './dataQualityStatus.ts';
 
+const INDICATOR_SYMBOL_PATTERN = /^[A-Z0-9]{1,20}USDT$/;
+
 export type MultiFrameDataMap = Record<string, { o15m: number; o1h: number; o4h: number }>;
 export type OpenInterestFrameDataMap = Record<string, OpenInterestFrameSnapshot>;
 export type RsrsDataMap = Record<string, {
@@ -80,6 +82,56 @@ export function parseOptionalSeconds(value: string | null): number | undefined {
 
     const parsed = Number.parseInt(value, 10);
     return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+export function selectValidFuturesIndicatorSymbols(
+    tickers: Array<Pick<TickerData, 'symbol' | 'quoteVolume'>>,
+    maxSymbols?: number
+): string[] {
+    const symbols = [...tickers]
+        .filter((ticker) => INDICATOR_SYMBOL_PATTERN.test(ticker.symbol))
+        .sort((a, b) => Number(b.quoteVolume) - Number(a.quoteVolume))
+        .map((ticker) => ticker.symbol);
+
+    return typeof maxSymbols === 'number' && maxSymbols > 0
+        ? symbols.slice(0, maxSymbols)
+        : symbols;
+}
+
+export function selectStagedFuturesIndicatorSymbols(
+    tickers: Array<Pick<TickerData, 'symbol' | 'quoteVolume'>>,
+    options: {
+        expanded: boolean;
+        initialLimit: number;
+        expandedLimit: number;
+    }
+): string[] {
+    return selectValidFuturesIndicatorSymbols(
+        tickers,
+        options.expanded ? options.expandedLimit : options.initialLimit
+    );
+}
+
+export function selectOpenInterestCoverageSymbols(
+    tickers: Array<Pick<TickerData, 'symbol' | 'quoteVolume'>>
+): string[] {
+    return selectValidFuturesIndicatorSymbols(tickers);
+}
+
+export function isStrategyScanCandidate(
+    ticker: Partial<TickerData>
+): boolean {
+    return (
+        typeof ticker.rsrs === 'number' ||
+        typeof ticker.volumeMA === 'number' ||
+        typeof ticker.poc === 'number' ||
+        typeof ticker.atr === 'number' ||
+        typeof ticker.breakout21dHigh === 'number' ||
+        typeof ticker.ema5m20 === 'number' ||
+        typeof ticker.gmmaTrend === 'string' ||
+        Boolean(ticker.strategyContexts?.weiShen) ||
+        Boolean(ticker.strategyContexts?.sentimentHotspot)
+    );
 }
 
 export function getLatestCloseTime(data: TickerData[] | undefined): number | undefined {

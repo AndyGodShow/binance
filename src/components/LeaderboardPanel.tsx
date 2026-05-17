@@ -3,7 +3,7 @@
 import { useMemo } from 'react';
 
 import { trimLeaderboardDisplaySymbol } from '@/lib/leaderboardDisplay';
-import { buildDashboardLeaderboards } from '@/lib/leaderboard';
+import { buildDashboardLeaderboards, getOpenInterestCoverageSummary } from '@/lib/leaderboard';
 import type { LeaderboardEntry, LeaderboardWindow, OpenInterestFrameSnapshot, TickerData } from '@/lib/types';
 import { formatCompact } from '@/lib/utils';
 import styles from './LeaderboardPanel.module.css';
@@ -131,8 +131,8 @@ export default function LeaderboardPanel({
         [data, openInterestFrames]
     );
 
-    const oiCoverageCount = useMemo(
-        () => data.reduce((count, ticker) => count + (openInterestFrames[ticker.symbol] ? 1 : 0), 0),
+    const oiCoverage = useMemo(
+        () => getOpenInterestCoverageSummary(data, openInterestFrames),
         [data, openInterestFrames]
     );
 
@@ -145,7 +145,7 @@ export default function LeaderboardPanel({
                 </div>
                 <div className={styles.panelMeta}>
                     <span>当前筛选 {data.length} 个合约</span>
-                    <span>OI 多周期覆盖 {oiCoverageCount}</span>
+                    <span>OI 多周期覆盖 {oiCoverage.covered}/{oiCoverage.compatible}</span>
                 </div>
             </div>
 

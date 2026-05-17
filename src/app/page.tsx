@@ -23,11 +23,14 @@ import { StrategySignal } from '@/lib/strategyTypes';
 import type { DeepPartial, StrategyParameterConfigMap } from '@/lib/strategyParameters';
 import {
   isHeavyMarketPayloadFresh,
+  isStrategyScanCandidate,
   isTimedPayloadFresh,
   mergeBaseAndHeavyMarketData,
   mergeLightMarketOpenInterest,
   normalizeTickerUniverse,
   parseOptionalSeconds,
+  selectOpenInterestCoverageSymbols,
+  selectStagedFuturesIndicatorSymbols,
   type MultiFrameDataMap,
   type OpenInterestFrameDataMap,
   type RsrsDataMap,
@@ -35,6 +38,10 @@ import {
 } from '@/lib/liveMarketData';
 import { buildMarketDataStatus } from '@/lib/strategyScannerDiagnostics';
 import { summarizeTimedPayloadQuality } from '@/lib/dataQualityStatus';
+import {
+  shouldShowMarketConnectionAlert,
+  shouldShowOpenInterestUnavailableAlert,
+} from '@/lib/dashboardAlerts';
 
 type AppTab = 'dashboard' | 'leaderboard' | 'macro' | 'news' | 'watchlists' | 'longshort' | 'onchain' | 'strategies' | 'trading';
 
@@ -92,10 +99,13 @@ function createDemoSignals(now: number): StrategySignal[] {
 const MAX_STRATEGY_MARKET_DATA_AGE_MS = 5 * 60 * 1000;
 const MAX_STRATEGY_FRAME_DATA_AGE_SECONDS = 20 * 60;
 const MAX_STRATEGY_RSRS_DATA_AGE_SECONDS = 6 * 60 * 60;
-const MULTIFRAME_BATCH_SIZE = 60;
+const MULTIFRAME_BATCH_SIZE = 20;
 const MULTIFRAME_BATCH_DELAY_MS = 120;
-const OI_MULTIFRAME_BATCH_SIZE = 40;
+const OI_MULTIFRAME_BATCH_SIZE = 20;
 const OI_MULTIFRAME_BATCH_DELAY_MS = 140;
+const DEFERRED_INDICATOR_INITIAL_SYMBOL_LIMIT = 80;
+const DEFERRED_INDICATOR_SYMBOL_LIMIT = 160;
+const DEFERRED_INDICATOR_EXPAND_DELAY_MS = 12_000;
 const DEMO_BASE_TIME = Date.UTC(2026, 3, 10, 10, 30, 0);
 
 async function fetcher<T>(url: string): Promise<T> {
@@ -146,6 +156,7 @@ export default function Home() {
   const isPageVisible = usePageVisibility();
   const [enableHeavyMarket, setEnableHeavyMarket] = useState(false);
   const [enableDeferredIndicators, setEnableDeferredIndicators] = useState(false);
+  const [deferredIndicatorsExpanded, setDeferredIndicatorsExpanded] = useState(false);
   const [isDemoMode, setIsDemoMode] = useState(false);
   const [strategyParameterOverrides, setStrategyParameterOverrides] = useState<DeepPartial<StrategyParameterConfigMap>>({});
   const {
@@ -177,6 +188,7 @@ export default function Home() {
   const oiMultiframeRefreshInterval = isPageVisible ? 60000 : 300000;
   const shouldRunLiveMarketRequests = activeTab !== 'trading' && activeTab !== 'news';
   const shouldRunLeaderboardRequests = activeTab === 'dashboard' || activeTab === 'leaderboard';
+  const shouldRunHeavyMarketRequests = activeTab === 'strategies';
 
   const { data: lightMarketData, error: marketError, isLoading: marketLoading } = usePersistentSWR<TickerData[]>(
     shouldRunLiveMarketRequests ? '/api/market/light' : null,
@@ -189,6 +201,7 @@ export default function Home() {
     persistIntervalMs: 20 * 1000,
     }
   );
+  const liveMarketSymbolCount = lightMarketData?.length ?? 0;
 
   const { data: openInterestData } = usePersistentSWR<Record<string, unknown>>(
     shouldRunLiveMarketRequests ? '/api/oi/all' : null,
@@ -203,8 +216,8 @@ export default function Home() {
   );
 
   const { data: heavyMarketPayload } = usePersistentSWR<TimedPayload<TickerData[]>>(
-    shouldRunLiveMarketRequests && enableHeavyMarket ? '/api/market' : null,
-    shouldRunLiveMarketRequests && enableHeavyMarket ? ((url: string) => fetcherWithMeta<TickerData[]>(url)) : null,
+    shouldRunLiveMarketRequests && shouldRunHeavyMarketRequests && enableHeavyMarket ? '/api/market' : null,
+    shouldRunLiveMarketRequests && shouldRunHeavyMarketRequests && enableHeavyMarket ? ((url: string) => fetcherWithMeta<TickerData[]>(url)) : null,
     {
       refreshInterval: heavyMarketRefreshInterval,
       revalidateOnFocus: false,
@@ -233,14 +246,29 @@ export default function Home() {
       return [];
     }
 
-    return [...lightMarketData]
-      .sort((a, b) => Number(b.quoteVolume) - Number(a.quoteVolume))
-      .map((ticker) => ticker.symbol);
-  }, [lightMarketData]);
+    return selectStagedFuturesIndicatorSymbols(lightMarketData, {
+      expanded: deferredIndicatorsExpanded,
+      initialLimit: DEFERRED_INDICATOR_INITIAL_SYMBOL_LIMIT,
+      expandedLimit: DEFERRED_INDICATOR_SYMBOL_LIMIT,
+    });
+  }, [deferredIndicatorsExpanded, lightMarketData]);
 
   const multiframeSignature = useMemo(
     () => [...multiframeSymbols].sort().join(','),
     [multiframeSymbols]
+  );
+
+  const oiMultiframeSymbols = useMemo(() => {
+    if (!lightMarketData || lightMarketData.length === 0) {
+      return [];
+    }
+
+    return selectOpenInterestCoverageSymbols(lightMarketData);
+  }, [lightMarketData]);
+
+  const oiMultiframeSignature = useMemo(
+    () => [...oiMultiframeSymbols].sort().join(','),
+    [oiMultiframeSymbols]
   );
 
   const fetchMultiframeBatch = useCallback(
@@ -286,8 +314,8 @@ export default function Home() {
     error: oiFrameError,
     setError: setOiFrameError,
   } = useProgressiveTimedPayload({
-    enabled: shouldRunLeaderboardRequests && Boolean(multiframeSignature),
-    symbols: multiframeSymbols,
+    enabled: shouldRunLeaderboardRequests && Boolean(oiMultiframeSignature),
+    symbols: oiMultiframeSymbols,
     batchSize: OI_MULTIFRAME_BATCH_SIZE,
     batchDelayMs: OI_MULTIFRAME_BATCH_DELAY_MS,
     refreshIntervalMs: oiMultiframeRefreshInterval,
@@ -329,7 +357,7 @@ export default function Home() {
   }, [activeTab]);
 
   useEffect(() => {
-    if (!shouldRunLiveMarketRequests || !lightMarketData || lightMarketData.length === 0 || (enableHeavyMarket && enableDeferredIndicators)) {
+    if (!shouldRunLiveMarketRequests || liveMarketSymbolCount === 0 || (enableHeavyMarket && enableDeferredIndicators)) {
       return;
     }
 
@@ -339,7 +367,21 @@ export default function Home() {
     }, 150);
 
     return () => window.clearTimeout(timer);
-  }, [enableDeferredIndicators, enableHeavyMarket, lightMarketData, shouldRunLiveMarketRequests]);
+  }, [enableDeferredIndicators, enableHeavyMarket, liveMarketSymbolCount, shouldRunLiveMarketRequests]);
+
+  useEffect(() => {
+    if (!shouldRunLiveMarketRequests || !enableDeferredIndicators || liveMarketSymbolCount === 0) {
+      setDeferredIndicatorsExpanded(false);
+      return;
+    }
+
+    setDeferredIndicatorsExpanded(false);
+    const timer = window.setTimeout(() => {
+      setDeferredIndicatorsExpanded(true);
+    }, DEFERRED_INDICATOR_EXPAND_DELAY_MS);
+
+    return () => window.clearTimeout(timer);
+  }, [enableDeferredIndicators, liveMarketSymbolCount, shouldRunLiveMarketRequests]);
 
   useEffect(() => {
     if (shouldRunLiveMarketRequests) {
@@ -348,6 +390,7 @@ export default function Home() {
 
     setEnableHeavyMarket(false);
     setEnableDeferredIndicators(false);
+    setDeferredIndicatorsExpanded(false);
     setFrameError(null);
     setOiFrameError(null);
   }, [setFrameError, setOiFrameError, shouldRunLiveMarketRequests]);
@@ -379,6 +422,18 @@ export default function Home() {
     () => normalizeTickerUniverse(rawData, frameData, rsrsData),
     [rawData, frameData, rsrsData]
   );
+  const showMarketConnectionAlert = shouldShowMarketConnectionAlert({
+    shouldRunLiveMarketRequests,
+    marketError,
+    auxiliaryError: frameError || rsrsError || oiFrameError,
+    processedDataLength: processedData.length,
+  });
+  const showOpenInterestUnavailableAlert = shouldShowOpenInterestUnavailableAlert({
+    shouldRunLiveMarketRequests,
+    hasOpenInterestPayload: Boolean(openInterestData),
+    isOpenInterestDegraded: openInterestQuality.isDegraded,
+    processedData,
+  });
 
   const isHeavyMarketFreshEnough = isHeavyMarketPayloadFresh(heavyMarketPayload, MAX_STRATEGY_MARKET_DATA_AGE_MS);
   const isFrameDataFreshEnough = isTimedPayloadFresh(framePayload, MAX_STRATEGY_FRAME_DATA_AGE_SECONDS);
@@ -388,7 +443,7 @@ export default function Home() {
 
   const strategyMarketData = useMemo(
     () => isHeavyMarketFreshEnough
-      ? normalizeTickerUniverse(heavyMarketData, strategyFrameData, strategyRsrsData)
+      ? normalizeTickerUniverse(heavyMarketData, strategyFrameData, strategyRsrsData).filter(isStrategyScanCandidate)
       : [],
     [heavyMarketData, isHeavyMarketFreshEnough, strategyFrameData, strategyRsrsData]
   );
@@ -469,7 +524,7 @@ export default function Home() {
   return (
     <main className="container">
       <TabNavigation activeTab={activeTab} onChange={setActiveTab} />
-      {shouldRunLiveMarketRequests && (marketError || frameError || rsrsError || oiFrameError) && (
+      {showMarketConnectionAlert && (
         <div
           style={{
             marginBottom: 12,
@@ -499,7 +554,7 @@ export default function Home() {
           当前未获取到有效行情数据，请稍后重试。
         </div>
       )}
-      {shouldRunLiveMarketRequests && openInterestData && openInterestQuality.isDegraded && (
+      {showOpenInterestUnavailableAlert && (
         <div
           style={{
             marginBottom: 12,

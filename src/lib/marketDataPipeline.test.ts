@@ -5,6 +5,7 @@ import {
     buildMarketKlineEnhancementStagePlan,
     fetchMarketKlineEnhancementGroup,
     resolveMarketKlineBatchSize,
+    selectMarketKlineEligibleSymbols,
 } from './marketBuildConfig.ts';
 
 test('resolveMarketKlineBatchSize lowers Binance kline concurrency in development', () => {
@@ -28,6 +29,16 @@ test('buildMarketKlineEnhancementStagePlan keeps eligible klines before wei-shen
     assert.deepEqual(plan.eligible.map((request) => request.interval), ['15m', '5m', '1d']);
     assert.deepEqual(plan.weiShen.map((request) => request.label), ['wei-signal', 'wei-confirm', 'wei-daily']);
     assert.deepEqual(plan.weiShen.map((request) => request.interval), ['1h', '4h', '1d']);
+});
+
+test('selectMarketKlineEligibleSymbols caps volume universe while preserving wei-shen symbols', () => {
+    const selected = selectMarketKlineEligibleSymbols({
+        eligibleSymbols: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'DOGEUSDT'],
+        weiUniverseSymbols: ['SOLUSDT', 'BNBUSDT'],
+        maxEligibleSymbols: 2,
+    });
+
+    assert.deepEqual(selected, ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT']);
 });
 
 test('fetchMarketKlineEnhancementGroup returns an empty map when one kline group fails', async () => {

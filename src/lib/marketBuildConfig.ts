@@ -55,6 +55,23 @@ export function buildMarketKlineEnhancementStagePlan(params: {
     };
 }
 
+export function selectMarketKlineEligibleSymbols(params: {
+    eligibleSymbols: string[];
+    weiUniverseSymbols: string[];
+    maxEligibleSymbols: number;
+}): string[] {
+    const selected = new Set<string>();
+
+    params.eligibleSymbols.slice(0, params.maxEligibleSymbols).forEach((symbol) => {
+        selected.add(symbol);
+    });
+    params.weiUniverseSymbols.forEach((symbol) => {
+        selected.add(symbol);
+    });
+
+    return Array.from(selected);
+}
+
 export async function fetchMarketKlineEnhancementGroup<T>(
     request: MarketKlineEnhancementRequest,
     batchSize: number,

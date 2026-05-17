@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildDashboardLeaderboards } from './leaderboard.ts';
+import { buildDashboardLeaderboards, getOpenInterestCoverageSummary } from './leaderboard.ts';
 import type { OpenInterestFrameSnapshot, TickerData } from './types.ts';
 
 function createTicker(symbol: string, overrides: Partial<TickerData> = {}): TickerData {
@@ -134,4 +134,37 @@ test('buildDashboardLeaderboards ranks price, oi ratio, and funding slices', () 
         leaderboard.funding.negative.map((item) => item.symbol),
         ['DOGEUSDT', 'ETHUSDT']
     );
+});
+
+test('getOpenInterestCoverageSummary counts only OI-compatible futures symbols', () => {
+    const tickers = [
+        createTicker('BUSDT'),
+        createTicker('BTCUSDT'),
+        createTicker('币安人生USDT'),
+    ];
+    const oiSnapshots: Record<string, OpenInterestFrameSnapshot> = {
+        BUSDT: {
+            symbol: 'BUSDT',
+            asOf: 1,
+            currentValue: 100,
+            change15m: { percent: 1, value: 1 },
+            change1h: { percent: 1, value: 1 },
+            change4h: { percent: 1, value: 1 },
+            change24h: { percent: 1, value: 1 },
+        },
+        BTCUSDT: {
+            symbol: 'BTCUSDT',
+            asOf: 1,
+            currentValue: 100,
+            change15m: { percent: 1, value: 1 },
+            change1h: { percent: 1, value: 1 },
+            change4h: { percent: 1, value: 1 },
+            change24h: { percent: 1, value: 1 },
+        },
+    };
+
+    assert.deepEqual(getOpenInterestCoverageSummary(tickers, oiSnapshots), {
+        covered: 2,
+        compatible: 2,
+    });
 });

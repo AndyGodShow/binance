@@ -19,6 +19,15 @@ test('validates and normalizes a futures symbol', () => {
     }
 });
 
+test('accepts single-character Binance futures symbols', () => {
+    const result = validateLongShortParams(new URLSearchParams('symbol=busdt&period=1h&limit=30'));
+
+    assert.equal(result.ok, true);
+    if (result.ok) {
+        assert.equal(result.value.symbol, 'BUSDT');
+    }
+});
+
 test('rejects invalid futures symbols', () => {
     const result = validateLongShortParams(new URLSearchParams('symbol=https://evil.test/BTCUSDT&period=1h'));
 
