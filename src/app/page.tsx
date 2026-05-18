@@ -27,10 +27,11 @@ import {
   isTimedPayloadFresh,
   mergeBaseAndHeavyMarketData,
   mergeLightMarketOpenInterest,
+  mergeOpenInterestFramesToTickers,
   normalizeTickerUniverse,
   parseOptionalSeconds,
+  selectFullCoverageFuturesIndicatorSymbols,
   selectOpenInterestCoverageSymbols,
-  selectStagedFuturesIndicatorSymbols,
   type MultiFrameDataMap,
   type OpenInterestFrameDataMap,
   type RsrsDataMap,
@@ -100,12 +101,13 @@ const MAX_STRATEGY_MARKET_DATA_AGE_MS = 5 * 60 * 1000;
 const MAX_STRATEGY_FRAME_DATA_AGE_SECONDS = 20 * 60;
 const MAX_STRATEGY_RSRS_DATA_AGE_SECONDS = 6 * 60 * 60;
 const MULTIFRAME_BATCH_SIZE = 20;
-const MULTIFRAME_BATCH_DELAY_MS = 120;
-const OI_MULTIFRAME_BATCH_SIZE = 20;
-const OI_MULTIFRAME_BATCH_DELAY_MS = 140;
+const MULTIFRAME_BATCH_DELAY_MS = 100;
+const OI_MULTIFRAME_BATCH_SIZE = 10;
+const OI_MULTIFRAME_BATCH_DELAY_MS = 150;
 const DEFERRED_INDICATOR_INITIAL_SYMBOL_LIMIT = 80;
 const DEFERRED_INDICATOR_SYMBOL_LIMIT = 160;
 const DEFERRED_INDICATOR_EXPAND_DELAY_MS = 12_000;
+const DEFERRED_INDICATOR_FULL_COVERAGE_DELAY_MS = 45_000;
 const DEMO_BASE_TIME = Date.UTC(2026, 3, 10, 10, 30, 0);
 
 async function fetcher<T>(url: string): Promise<T> {
@@ -157,6 +159,7 @@ export default function Home() {
   const [enableHeavyMarket, setEnableHeavyMarket] = useState(false);
   const [enableDeferredIndicators, setEnableDeferredIndicators] = useState(false);
   const [deferredIndicatorsExpanded, setDeferredIndicatorsExpanded] = useState(false);
+  const [deferredIndicatorsFullCoverage, setDeferredIndicatorsFullCoverage] = useState(false);
   const [isDemoMode, setIsDemoMode] = useState(false);
   const [strategyParameterOverrides, setStrategyParameterOverrides] = useState<DeepPartial<StrategyParameterConfigMap>>({});
   const {
@@ -203,17 +206,7 @@ export default function Home() {
   );
   const liveMarketSymbolCount = lightMarketData?.length ?? 0;
 
-  const { data: openInterestData } = usePersistentSWR<Record<string, unknown>>(
-    shouldRunLiveMarketRequests ? '/api/oi/all' : null,
-    shouldRunLiveMarketRequests ? ((url: string) => fetcher<Record<string, string>>(url)) : null,
-    {
-    refreshInterval: isPageVisible ? 30000 : 300000,
-    revalidateOnFocus: false,
-    dedupingInterval: 15000,
-    storageTtlMs: 10 * 60 * 1000,
-    persistIntervalMs: 60 * 1000,
-    }
-  );
+  const openInterestData: Record<string, unknown> | undefined = undefined;
 
   const { data: heavyMarketPayload } = usePersistentSWR<TimedPayload<TickerData[]>>(
     shouldRunLiveMarketRequests && shouldRunHeavyMarketRequests && enableHeavyMarket ? '/api/market' : null,
@@ -246,12 +239,13 @@ export default function Home() {
       return [];
     }
 
-    return selectStagedFuturesIndicatorSymbols(lightMarketData, {
+    return selectFullCoverageFuturesIndicatorSymbols(lightMarketData, {
       expanded: deferredIndicatorsExpanded,
+      fullCoverage: deferredIndicatorsFullCoverage,
       initialLimit: DEFERRED_INDICATOR_INITIAL_SYMBOL_LIMIT,
       expandedLimit: DEFERRED_INDICATOR_SYMBOL_LIMIT,
     });
-  }, [deferredIndicatorsExpanded, lightMarketData]);
+  }, [deferredIndicatorsExpanded, deferredIndicatorsFullCoverage, lightMarketData]);
 
   const multiframeSignature = useMemo(
     () => [...multiframeSymbols].sort().join(','),
@@ -307,6 +301,7 @@ export default function Home() {
     refreshIntervalMs: multiframeRefreshInterval,
     fetchBatch: fetchMultiframeBatch,
     buildError: buildMultiframeError,
+    maxBatchAttempts: 3,
   });
 
   const {
@@ -321,6 +316,7 @@ export default function Home() {
     refreshIntervalMs: oiMultiframeRefreshInterval,
     fetchBatch: fetchOiMultiframeBatch,
     buildError: buildOiMultiframeError,
+    maxBatchAttempts: 3,
   });
 
   const heavyMarketData = heavyMarketPayload?.data;
@@ -372,15 +368,23 @@ export default function Home() {
   useEffect(() => {
     if (!shouldRunLiveMarketRequests || !enableDeferredIndicators || liveMarketSymbolCount === 0) {
       setDeferredIndicatorsExpanded(false);
+      setDeferredIndicatorsFullCoverage(false);
       return;
     }
 
     setDeferredIndicatorsExpanded(false);
-    const timer = window.setTimeout(() => {
+    setDeferredIndicatorsFullCoverage(false);
+    const expandTimer = window.setTimeout(() => {
       setDeferredIndicatorsExpanded(true);
     }, DEFERRED_INDICATOR_EXPAND_DELAY_MS);
+    const fullCoverageTimer = window.setTimeout(() => {
+      setDeferredIndicatorsFullCoverage(true);
+    }, DEFERRED_INDICATOR_FULL_COVERAGE_DELAY_MS);
 
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(expandTimer);
+      window.clearTimeout(fullCoverageTimer);
+    };
   }, [enableDeferredIndicators, liveMarketSymbolCount, shouldRunLiveMarketRequests]);
 
   useEffect(() => {
@@ -391,6 +395,7 @@ export default function Home() {
     setEnableHeavyMarket(false);
     setEnableDeferredIndicators(false);
     setDeferredIndicatorsExpanded(false);
+    setDeferredIndicatorsFullCoverage(false);
     setFrameError(null);
     setOiFrameError(null);
   }, [setFrameError, setOiFrameError, shouldRunLiveMarketRequests]);
@@ -404,8 +409,11 @@ export default function Home() {
   }, [setOiFrameError, shouldRunLeaderboardRequests]);
 
   const baseMarketData = useMemo(
-    () => mergeLightMarketOpenInterest(lightMarketData, openInterestData),
-    [lightMarketData, openInterestData]
+    () => mergeOpenInterestFramesToTickers(
+      mergeLightMarketOpenInterest(lightMarketData, openInterestData),
+      oiFrameData
+    ),
+    [lightMarketData, oiFrameData, openInterestData]
   );
 
   const rawData = useMemo(
@@ -413,8 +421,8 @@ export default function Home() {
     [baseMarketData, heavyMarketData]
   );
   const openInterestQuality = useMemo(
-    () => summarizeTimedPayloadQuality({ body: openInterestData ?? null }),
-    [openInterestData]
+    () => summarizeTimedPayloadQuality({ body: openInterestData ?? oiFramePayload ?? null }),
+    [oiFramePayload, openInterestData]
   );
 
   // Process and merge all data
@@ -430,7 +438,7 @@ export default function Home() {
   });
   const showOpenInterestUnavailableAlert = shouldShowOpenInterestUnavailableAlert({
     shouldRunLiveMarketRequests,
-    hasOpenInterestPayload: Boolean(openInterestData),
+    hasOpenInterestPayload: Boolean(openInterestData) || Boolean(oiFrameData),
     isOpenInterestDegraded: openInterestQuality.isDegraded,
     processedData,
   });

@@ -13,7 +13,9 @@ let warmupFallbackData: Record<string, string> | null = null;
 let warmupFallbackAt = 0;
 const LIVE_CACHE_DURATION = 15000;
 const BUILD_TIMEOUT_MS = 12000;
-const OPEN_INTEREST_CHUNK_SIZE = process.env.NODE_ENV === 'development' ? 5 : 20;
+const OPEN_INTEREST_CHUNK_SIZE = 5;
+const OPEN_INTEREST_SYMBOL_LIMIT = process.env.NODE_ENV === 'production' ? 0 : Number.POSITIVE_INFINITY;
+const OPEN_INTEREST_ROUTE_DATA_QUALITY = Number.isFinite(OPEN_INTEREST_SYMBOL_LIMIT) ? 'partial' : 'enriched';
 const OPEN_INTEREST_FAILURE_BATCH_LIMIT = process.env.NODE_ENV === 'development' ? 1 : 3;
 
 interface BinanceTicker24h {
@@ -43,6 +45,10 @@ function isBinanceTicker24h(value: unknown): value is BinanceTicker24h {
 }
 
 async function buildOpenInterestMap(): Promise<Record<string, string>> {
+    if (OPEN_INTEREST_SYMBOL_LIMIT === 0) {
+        return {};
+    }
+
     // 1. Prefer exchangeInfo so we only query active perpetual contracts.
     let activeSymbols: string[] = [];
     const exchangeInfo = await fetchBinanceJson<BinanceExchangeInfoResponse>(
@@ -66,7 +72,9 @@ async function buildOpenInterestMap(): Promise<Record<string, string>> {
             .map((t) => t.symbol);
     }
 
-    // 2. Batch fetch OI with moderate concurrency to reduce rate limits.
+    activeSymbols = activeSymbols.slice(0, OPEN_INTEREST_SYMBOL_LIMIT);
+
+    // 2. Batch fetch OI with conservative concurrency to reduce rate limits and memory pressure.
     const chunkArray = (arr: string[], size: number) => {
         return Array.from({ length: Math.ceil(arr.length / size) }, (_, i) =>
             arr.slice(i * size, i * size + size)
@@ -126,7 +134,7 @@ export async function GET() {
     if (liveCache && (now - liveCache.time < LIVE_CACHE_DURATION)) {
         return NextResponse.json(buildOpenInterestAllPayload({
             data: liveCache.data,
-            dataQuality: 'enriched',
+            dataQuality: OPEN_INTEREST_ROUTE_DATA_QUALITY,
             buildState: 'ready',
             dataSource: 'memory-cache',
             updatedAt: liveCache.time,
@@ -134,7 +142,7 @@ export async function GET() {
             headers: {
                 'Cache-Control': 'public, s-maxage=15, stale-while-revalidate=30',
                 ...buildQualityHeaders({
-                    dataQuality: 'enriched',
+                    dataQuality: OPEN_INTEREST_ROUTE_DATA_QUALITY,
                     buildState: 'ready',
                     dataSource: 'memory-cache',
                     updatedAt: liveCache.time,
@@ -208,9 +216,10 @@ export async function GET() {
             BUILD_TIMEOUT_MS,
             'open interest build'
         );
+        const dataQuality = Object.keys(data).length > 0 ? OPEN_INTEREST_ROUTE_DATA_QUALITY : 'unavailable';
         return NextResponse.json(buildOpenInterestAllPayload({
             data,
-            dataQuality: Object.keys(data).length > 0 ? 'enriched' : 'unavailable',
+            dataQuality,
             buildState: Object.keys(data).length > 0 ? 'ready' : 'failed',
             dataSource: ownsInflight ? 'live' : 'live-coalesced',
             isFallback: Object.keys(data).length === 0,
@@ -220,7 +229,7 @@ export async function GET() {
             headers: {
                 'Cache-Control': 'public, s-maxage=15, stale-while-revalidate=30',
                 ...buildQualityHeaders({
-                    dataQuality: Object.keys(data).length > 0 ? 'enriched' : 'unavailable',
+                    dataQuality,
                     buildState: Object.keys(data).length > 0 ? 'ready' : 'failed',
                     dataSource: ownsInflight ? 'live' : 'live-coalesced',
                     isFallback: Object.keys(data).length === 0,

@@ -88,3 +88,44 @@ test('fetchRequestedMultiframeData falls back to local archive when upstream fai
 
     assert.deepEqual(data.BTCUSDT, { o15m: 27, o1h: 23, o4h: 11 });
 });
+
+test('fetchRequestedMultiframeData skips one timed out symbol without blocking the batch', async () => {
+    const data = await fetchRequestedMultiframeData(
+        ['BTCUSDT', 'SLOWUSDT', 'ETHUSDT'],
+        {
+            concurrency: 3,
+            perSymbolTimeoutMs: 10,
+            loadArchive: () => null,
+            fetchKlines: async (symbol) => {
+                if (symbol === 'SLOWUSDT') {
+                    await new Promise(() => {
+                        // Deliberately never resolves.
+                    });
+                }
+
+                return [
+                    [1, '100', '110', '90', '105'],
+                    [2, '101', '110', '90', '105'],
+                    [3, '102', '110', '90', '105'],
+                    [4, '103', '110', '90', '105'],
+                    [5, '104', '110', '90', '105'],
+                    [6, '105', '110', '90', '105'],
+                    [7, '106', '110', '90', '105'],
+                    [8, '107', '110', '90', '105'],
+                    [9, '108', '110', '90', '105'],
+                    [10, '109', '110', '90', '105'],
+                    [11, '110', '110', '90', '105'],
+                    [12, '111', '110', '90', '105'],
+                    [13, '112', '110', '90', '105'],
+                    [14, '113', '110', '90', '105'],
+                    [15, '114', '110', '90', '105'],
+                    [16, '115', '110', '90', '105'],
+                    [17, '116', '110', '90', '105'],
+                    [18, '117', '110', '90', '105'],
+                ];
+            },
+        }
+    );
+
+    assert.deepEqual(Object.keys(data).sort(), ['BTCUSDT', 'ETHUSDT']);
+});

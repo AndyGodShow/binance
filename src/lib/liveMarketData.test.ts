@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
     isStrategyScanCandidate,
+    selectFullCoverageFuturesIndicatorSymbols,
     selectOpenInterestCoverageSymbols,
     selectStagedFuturesIndicatorSymbols,
     selectValidFuturesIndicatorSymbols,
@@ -69,6 +70,45 @@ test('selectOpenInterestCoverageSymbols keeps every valid futures symbol for ful
 
     assert.deepEqual(
         selectOpenInterestCoverageSymbols(tickers),
+        ['BUSDT', 'ETHUSDT', 'SOLUSDT', 'DOGEUSDT', 'BTCUSDT']
+    );
+});
+
+test('selectFullCoverageFuturesIndicatorSymbols starts staged and later includes every valid futures symbol', () => {
+    const tickers = [
+        { symbol: 'BUSDT', quoteVolume: '5000' },
+        { symbol: 'BTCUSDT', quoteVolume: '1000' },
+        { symbol: '币安人生USDT', quoteVolume: '9999' },
+        { symbol: 'ETHUSDT', quoteVolume: '4000' },
+        { symbol: 'SOLUSDT', quoteVolume: '3000' },
+        { symbol: 'DOGEUSDT', quoteVolume: '2000' },
+    ];
+
+    assert.deepEqual(
+        selectFullCoverageFuturesIndicatorSymbols(tickers, {
+            expanded: false,
+            fullCoverage: false,
+            initialLimit: 2,
+            expandedLimit: 4,
+        }),
+        ['BUSDT', 'ETHUSDT']
+    );
+    assert.deepEqual(
+        selectFullCoverageFuturesIndicatorSymbols(tickers, {
+            expanded: true,
+            fullCoverage: false,
+            initialLimit: 2,
+            expandedLimit: 4,
+        }),
+        ['BUSDT', 'ETHUSDT', 'SOLUSDT', 'DOGEUSDT']
+    );
+    assert.deepEqual(
+        selectFullCoverageFuturesIndicatorSymbols(tickers, {
+            expanded: true,
+            fullCoverage: true,
+            initialLimit: 2,
+            expandedLimit: 4,
+        }),
         ['BUSDT', 'ETHUSDT', 'SOLUSDT', 'DOGEUSDT', 'BTCUSDT']
     );
 });

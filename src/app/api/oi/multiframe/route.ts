@@ -9,11 +9,11 @@ import { buildQualityHeaders } from '@/lib/dataQualityStatus';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-const REQUEST_TIMEOUT_MS = 20000;
-const REQUEST_BATCH_SIZE = process.env.NODE_ENV === 'development' ? 5 : 20;
+const REQUEST_TIMEOUT_MS = 35000;
+const REQUEST_BATCH_SIZE = 10;
 
 export async function GET(request: Request) {
-    const validatedSymbols = validateSymbolsParam(new URL(request.url).searchParams, { maxSymbols: 20 });
+    const validatedSymbols = validateSymbolsParam(new URL(request.url).searchParams, { maxSymbols: 50 });
     if (!validatedSymbols.ok) {
         return NextResponse.json(invalidRequestBody(validatedSymbols.details), { status: 400 });
     }

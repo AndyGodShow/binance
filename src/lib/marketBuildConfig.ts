@@ -9,6 +9,27 @@ export function resolveMarketKlineBatchSize(
     return configuredBatchSize;
 }
 
+export interface MarketEnrichmentLimits {
+    oiSnapshotSymbolLimit: number;
+    klineEnhancementSymbolLimit: number;
+}
+
+export function resolveMarketEnrichmentLimits(
+    env: Pick<NodeJS.ProcessEnv, 'NODE_ENV'> = process.env,
+): MarketEnrichmentLimits {
+    if (env.NODE_ENV === 'development') {
+        return {
+            oiSnapshotSymbolLimit: 80,
+            klineEnhancementSymbolLimit: 40,
+        };
+    }
+
+    return {
+        oiSnapshotSymbolLimit: 80,
+        klineEnhancementSymbolLimit: 40,
+    };
+}
+
 export interface MarketKlineEnhancementRequest {
     label: string;
     symbols: string[];

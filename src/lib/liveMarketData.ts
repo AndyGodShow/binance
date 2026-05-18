@@ -112,6 +112,22 @@ export function selectStagedFuturesIndicatorSymbols(
     );
 }
 
+export function selectFullCoverageFuturesIndicatorSymbols(
+    tickers: Array<Pick<TickerData, 'symbol' | 'quoteVolume'>>,
+    options: {
+        expanded: boolean;
+        fullCoverage: boolean;
+        initialLimit: number;
+        expandedLimit: number;
+    }
+): string[] {
+    if (options.fullCoverage) {
+        return selectValidFuturesIndicatorSymbols(tickers);
+    }
+
+    return selectStagedFuturesIndicatorSymbols(tickers, options);
+}
+
 export function selectOpenInterestCoverageSymbols(
     tickers: Array<Pick<TickerData, 'symbol' | 'quoteVolume'>>
 ): string[] {
@@ -271,6 +287,28 @@ export function mergeLightMarketOpenInterest(
             ...ticker,
             openInterest,
             openInterestValue,
+        };
+    });
+}
+
+export function mergeOpenInterestFramesToTickers(
+    tickers: TickerData[] | undefined,
+    openInterestFrames: OpenInterestFrameDataMap | undefined
+): TickerData[] | undefined {
+    if (!tickers || !openInterestFrames) {
+        return tickers;
+    }
+
+    return tickers.map((ticker) => {
+        const frame = openInterestFrames[ticker.symbol];
+        if (!frame || !Number.isFinite(frame.currentValue)) {
+            return ticker;
+        }
+
+        return {
+            ...ticker,
+            openInterestValue: String(frame.currentValue),
+            oiChangePercent: frame.change4h?.percent ?? ticker.oiChangePercent,
         };
     });
 }

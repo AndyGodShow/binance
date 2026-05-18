@@ -4,9 +4,21 @@ import test from 'node:test';
 import {
     buildMarketKlineEnhancementStagePlan,
     fetchMarketKlineEnhancementGroup,
+    resolveMarketEnrichmentLimits,
     resolveMarketKlineBatchSize,
     selectMarketKlineEligibleSymbols,
 } from './marketBuildConfig.ts';
+
+test('resolveMarketEnrichmentLimits keeps production cold-start enrichment bounded', () => {
+    assert.deepEqual(resolveMarketEnrichmentLimits({ NODE_ENV: 'development' }), {
+        oiSnapshotSymbolLimit: 80,
+        klineEnhancementSymbolLimit: 40,
+    });
+    assert.deepEqual(resolveMarketEnrichmentLimits({ NODE_ENV: 'production' }), {
+        oiSnapshotSymbolLimit: 80,
+        klineEnhancementSymbolLimit: 40,
+    });
+});
 
 test('resolveMarketKlineBatchSize lowers Binance kline concurrency in development', () => {
     assert.equal(resolveMarketKlineBatchSize(5, { NODE_ENV: 'development' }), 2);

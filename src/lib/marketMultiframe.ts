@@ -10,6 +10,7 @@ export type MultiframeData = Record<string, { o15m: number; o1h: number; o4h: nu
 
 interface FetchRequestedMultiframeDataOptions {
     concurrency: number;
+    perSymbolTimeoutMs?: number;
     loadArchive: (symbol: string) => MultiframeKlineArchive | null | undefined;
     fetchKlines: (symbol: string) => Promise<unknown>;
 }
@@ -68,7 +69,10 @@ async function fetchOneSymbol(
     }
 
     try {
-        const klines = await options.fetchKlines(symbol);
+        const klines = await withOptionalTimeout(
+            options.fetchKlines(symbol),
+            options.perSymbolTimeoutMs,
+        );
         const klineResult = buildFromKlines(symbol, klines);
         if (klineResult && isUsableResult(klineResult)) {
             return klineResult;
@@ -78,6 +82,31 @@ async function fetchOneSymbol(
     }
 
     return archiveResult && isUsableResult(archiveResult) ? archiveResult : null;
+}
+
+async function withOptionalTimeout<T>(
+    promise: Promise<T>,
+    timeoutMs: number | undefined,
+): Promise<T> {
+    if (!timeoutMs || timeoutMs <= 0) {
+        return promise;
+    }
+
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    try {
+        return await Promise.race([
+            promise,
+            new Promise<T>((_, reject) => {
+                timeoutId = setTimeout(() => {
+                    reject(new Error('multiframe symbol timeout'));
+                }, timeoutMs);
+            }),
+        ]);
+    } finally {
+        if (timeoutId) {
+            clearTimeout(timeoutId);
+        }
+    }
 }
 
 export async function fetchRequestedMultiframeData(

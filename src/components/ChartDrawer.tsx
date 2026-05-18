@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import { X } from 'lucide-react';
+import { mountTradingViewAdvancedChart, resetTradingViewWidgetContainer } from '@/lib/tradingViewWidget';
 import styles from './ChartDrawer.module.css';
 
 interface ChartDrawerProps {
@@ -33,58 +34,15 @@ export default function ChartDrawer({ symbol, onClose }: ChartDrawerProps) {
         };
     }, [symbol]);
 
-    // Load TradingView widget using official script API
+    // Load TradingView widget
     useEffect(() => {
         if (!symbol || !containerRef.current) return;
 
-        // Clear previous widget
         const container = containerRef.current;
-        container.innerHTML = '';
-
-        // TradingView symbol format for Binance USDT perpetual futures
-        // Use BINANCE:BTCUSDT.P format (the .P suffix indicates perpetual)
-        const tvSymbol = `BINANCE:${symbol}.P`;
-
-        // Create the TradingView widget container
-        const widgetContainer = document.createElement('div');
-        widgetContainer.className = 'tradingview-widget-container';
-        widgetContainer.style.height = '100%';
-        widgetContainer.style.width = '100%';
-
-        const widgetInner = document.createElement('div');
-        widgetInner.className = 'tradingview-widget-container__widget';
-        widgetInner.style.height = 'calc(100% - 32px)';
-        widgetInner.style.width = '100%';
-        widgetContainer.appendChild(widgetInner);
-
-        container.appendChild(widgetContainer);
-
-        // Create and load the TradingView Advanced Chart Widget script
-        const script = document.createElement('script');
-        script.type = 'text/javascript';
-        script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
-        script.async = true;
-        script.innerHTML = JSON.stringify({
-            autosize: true,
-            symbol: tvSymbol,
-            interval: "15",
-            timezone: "Asia/Shanghai",
-            theme: "dark",
-            style: "1",
-            locale: "zh_CN",
-            allow_symbol_change: false,
-            save_image: false,
-            hide_side_toolbar: false,
-            calendar: false,
-            hide_volume: false,
-            support_host: "https://www.tradingview.com",
-        });
-
-        widgetContainer.appendChild(script);
+        mountTradingViewAdvancedChart(container, symbol);
 
         return () => {
-            // Cleanup
-            container.innerHTML = '';
+            resetTradingViewWidgetContainer(container);
         };
     }, [symbol]);
 
@@ -92,15 +50,9 @@ export default function ChartDrawer({ symbol, onClose }: ChartDrawerProps) {
 
     return (
         <>
-            {/* Overlay */}
-            <div
-                className={styles.overlay}
-                onClick={onClose}
-            />
+            <div className={styles.overlay} onClick={onClose} />
 
-            {/* Drawer */}
             <div className={styles.drawer}>
-                {/* Header */}
                 <div className={styles.header}>
                     <div className={styles.title}>
                         <span className="text-yellow">{symbol.replace('USDT', '')}</span>
@@ -115,7 +67,6 @@ export default function ChartDrawer({ symbol, onClose }: ChartDrawerProps) {
                     </button>
                 </div>
 
-                {/* TradingView Chart */}
                 <div className={styles.chartContainer} ref={containerRef} />
             </div>
         </>

@@ -19,13 +19,14 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // Max duration for Vercel
 
 const BUILD_TIMEOUT_MS = 25000;
-const CUSTOM_SYMBOL_TIMEOUT_MS = 15000;
-const CUSTOM_SYMBOL_CONCURRENCY = process.env.NODE_ENV === 'development' ? 4 : 10;
+const CUSTOM_SYMBOL_TIMEOUT_MS = 35000;
+const CUSTOM_SYMBOL_CONCURRENCY = 15;
 
 async function buildMultiframeData(requestedSymbols?: string[]): Promise<MultiframeData> {
     if (requestedSymbols && requestedSymbols.length > 0) {
         return fetchRequestedMultiframeData(requestedSymbols, {
             concurrency: CUSTOM_SYMBOL_CONCURRENCY,
+            perSymbolTimeoutMs: 3_000,
             loadArchive: (symbol) => loadLocalKlineArchive(symbol, '15m'),
             fetchKlines: (symbol) => fetchBinanceJson<unknown>(
                 `/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=18`,
@@ -168,7 +169,7 @@ const getCachedMultiframeData = unstable_cache(
 );
 
 export async function GET(request: Request) {
-    const validatedSymbols = validateSymbolsParam(new URL(request.url).searchParams, { maxSymbols: 20 });
+    const validatedSymbols = validateSymbolsParam(new URL(request.url).searchParams, { maxSymbols: 50 });
     if (!validatedSymbols.ok) {
         return NextResponse.json(invalidRequestBody(validatedSymbols.details), { status: 400 });
     }

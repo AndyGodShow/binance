@@ -1,3 +1,5 @@
+import { request as httpsRequest } from 'node:https';
+
 import { logger } from './logger.ts';
 
 const DEFAULT_BINANCE_FAPI_BASES = [
@@ -49,6 +51,7 @@ export type BinanceFailureKind =
 const BINANCE_RETRY_ROUNDS = 2;
 const BINANCE_RETRY_BACKOFF_MS = 500;
 const BINANCE_FAILOVER_DELAY_MS = 150;
+const MAX_BINANCE_JSON_RESPONSE_BYTES = 10 * 1024 * 1024;
 const RETRYABLE_HTTP_STATUSES = new Set([408, 409, 418, 425, 429, 500, 502, 503, 504]);
 
 interface BinanceRequestContext {
@@ -332,8 +335,15 @@ async function runMirroredRequest<T>(
 
 function buildAttemptInit(options: BinanceFetchOptions, signal?: AbortSignal): NextFetchInit {
     const { revalidate, timeoutMs = 8000, init } = options;
+    const headers = new Headers(init?.headers);
+    if (!headers.has('Accept-Encoding')) {
+        headers.set('Accept-Encoding', 'identity');
+    }
+
     const merged: NextFetchInit = {
         ...(init || {}),
+        cache: init?.cache ?? 'no-store',
+        headers,
         redirect: 'follow',
     };
 
@@ -346,11 +356,79 @@ function buildAttemptInit(options: BinanceFetchOptions, signal?: AbortSignal): N
     // Create a fresh timeout signal for every attempt.
     merged.signal = signals.length === 1 ? signals[0] : AbortSignal.any(signals);
 
-    if (typeof revalidate === 'number') {
+    if (typeof revalidate === 'number' && merged.cache !== 'no-store') {
         merged.next = { ...(init?.next || {}), revalidate };
     }
 
     return merged;
+}
+
+function headersToRecord(headers: HeadersInit | undefined): Record<string, string> {
+    if (!headers) {
+        return {};
+    }
+
+    return Object.fromEntries(new Headers(headers).entries());
+}
+
+function fetchJsonWithHttps<T>(url: string, init: NextFetchInit, timeoutMs: number): Promise<T> {
+    return new Promise((resolve, reject) => {
+        const parsedUrl = new URL(url);
+        const request = httpsRequest({
+            protocol: parsedUrl.protocol,
+            hostname: parsedUrl.hostname,
+            port: parsedUrl.port || undefined,
+            path: `${parsedUrl.pathname}${parsedUrl.search}`,
+            method: 'GET',
+            headers: headersToRecord(init.headers),
+            timeout: timeoutMs,
+        }, (response) => {
+            const statusCode = response.statusCode || 0;
+            const chunks: Buffer[] = [];
+            let receivedBytes = 0;
+
+            response.on('data', (chunk: Buffer) => {
+                receivedBytes += chunk.length;
+                if (receivedBytes > MAX_BINANCE_JSON_RESPONSE_BYTES) {
+                    request.destroy(new Error(`Binance response exceeded ${MAX_BINANCE_JSON_RESPONSE_BYTES} bytes`));
+                    return;
+                }
+                chunks.push(chunk);
+            });
+
+            response.on('end', () => {
+                const body = Buffer.concat(chunks).toString('utf8');
+                if (statusCode < 200 || statusCode >= 300) {
+                    reject(new Error(`${url} -> HTTP ${statusCode}`));
+                    return;
+                }
+
+                try {
+                    resolve(JSON.parse(body) as T);
+                } catch (parseError) {
+                    const message = parseError instanceof Error ? parseError.message : String(parseError);
+                    reject(new Error(`${url} -> invalid JSON (${message})`));
+                }
+            });
+        });
+
+        request.on('timeout', () => {
+            request.destroy(new Error(`Request timed out after ${timeoutMs}ms`));
+        });
+        request.on('error', reject);
+
+        if (init.signal) {
+            if (init.signal.aborted) {
+                request.destroy(new Error('Request aborted'));
+                return;
+            }
+            init.signal.addEventListener('abort', () => {
+                request.destroy(new Error('Request aborted'));
+            }, { once: true });
+        }
+
+        request.end();
+    });
 }
 
 function getCandidateBases(path: string): string[] {
@@ -376,16 +454,6 @@ export async function fetchBinance(path: string, options: BinanceFetchOptions = 
 
 export async function fetchBinanceJson<T>(path: string, options: BinanceFetchOptions = {}): Promise<T> {
     return runMirroredRequest(path, options, 'json', async (url, init) => {
-        const response = await fetch(url, init);
-        if (!response.ok) {
-            throw new Error(`${url} -> HTTP ${response.status}`);
-        }
-
-        try {
-            return await response.json() as T;
-        } catch (parseError) {
-            const message = parseError instanceof Error ? parseError.message : String(parseError);
-            throw new Error(`${url} -> invalid JSON (${message})`);
-        }
+        return fetchJsonWithHttps<T>(url, init, options.timeoutMs ?? 8000);
     });
 }

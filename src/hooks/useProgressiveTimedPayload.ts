@@ -15,6 +15,7 @@ interface ProgressiveTimedPayloadOptions<T> {
     refreshIntervalMs: number;
     fetchBatch: (symbols: string[]) => Promise<TimedPayload<Record<string, T>>>;
     buildError: (error: unknown) => Error;
+    maxBatchAttempts?: number;
 }
 
 export function useProgressiveTimedPayload<T>(
@@ -33,6 +34,7 @@ export function useProgressiveTimedPayload<T>(
         refreshIntervalMs,
         fetchBatch,
         buildError,
+        maxBatchAttempts = 2,
     } = options;
     const [payload, setPayload] = useState<TimedPayload<Record<string, T>>>();
     const [error, setError] = useState<Error | null>(null);
@@ -75,17 +77,28 @@ export function useProgressiveTimedPayload<T>(
 
                 const batch = symbols.slice(index, index + batchSize);
 
-                try {
-                    const nextPayload = await fetchBatchRef.current(batch);
-                    if (cancelled) {
-                        return;
-                    }
+                let batchFetched = false;
+                let lastError: unknown;
+                for (let attempt = 1; attempt <= maxBatchAttempts; attempt += 1) {
+                    try {
+                        const nextPayload = await fetchBatchRef.current(batch);
+                        if (cancelled) {
+                            return;
+                        }
 
-                    setPayload((prev) => mergeTimedPayloadData(prev, nextPayload));
-                } catch (nextError) {
-                    if (!cancelled) {
-                        setError(buildErrorRef.current(nextError));
+                        setPayload((prev) => mergeTimedPayloadData(prev, nextPayload));
+                        batchFetched = true;
+                        break;
+                    } catch (nextError) {
+                        lastError = nextError;
+                        if (attempt < maxBatchAttempts) {
+                            await new Promise((resolve) => window.setTimeout(resolve, batchDelayMs * attempt));
+                        }
                     }
+                }
+
+                if (!batchFetched && !cancelled) {
+                    setError(buildErrorRef.current(lastError));
                 }
 
                 if (index + batchSize < symbols.length) {
@@ -110,6 +123,7 @@ export function useProgressiveTimedPayload<T>(
         batchDelayMs,
         batchSize,
         enabled,
+        maxBatchAttempts,
         refreshIntervalMs,
         signature,
     ]);
