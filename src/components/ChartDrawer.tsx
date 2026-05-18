@@ -1,8 +1,12 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { ExternalLink, X } from 'lucide-react';
-import { buildTradingViewWidgetEmbedUrl, buildTradingViewPerpetualSymbol } from '@/lib/tradingViewWidget';
+import {
+    buildTradingViewPerpetualSymbol,
+    mountTradingViewAdvancedChart,
+    resetTradingViewWidgetContainer,
+} from '@/lib/tradingViewWidget';
 import styles from './ChartDrawer.module.css';
 
 interface ChartDrawerProps {
@@ -11,6 +15,8 @@ interface ChartDrawerProps {
 }
 
 export default function ChartDrawer({ symbol, onClose }: ChartDrawerProps) {
+    const chartContainerRef = useRef<HTMLDivElement | null>(null);
+
     // Close on ESC key
     useEffect(() => {
         const handleEsc = (e: KeyboardEvent) => {
@@ -32,11 +38,21 @@ export default function ChartDrawer({ symbol, onClose }: ChartDrawerProps) {
         };
     }, [symbol]);
 
+    useEffect(() => {
+        const container = chartContainerRef.current;
+        if (!symbol || !container) return;
+
+        mountTradingViewAdvancedChart(container, symbol);
+
+        return () => {
+            resetTradingViewWidgetContainer(container);
+        };
+    }, [symbol]);
+
     if (!symbol) return null;
 
     const tradingViewSymbol = buildTradingViewPerpetualSymbol(symbol);
     const tradingViewUrl = `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(tradingViewSymbol)}`;
-    const embedUrl = buildTradingViewWidgetEmbedUrl(symbol).toString();
 
     return (
         <>
@@ -71,12 +87,11 @@ export default function ChartDrawer({ symbol, onClose }: ChartDrawerProps) {
                 </div>
 
                 <div className={styles.chartContainer}>
-                    <iframe
+                    <div
                         key={tradingViewSymbol}
-                        className={styles.iframe}
-                        title={`${tradingViewSymbol} TradingView chart`}
-                        src={embedUrl}
-                        allowFullScreen
+                        ref={chartContainerRef}
+                        className={styles.widget}
+                        aria-label={`${tradingViewSymbol} TradingView chart`}
                     />
                 </div>
             </div>

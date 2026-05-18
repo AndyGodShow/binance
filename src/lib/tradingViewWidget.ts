@@ -6,13 +6,15 @@ export interface TradingViewAdvancedChartConfig {
     interval: string;
     timezone: string;
     theme: 'dark' | 'light';
+    backgroundColor: string;
+    gridColor: string;
     style: string;
     locale: string;
-    allow_symbol_change: boolean;
-    save_image: boolean;
     hide_side_toolbar: boolean;
+    allow_symbol_change: boolean;
+    withdateranges: boolean;
+    save_image: boolean;
     calendar: boolean;
-    hide_volume: boolean;
     support_host: string;
 }
 
@@ -27,37 +29,24 @@ export function buildTradingViewAdvancedChartConfig(symbol: string): TradingView
         interval: '15',
         timezone: 'Asia/Shanghai',
         theme: 'dark',
+        backgroundColor: 'rgba(22, 26, 30, 1)',
+        gridColor: 'rgba(55, 65, 81, 0.35)',
         style: '1',
         locale: 'zh_CN',
-        allow_symbol_change: false,
-        save_image: false,
         hide_side_toolbar: false,
+        allow_symbol_change: false,
+        withdateranges: true,
+        save_image: false,
         calendar: false,
-        hide_volume: false,
         support_host: 'https://www.tradingview.com',
     };
-}
-
-export function buildTradingViewWidgetEmbedUrl(symbol: string): URL {
-    const url = new URL('https://s.tradingview.com/widgetembed/');
-    url.searchParams.set('symbol', buildTradingViewPerpetualSymbol(symbol));
-    url.searchParams.set('interval', '15');
-    url.searchParams.set('theme', 'dark');
-    url.searchParams.set('style', '1');
-    url.searchParams.set('timezone', 'Asia/Shanghai');
-    url.searchParams.set('locale', 'zh_CN');
-    url.searchParams.set('withdateranges', '1');
-    url.searchParams.set('hide_side_toolbar', '0');
-    url.searchParams.set('allow_symbol_change', '0');
-    url.searchParams.set('save_image', '0');
-    return url;
 }
 
 export function resetTradingViewWidgetContainer(container: HTMLElement): void {
     container.replaceChildren();
 }
 
-export function mountTradingViewAdvancedChart(container: HTMLElement, symbol: string): void {
+export function mountTradingViewAdvancedChart(container: HTMLElement, symbol: string): HTMLScriptElement {
     resetTradingViewWidgetContainer(container);
 
     const widgetContainer = document.createElement('div');
@@ -67,7 +56,7 @@ export function mountTradingViewAdvancedChart(container: HTMLElement, symbol: st
 
     const widget = document.createElement('div');
     widget.className = 'tradingview-widget-container__widget';
-    widget.style.height = 'calc(100% - 32px)';
+    widget.style.height = '100%';
     widget.style.width = '100%';
 
     const script = document.createElement('script');
@@ -78,4 +67,6 @@ export function mountTradingViewAdvancedChart(container: HTMLElement, symbol: st
 
     widgetContainer.append(widget, script);
     container.appendChild(widgetContainer);
+
+    return script;
 }
