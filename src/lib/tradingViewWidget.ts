@@ -38,6 +38,21 @@ export function buildTradingViewAdvancedChartConfig(symbol: string): TradingView
     };
 }
 
+export function buildTradingViewWidgetEmbedUrl(symbol: string): URL {
+    const url = new URL('https://s.tradingview.com/widgetembed/');
+    url.searchParams.set('symbol', buildTradingViewPerpetualSymbol(symbol));
+    url.searchParams.set('interval', '15');
+    url.searchParams.set('theme', 'dark');
+    url.searchParams.set('style', '1');
+    url.searchParams.set('timezone', 'Asia/Shanghai');
+    url.searchParams.set('locale', 'zh_CN');
+    url.searchParams.set('withdateranges', '1');
+    url.searchParams.set('hide_side_toolbar', '0');
+    url.searchParams.set('allow_symbol_change', '0');
+    url.searchParams.set('save_image', '0');
+    return url;
+}
+
 export function resetTradingViewWidgetContainer(container: HTMLElement): void {
     container.replaceChildren();
 }

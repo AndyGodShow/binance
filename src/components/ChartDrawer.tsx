@@ -1,8 +1,8 @@
-"use client";
+'use client';
 
-import { useEffect, useRef } from 'react';
-import { X } from 'lucide-react';
-import { mountTradingViewAdvancedChart, resetTradingViewWidgetContainer } from '@/lib/tradingViewWidget';
+import { useEffect } from 'react';
+import { ExternalLink, X } from 'lucide-react';
+import { buildTradingViewWidgetEmbedUrl, buildTradingViewPerpetualSymbol } from '@/lib/tradingViewWidget';
 import styles from './ChartDrawer.module.css';
 
 interface ChartDrawerProps {
@@ -11,8 +11,6 @@ interface ChartDrawerProps {
 }
 
 export default function ChartDrawer({ symbol, onClose }: ChartDrawerProps) {
-    const containerRef = useRef<HTMLDivElement>(null);
-
     // Close on ESC key
     useEffect(() => {
         const handleEsc = (e: KeyboardEvent) => {
@@ -34,19 +32,11 @@ export default function ChartDrawer({ symbol, onClose }: ChartDrawerProps) {
         };
     }, [symbol]);
 
-    // Load TradingView widget
-    useEffect(() => {
-        if (!symbol || !containerRef.current) return;
-
-        const container = containerRef.current;
-        mountTradingViewAdvancedChart(container, symbol);
-
-        return () => {
-            resetTradingViewWidgetContainer(container);
-        };
-    }, [symbol]);
-
     if (!symbol) return null;
+
+    const tradingViewSymbol = buildTradingViewPerpetualSymbol(symbol);
+    const tradingViewUrl = `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(tradingViewSymbol)}`;
+    const embedUrl = buildTradingViewWidgetEmbedUrl(symbol).toString();
 
     return (
         <>
@@ -58,16 +48,37 @@ export default function ChartDrawer({ symbol, onClose }: ChartDrawerProps) {
                         <span className="text-yellow">{symbol.replace('USDT', '')}</span>
                         <span className={styles.perpBadge}>PERP</span>
                     </div>
-                    <button
-                        className={styles.closeBtn}
-                        onClick={onClose}
-                        aria-label="Close chart"
-                    >
-                        <X size={20} />
-                    </button>
+                    <div className={styles.actions}>
+                        <a
+                            className={styles.iconBtn}
+                            href={tradingViewUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            aria-label="Open chart in TradingView"
+                            title="Open chart in TradingView"
+                        >
+                            <ExternalLink size={18} />
+                        </a>
+                        <button
+                            className={styles.iconBtn}
+                            onClick={onClose}
+                            aria-label="Close chart"
+                            title="Close chart"
+                        >
+                            <X size={20} />
+                        </button>
+                    </div>
                 </div>
 
-                <div className={styles.chartContainer} ref={containerRef} />
+                <div className={styles.chartContainer}>
+                    <iframe
+                        key={tradingViewSymbol}
+                        className={styles.iframe}
+                        title={`${tradingViewSymbol} TradingView chart`}
+                        src={embedUrl}
+                        allowFullScreen
+                    />
+                </div>
             </div>
         </>
     );
