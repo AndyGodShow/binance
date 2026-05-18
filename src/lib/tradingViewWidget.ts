@@ -1,4 +1,4 @@
-export const TRADINGVIEW_ADVANCED_CHART_SCRIPT_URL = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
+export const TRADINGVIEW_ADVANCED_CHART_EMBED_URL = 'https://www.tradingview.com/embed-widget/advanced-chart/';
 
 export interface TradingViewAdvancedChartConfig {
     autosize: boolean;
@@ -16,6 +16,12 @@ export interface TradingViewAdvancedChartConfig {
     save_image: boolean;
     calendar: boolean;
     support_host: string;
+    width?: string;
+    height?: string;
+    utm_source?: string;
+    utm_medium?: string;
+    utm_campaign?: string;
+    'page-uri'?: string;
 }
 
 export function buildTradingViewPerpetualSymbol(symbol: string): string {
@@ -46,27 +52,19 @@ export function resetTradingViewWidgetContainer(container: HTMLElement): void {
     container.replaceChildren();
 }
 
-export function mountTradingViewAdvancedChart(container: HTMLElement, symbol: string): HTMLScriptElement {
-    resetTradingViewWidgetContainer(container);
+export function buildTradingViewAdvancedChartEmbedUrl(symbol: string, pageUri = ''): string {
+    const url = new URL(TRADINGVIEW_ADVANCED_CHART_EMBED_URL);
+    url.searchParams.set('locale', 'zh_CN');
+    const config = {
+        ...buildTradingViewAdvancedChartConfig(symbol),
+        width: '100%',
+        height: '100%',
+        utm_source: pageUri.split('/')[0] || 'binance-psi-eosin.vercel.app',
+        utm_medium: 'widget',
+        utm_campaign: 'advanced-chart',
+        'page-uri': pageUri,
+    } satisfies TradingViewAdvancedChartConfig;
 
-    const widgetContainer = document.createElement('div');
-    widgetContainer.className = 'tradingview-widget-container';
-    widgetContainer.style.height = '100%';
-    widgetContainer.style.width = '100%';
-
-    const widget = document.createElement('div');
-    widget.className = 'tradingview-widget-container__widget';
-    widget.style.height = '100%';
-    widget.style.width = '100%';
-
-    const script = document.createElement('script');
-    script.type = 'text/javascript';
-    script.src = TRADINGVIEW_ADVANCED_CHART_SCRIPT_URL;
-    script.async = true;
-    script.textContent = JSON.stringify(buildTradingViewAdvancedChartConfig(symbol));
-
-    widgetContainer.append(widget, script);
-    container.appendChild(widgetContainer);
-
-    return script;
+    url.hash = encodeURIComponent(JSON.stringify(config));
+    return url.toString();
 }

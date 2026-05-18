@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+    buildTradingViewAdvancedChartEmbedUrl,
     buildTradingViewAdvancedChartConfig,
     resetTradingViewWidgetContainer,
 } from './tradingViewWidget.ts';
@@ -16,6 +17,19 @@ test('builds Binance USDT perpetual chart config for the official TradingView ad
     assert.equal(config.allow_symbol_change, false);
     assert.equal(config.withdateranges, true);
     assert.equal(config.support_host, 'https://www.tradingview.com');
+});
+
+test('builds TradingView advanced chart embed url on the main TradingView host', () => {
+    const url = new URL(buildTradingViewAdvancedChartEmbedUrl('blurusdt', 'binance-psi-eosin.vercel.app/'));
+    const config = JSON.parse(decodeURIComponent(url.hash.slice(1)));
+
+    assert.equal(url.origin, 'https://www.tradingview.com');
+    assert.equal(url.pathname, '/embed-widget/advanced-chart/');
+    assert.equal(url.searchParams.get('locale'), 'zh_CN');
+    assert.equal(config.symbol, 'BINANCE:BLURUSDT.P');
+    assert.equal(config.width, '100%');
+    assert.equal(config.height, '100%');
+    assert.equal(config['page-uri'], 'binance-psi-eosin.vercel.app/');
 });
 
 test('resets TradingView widget container before remounting a symbol', () => {
