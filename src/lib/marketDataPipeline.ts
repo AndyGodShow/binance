@@ -1,10 +1,10 @@
-import { TickerData, PremiumIndex } from '@/lib/types';
+import { TickerData, PremiumIndex, OHLC } from '@/lib/types';
 import { historicalTracker } from '@/lib/historicalTracker';
 import { fetchKlinesBatch, enhanceTickerData, getBTCReturns } from '@/lib/indicatorEnhancer';
 import { APP_CONFIG } from '@/lib/config';
 import { logger } from '@/lib/logger';
 import { fetchBinanceJson } from '@/lib/binanceApi';
-import { fetchOpenInterestMarketSnapshotsBatch } from '@/lib/openInterest';
+import { fetchCurrentOpenInterestMarketSnapshotsBatch } from '@/lib/openInterest';
 import { fetchSentimentHotspotContextMap } from '@/lib/sentimentHotspot';
 import { WEI_SHEN_UNIVERSE } from '@/lib/weiShenUniverse';
 import { buildWeiShenContext, getWeiShenTimeframes } from '@/lib/weiShenStrategy';
@@ -33,10 +33,11 @@ interface MarketTickerInput {
 }
 
 const MARKET_ENRICHMENT_LIMITS = resolveMarketEnrichmentLimits();
+const MARKET_ENHANCEMENT_CHUNK_SIZE = 40;
 
 interface MarketEnhancementResources {
     btcReturns: number[];
-    oiSnapshotMap: Awaited<ReturnType<typeof fetchOpenInterestMarketSnapshotsBatch>>;
+    oiSnapshotMap: Awaited<ReturnType<typeof fetchCurrentOpenInterestMarketSnapshotsBatch>>;
     klinesMap: Awaited<ReturnType<typeof fetchKlinesBatch>>;
     trend5mKlinesMap: Awaited<ReturnType<typeof fetchKlinesBatch>>;
     daily1dKlinesMap: Awaited<ReturnType<typeof fetchKlinesBatch>>;
@@ -44,6 +45,23 @@ interface MarketEnhancementResources {
     wei4hKlinesMap: Awaited<ReturnType<typeof fetchKlinesBatch>>;
     wei1dKlinesMap: Awaited<ReturnType<typeof fetchKlinesBatch>>;
     sentimentHotspotMap: Awaited<ReturnType<typeof fetchSentimentHotspotContextMap>>;
+}
+
+function chunkArray<T>(items: T[], size: number): T[][] {
+    const chunks: T[][] = [];
+    for (let index = 0; index < items.length; index += size) {
+        chunks.push(items.slice(index, index + size));
+    }
+    return chunks;
+}
+
+function fetchUncachedKlinesBatch(
+    symbols: string[],
+    batchSize: number,
+    interval: string,
+    limit: number,
+): Promise<Map<string, OHLC[]>> {
+    return fetchKlinesBatch(symbols, batchSize, interval, limit, { cache: false });
 }
 
 export async function fetchBaseMarketData(): Promise<TickerData[]> {
@@ -103,21 +121,10 @@ function buildTickerInputs(tickers: TickerData[]): MarketTickerInput[] {
 }
 
 function selectEligibleTickerInputs(
-    tickers: TickerData[],
-    oiSnapshotMap: MarketEnhancementResources['oiSnapshotMap']
+    tickers: TickerData[]
 ): MarketTickerInput[] {
     return [...tickers]
         .sort((a, b) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
-        .filter((ticker) => {
-            const quoteVolume = parseFloat(ticker.quoteVolume || '0');
-            const oiSnapshot = oiSnapshotMap.get(ticker.symbol);
-            const openInterestValue = parseFloat(oiSnapshot?.currentOpenInterestValue || '0');
-
-            return (
-                quoteVolume >= APP_CONFIG.INDICATORS.MIN_QUOTE_VOLUME_FOR_FULL_INDICATORS ||
-                openInterestValue >= APP_CONFIG.INDICATORS.MIN_OPEN_INTEREST_VALUE_FOR_FULL_INDICATORS
-            );
-        })
         .map((ticker) => ({
             symbol: ticker.symbol,
             price: ticker.markPrice || ticker.lastPrice,
@@ -134,8 +141,7 @@ function logEnhancementUniverse(totalSymbols: number, eligibleSymbols: string[])
     logger.info('Built market enhancement universe', {
         totalSymbols,
         eligibleSymbols: eligibleSymbols.length,
-        minQuoteVolume: APP_CONFIG.INDICATORS.MIN_QUOTE_VOLUME_FOR_FULL_INDICATORS,
-        minOpenInterestValue: APP_CONFIG.INDICATORS.MIN_OPEN_INTEREST_VALUE_FOR_FULL_INDICATORS,
+        coverage: 'full',
     });
 }
 
@@ -225,7 +231,7 @@ function attachHistoricalTrackerChanges(
             ...ticker,
             markPrice: ticker.markPrice || ticker.lastPrice,
             fundingRate: ticker.fundingRate || '0',
-            oiChangePercent: oiSnapshot?.changePercent4h,
+            oiChangePercent: oiSnapshot?.changePercent4h ?? changes.oiChangePercent,
             volumeChangePercent: changes.volumeChangePercent,
             fundingRateVelocity: changes.fundingRateVelocity,
             fundingRateTrend: changes.fundingRateTrend,
@@ -244,61 +250,109 @@ export async function buildMarketData(): Promise<TickerData[]> {
 
     const [btcReturns, oiSnapshotMap] = await Promise.all([
         getBTCReturns(),
-        fetchOpenInterestMarketSnapshotsBatch(oiTickerInputs, 25),
+        fetchCurrentOpenInterestMarketSnapshotsBatch(oiTickerInputs, 25),
     ]);
 
-    const weiUniverseSymbols = resolveWeiUniverseSymbols(baseMarketData);
-    const eligibleTickerInputs = selectEligibleTickerInputs(baseMarketData, oiSnapshotMap);
+    const marketDataWithOpenInterest = attachOpenInterestSnapshotsToTickers(baseMarketData, oiSnapshotMap);
+    const trackedMarketData = attachHistoricalTrackerChanges(marketDataWithOpenInterest, oiSnapshotMap);
+
+    const weiUniverseSymbols = resolveWeiUniverseSymbols(trackedMarketData);
+    const eligibleTickerInputs = selectEligibleTickerInputs(trackedMarketData);
     const eligibleSymbols = selectMarketKlineEligibleSymbols({
         eligibleSymbols: eligibleTickerInputs.map((ticker) => ticker.symbol),
         weiUniverseSymbols,
         maxEligibleSymbols: MARKET_ENRICHMENT_LIMITS.klineEnhancementSymbolLimit,
     });
     const klineBatchSize = resolveMarketKlineBatchSize(APP_CONFIG.API.BATCH_SIZE);
-    const klineStagePlan = buildMarketKlineEnhancementStagePlan({
-        eligibleSymbols,
+    const weiShenStagePlan = buildMarketKlineEnhancementStagePlan({
+        eligibleSymbols: [],
         weiUniverseSymbols,
         weiShenTimeframes,
     });
 
     const [
-        klinesMap,
-        trend5mKlinesMap,
-        daily1dKlinesMap,
-    ] = await Promise.all(klineStagePlan.eligible.map((request) =>
-        fetchMarketKlineEnhancementGroup(request, klineBatchSize, fetchKlinesBatch, logger)
-    ));
-
-    const [
         wei1hKlinesMap,
         wei4hKlinesMap,
         wei1dKlinesMap,
-    ] = await Promise.all(klineStagePlan.weiShen.map((request) =>
+    ] = await Promise.all(weiShenStagePlan.weiShen.map((request) =>
         fetchMarketKlineEnhancementGroup(request, klineBatchSize, fetchKlinesBatch, logger)
     ));
 
-    const sentimentHotspotSourceTickers = attachOpenInterestSnapshotsToTickers(baseMarketData, oiSnapshotMap);
-    const sentimentHotspotMap = await fetchSentimentHotspotContextMap(sentimentHotspotSourceTickers, daily1dKlinesMap, klinesMap);
+    logEnhancementUniverse(trackedMarketData.length, eligibleSymbols);
 
-    logEnhancementUniverse(baseMarketData.length, eligibleSymbols);
+    const enhancedBySymbol = new Map<string, TickerData>();
+    const baseMarketDataBySymbol = new Map(trackedMarketData.map((ticker) => [ticker.symbol, ticker]));
+    for (const symbolChunk of chunkArray(eligibleSymbols, MARKET_ENHANCEMENT_CHUNK_SIZE)) {
+        const chunkTickers = symbolChunk
+            .map((symbol) => baseMarketDataBySymbol.get(symbol))
+            .filter((ticker): ticker is TickerData => Boolean(ticker));
+        if (chunkTickers.length === 0) {
+            continue;
+        }
 
-    const enhancedMarketData = attachEnhancedMarketData(
-        baseMarketData,
-        {
-            btcReturns,
-            oiSnapshotMap,
+        const [
             klinesMap,
             trend5mKlinesMap,
             daily1dKlinesMap,
-            wei1hKlinesMap,
-            wei4hKlinesMap,
-            wei1dKlinesMap,
-            sentimentHotspotMap,
-        },
-        weiUniverseSymbols,
+        ] = await Promise.all([
+            fetchMarketKlineEnhancementGroup(
+                { label: 'eligible-15m', symbols: symbolChunk, interval: '15m', limit: 50 },
+                klineBatchSize,
+                fetchUncachedKlinesBatch,
+                logger,
+            ),
+            fetchMarketKlineEnhancementGroup(
+                { label: 'eligible-5m', symbols: symbolChunk, interval: '5m', limit: 120 },
+                klineBatchSize,
+                fetchUncachedKlinesBatch,
+                logger,
+            ),
+            fetchMarketKlineEnhancementGroup(
+                { label: 'eligible-1d', symbols: symbolChunk, interval: '1d', limit: 30 },
+                klineBatchSize,
+                fetchUncachedKlinesBatch,
+                logger,
+            ),
+        ]);
+
+        const sentimentHotspotMap = await fetchSentimentHotspotContextMap(
+            chunkTickers,
+            daily1dKlinesMap,
+            klinesMap,
+            { oiSignalMode: 'current' },
+        );
+
+        const chunkEnhancedMarketData = attachEnhancedMarketData(
+            chunkTickers,
+            {
+                btcReturns,
+                oiSnapshotMap,
+                klinesMap,
+                trend5mKlinesMap,
+                daily1dKlinesMap,
+                wei1hKlinesMap,
+                wei4hKlinesMap,
+                wei1dKlinesMap,
+                sentimentHotspotMap,
+            },
+            weiUniverseSymbols,
+        );
+
+        chunkEnhancedMarketData.forEach((ticker) => {
+            enhancedBySymbol.set(ticker.symbol, ticker);
+        });
+    }
+
+    const enhancedMarketData = trackedMarketData.map((ticker) =>
+        enhancedBySymbol.get(ticker.symbol) || {
+            ...ticker,
+            markPrice: ticker.markPrice || ticker.lastPrice,
+            fundingRate: ticker.fundingRate || '0',
+            openInterest: oiSnapshotMap.get(ticker.symbol)?.currentOpenInterest || ticker.openInterest,
+            openInterestValue: oiSnapshotMap.get(ticker.symbol)?.currentOpenInterestValue || ticker.openInterestValue,
+        }
     );
 
-    const merged = attachHistoricalTrackerChanges(enhancedMarketData, oiSnapshotMap);
     historicalTracker.cleanup();
-    return merged;
+    return enhancedMarketData;
 }

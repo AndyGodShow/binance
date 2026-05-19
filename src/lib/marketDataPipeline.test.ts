@@ -9,14 +9,14 @@ import {
     selectMarketKlineEligibleSymbols,
 } from './marketBuildConfig.ts';
 
-test('resolveMarketEnrichmentLimits keeps production cold-start enrichment bounded', () => {
+test('resolveMarketEnrichmentLimits requests full market enrichment coverage', () => {
     assert.deepEqual(resolveMarketEnrichmentLimits({ NODE_ENV: 'development' }), {
-        oiSnapshotSymbolLimit: 80,
-        klineEnhancementSymbolLimit: 40,
+        oiSnapshotSymbolLimit: Number.POSITIVE_INFINITY,
+        klineEnhancementSymbolLimit: Number.POSITIVE_INFINITY,
     });
     assert.deepEqual(resolveMarketEnrichmentLimits({ NODE_ENV: 'production' }), {
-        oiSnapshotSymbolLimit: 80,
-        klineEnhancementSymbolLimit: 40,
+        oiSnapshotSymbolLimit: Number.POSITIVE_INFINITY,
+        klineEnhancementSymbolLimit: Number.POSITIVE_INFINITY,
     });
 });
 

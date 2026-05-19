@@ -78,6 +78,10 @@ export interface SentimentHotspotOiSignal {
     oiStrong: boolean;
 }
 
+export interface SentimentHotspotContextMapOptions {
+    oiSignalMode?: 'history' | 'current';
+}
+
 interface CoinGeckoTrendingResponse {
     coins?: Array<{
         item?: {
@@ -106,6 +110,10 @@ export interface SentimentHotspotSquareCandidateInput {
 const SENTIMENT_OI_PERIOD = '30m';
 const SENTIMENT_OI_LIMIT = 32;
 const MIN_OI_VALUES = 12;
+const COINGECKO_TRENDING_CACHE_TTL_MS = 5 * 60 * 1000;
+
+let coinGeckoTrendingCache: { expiresAt: number; coins: Set<string> } | null = null;
+let coinGeckoTrendingInflight: Promise<Set<string>> | null = null;
 
 export const SENTIMENT_HOTSPOT_PARAMS = {
     watchMinHeatSourceCount: 1,
@@ -422,7 +430,7 @@ function calculateVolumeSurgeRatio(ticker: TickerData, dailyKlines?: OHLC[]): nu
     return averagePreviousVolume > 0 ? volume24h / averagePreviousVolume : 0;
 }
 
-async function fetchCoinGeckoTrendingCoins(): Promise<Set<string>> {
+async function fetchCoinGeckoTrendingCoinsUncached(): Promise<Set<string>> {
     try {
         const response = await fetch('https://api.coingecko.com/api/v3/search/trending', {
             signal: AbortSignal.timeout(8000),
@@ -447,6 +455,34 @@ async function fetchCoinGeckoTrendingCoins(): Promise<Set<string>> {
     }
 }
 
+async function fetchCoinGeckoTrendingCoins(): Promise<Set<string>> {
+    const now = Date.now();
+    if (coinGeckoTrendingCache && coinGeckoTrendingCache.expiresAt > now) {
+        return new Set(coinGeckoTrendingCache.coins);
+    }
+
+    if (!coinGeckoTrendingInflight) {
+        coinGeckoTrendingInflight = fetchCoinGeckoTrendingCoinsUncached()
+            .then((coins) => {
+                coinGeckoTrendingCache = {
+                    expiresAt: Date.now() + COINGECKO_TRENDING_CACHE_TTL_MS,
+                    coins: new Set(coins),
+                };
+                return coins;
+            })
+            .finally(() => {
+                coinGeckoTrendingInflight = null;
+            });
+    }
+
+    return new Set(await coinGeckoTrendingInflight);
+}
+
+export function clearSentimentHotspotCachesForTest() {
+    coinGeckoTrendingCache = null;
+    coinGeckoTrendingInflight = null;
+}
+
 async function fetchSentimentOiSignal(symbol: string): Promise<SentimentHotspotOiSignal | null> {
     try {
         const historyResponse = await fetchBinanceJson<unknown>(
@@ -462,6 +498,18 @@ async function fetchSentimentOiSignal(symbol: string): Promise<SentimentHotspotO
         });
         return null;
     }
+}
+
+function buildCurrentSentimentOiSignal(ticker: TickerData): SentimentHotspotOiSignal {
+    const oiChangePct = toFiniteNumber(ticker.oiChangePercent);
+    const oiRising = oiChangePct >= SENTIMENT_HOTSPOT_PARAMS.minOiChangePct;
+
+    return {
+        oiChangePct,
+        oiSegments: [],
+        oiRising,
+        oiStrong: oiRising && oiChangePct >= SENTIMENT_HOTSPOT_PARAMS.strongOiChangePct,
+    };
 }
 
 async function fetchSquareHashtagHeat(coin: string): Promise<{ posts: number; views: number; hasSquare: boolean }> {
@@ -522,7 +570,9 @@ export async function fetchSentimentHotspotContextMap(
     tickers: TickerData[],
     dailyKlinesMap: Map<string, OHLC[]>,
     entryKlinesMap: Map<string, OHLC[]> = new Map(),
+    options: SentimentHotspotContextMapOptions = {},
 ): Promise<Map<string, SentimentHotspotContext>> {
+    const oiSignalMode = options.oiSignalMode || 'history';
     const coinGeckoTrending = await fetchCoinGeckoTrendingCoins();
     const baseContexts = new Map<string, Omit<SentimentHotspotContext, 'oiUsd' | 'oiChangePct' | 'oiSegments' | 'oiRising' | 'oiStrong'>>();
 
@@ -559,14 +609,10 @@ export async function fetchSentimentHotspotContextMap(
 
     const contextMap = new Map<string, SentimentHotspotContext>();
 
-    for (let index = 0; index < candidates.length; index += 10) {
-        const batch = candidates.slice(index, index + 10);
-        const results = await Promise.allSettled(batch.map((ticker) => fetchSentimentOiSignal(ticker.symbol)));
-
-        results.forEach((result, resultIndex) => {
-            const ticker = batch[resultIndex];
+    if (oiSignalMode === 'current') {
+        candidates.forEach((ticker) => {
             const base = baseContexts.get(ticker.symbol);
-            if (!base || result.status !== 'fulfilled' || !result.value) {
+            if (!base) {
                 return;
             }
 
@@ -578,13 +624,38 @@ export async function fetchSentimentHotspotContextMap(
             contextMap.set(ticker.symbol, {
                 ...base,
                 oiUsd,
-                oiChangePct: result.value.oiChangePct,
-                oiSegments: result.value.oiSegments,
-                oiRising: result.value.oiRising,
-                oiStrong: result.value.oiStrong,
+                ...buildCurrentSentimentOiSignal(ticker),
                 entry,
             });
         });
+    } else {
+        for (let index = 0; index < candidates.length; index += 10) {
+            const batch = candidates.slice(index, index + 10);
+            const results = await Promise.allSettled(batch.map((ticker) => fetchSentimentOiSignal(ticker.symbol)));
+
+            results.forEach((result, resultIndex) => {
+                const ticker = batch[resultIndex];
+                const base = baseContexts.get(ticker.symbol);
+                if (!base || result.status !== 'fulfilled' || !result.value) {
+                    return;
+                }
+
+                const oiUsd = toFiniteNumber(ticker.openInterestValue);
+                const entry = calculateSentimentHotspotEntryContext(
+                    entryKlinesMap.get(ticker.symbol),
+                    toFiniteNumber(ticker.lastPrice)
+                );
+                contextMap.set(ticker.symbol, {
+                    ...base,
+                    oiUsd,
+                    oiChangePct: result.value.oiChangePct,
+                    oiSegments: result.value.oiSegments,
+                    oiRising: result.value.oiRising,
+                    oiStrong: result.value.oiStrong,
+                    entry,
+                });
+            });
+        }
     }
 
     const squareCandidates = [...candidates]

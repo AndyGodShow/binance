@@ -174,3 +174,74 @@ export async function fetchOpenInterestMarketSnapshotsBatch(
 
     return snapshotMap;
 }
+
+export async function fetchCurrentOpenInterestMarketSnapshot(
+    symbol: string,
+    currentPrice?: string
+): Promise<OpenInterestMarketSnapshot | null> {
+    const normalizedSymbol = symbol.toUpperCase();
+    const cacheKey = `current-market:${normalizedSymbol}`;
+    const cached = marketSnapshotCache.get(cacheKey);
+    if (cached) {
+        return {
+            ...cached,
+            currentOpenInterestValue: formatOpenInterestValue(
+                cached.currentOpenInterest,
+                currentPrice,
+                cached.currentOpenInterestValue
+            ),
+        };
+    }
+
+    try {
+        const data = await fetchBinanceJson<{ openInterest?: string }>(
+            `/fapi/v1/openInterest?symbol=${normalizedSymbol}`,
+            { revalidate: 60 }
+        );
+        const currentOpenInterest = typeof data.openInterest === 'string' ? data.openInterest : undefined;
+        if (!currentOpenInterest) {
+            return null;
+        }
+
+        const snapshot: OpenInterestMarketSnapshot = {
+            symbol: normalizedSymbol,
+            currentOpenInterest,
+            currentOpenInterestValue: formatOpenInterestValue(currentOpenInterest, currentPrice),
+            asOf: Date.now(),
+        };
+        marketSnapshotCache.set(cacheKey, snapshot, OI_CACHE_TTL);
+        return snapshot;
+    } catch (error) {
+        logger.warn('Failed to fetch current open interest market snapshot', {
+            symbol: normalizedSymbol,
+            error: error instanceof Error ? error.message : String(error),
+        });
+        return null;
+    }
+}
+
+export async function fetchCurrentOpenInterestMarketSnapshotsBatch(
+    symbols: Array<{ symbol: string; price?: string }>,
+    batchSize: number = 10
+): Promise<Map<string, OpenInterestMarketSnapshot>> {
+    const snapshotMap = new Map<string, OpenInterestMarketSnapshot>();
+
+    for (let index = 0; index < symbols.length; index += batchSize) {
+        const batch = symbols.slice(index, index + batchSize);
+        const results = await Promise.allSettled(
+            batch.map(({ symbol, price }) => fetchCurrentOpenInterestMarketSnapshot(symbol, price))
+        );
+
+        results.forEach((result, batchIndex) => {
+            if (result.status === 'fulfilled' && result.value) {
+                snapshotMap.set(batch[batchIndex].symbol.toUpperCase(), result.value);
+            }
+        });
+
+        if (index + batchSize < symbols.length) {
+            await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+    }
+
+    return snapshotMap;
+}

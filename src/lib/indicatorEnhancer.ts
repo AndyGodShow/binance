@@ -54,6 +54,10 @@ const GMMA_LONG_PERIODS = [30, 35, 40, 45, 50, 60] as const;
 const MULTI_EMA_PERIODS = [20, 60, 100, 120] as const;
 const klineFetchFailureLogLimiter = createBinanceFailureLogLimiter(1, 60_000);
 
+interface FetchKlinesOptions {
+    cache?: boolean;
+}
+
 function isBinanceKline(value: unknown): value is BinanceKline {
     return Array.isArray(value) &&
         value.length >= 11 &&
@@ -68,12 +72,18 @@ function isBinanceKline(value: unknown): value is BinanceKline {
 /**
  * 获取 K 线数据
  */
-export async function fetchKlines(symbol: string, interval: string = '15m', limit: number = 50): Promise<OHLC[]> {
+export async function fetchKlines(
+    symbol: string,
+    interval: string = '15m',
+    limit: number = 50,
+    options: FetchKlinesOptions = {},
+): Promise<OHLC[]> {
+    const useCache = options.cache !== false;
     // 生成缓存键
     const cacheKey = `klines:${symbol}:${interval}:${limit}`;
 
     // 尝试从缓存获取
-    const cached = klineCache.get(cacheKey) as OHLC[] | undefined;
+    const cached = useCache ? klineCache.get(cacheKey) as OHLC[] | undefined : undefined;
     if (cached) {
         if (process.env.DEBUG_KLINE_CACHE === '1') {
             logger.debug(`Klines cache hit for ${symbol}`);
@@ -106,8 +116,9 @@ export async function fetchKlines(symbol: string, interval: string = '15m', limi
             takerBuyQuoteVolume: parseFloat(k[10])
         }));
 
-        // 存入缓存
-        klineCache.set(cacheKey, klines, APP_CONFIG.CACHE.KLINE_TTL);
+        if (useCache) {
+            klineCache.set(cacheKey, klines, APP_CONFIG.CACHE.KLINE_TTL);
+        }
 
         return klines;
     } catch (error) {
@@ -181,7 +192,8 @@ export async function fetchKlinesBatch(
     symbols: string[],
     batchSize: number = APP_CONFIG.API.BATCH_SIZE,
     interval: string = '15m',
-    limit: number = 50
+    limit: number = 50,
+    options: FetchKlinesOptions = {},
 ): Promise<Map<string, OHLC[]>> {
     const klineMap = new Map<string, OHLC[]>();
 
@@ -189,7 +201,7 @@ export async function fetchKlinesBatch(
     for (let i = 0; i < symbols.length; i += batchSize) {
         const batch = symbols.slice(i, i + batchSize);
         const results = await Promise.allSettled(
-            batch.map(symbol => fetchKlines(symbol, interval, limit))
+            batch.map(symbol => fetchKlines(symbol, interval, limit, options))
         );
 
         results.forEach((result, index) => {

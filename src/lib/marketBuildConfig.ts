@@ -15,18 +15,13 @@ export interface MarketEnrichmentLimits {
 }
 
 export function resolveMarketEnrichmentLimits(
-    env: Pick<NodeJS.ProcessEnv, 'NODE_ENV'> = process.env,
+    _env: Pick<NodeJS.ProcessEnv, 'NODE_ENV'> = process.env,
 ): MarketEnrichmentLimits {
-    if (env.NODE_ENV === 'development') {
-        return {
-            oiSnapshotSymbolLimit: 80,
-            klineEnhancementSymbolLimit: 40,
-        };
-    }
+    void _env;
 
     return {
-        oiSnapshotSymbolLimit: 80,
-        klineEnhancementSymbolLimit: 40,
+        oiSnapshotSymbolLimit: Number.POSITIVE_INFINITY,
+        klineEnhancementSymbolLimit: Number.POSITIVE_INFINITY,
     };
 }
 

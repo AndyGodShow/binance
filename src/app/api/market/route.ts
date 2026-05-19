@@ -9,14 +9,14 @@ import {
     ensureCachedMarketBuild,
 } from '@/lib/marketRouteCache';
 
+export const dynamic = 'force-dynamic';
+export const maxDuration = 60;
+
 const marketRouteState = createMarketDataRouteState();
 
 const LIVE_CACHE_DURATION = 5000;
-const MARKET_BUILD_TIMEOUT_MS = 15000;
+const MARKET_BUILD_TIMEOUT_MS = 60_000;
 const MARKET_FALLBACK_TIMEOUT_MS = 6000;
-const USE_LIGHTWEIGHT_MARKET_ROUTE =
-    process.env.NODE_ENV === 'production' && process.env.FULL_MARKET_BUILD_ON_ROUTE !== '1';
-const MARKET_ROUTE_DATA_QUALITY = USE_LIGHTWEIGHT_MARKET_ROUTE ? 'lightweight' : 'enriched';
 const MARKET_RESPONSE_BASE_HEADERS = {
     'Content-Encoding': 'identity',
 };
@@ -34,10 +34,7 @@ function marketResponse(data: TickerData[] | { error: string }, init?: ResponseI
 }
 
 function ensureMarketBuild(): Promise<TickerData[]> {
-    return ensureCachedMarketBuild(
-        marketRouteState,
-        USE_LIGHTWEIGHT_MARKET_ROUTE ? fetchBaseMarketData : buildMarketData
-    );
+    return ensureCachedMarketBuild(marketRouteState, buildMarketData);
 }
 
 export async function GET() {
@@ -62,7 +59,7 @@ export async function GET() {
             headers: {
                 'Cache-Control': 'public, s-maxage=3, stale-while-revalidate=10',
                 'X-Data-Source': 'stale-memory-cache-refreshing',
-                'X-Data-Quality': MARKET_ROUTE_DATA_QUALITY,
+                'X-Data-Quality': 'enriched',
                 'X-Build-State': 'ready',
                 'X-Cache-Age-Seconds': Math.floor((Date.now() - marketRouteState.lastSuccessfulAt) / 1000).toString(),
             }
@@ -80,7 +77,7 @@ export async function GET() {
             headers: {
                 'Cache-Control': 'public, s-maxage=3, stale-while-revalidate=10',
                 'X-Data-Source': ownsInflight ? 'live' : 'live-coalesced',
-                'X-Data-Quality': MARKET_ROUTE_DATA_QUALITY,
+                'X-Data-Quality': 'enriched',
                 'X-Build-State': 'ready',
             }
         });
@@ -91,7 +88,7 @@ export async function GET() {
                 headers: {
                     'Cache-Control': 'public, s-maxage=2, stale-while-revalidate=10',
                     'X-Data-Source': 'stale-memory-cache',
-                    'X-Data-Quality': MARKET_ROUTE_DATA_QUALITY,
+                    'X-Data-Quality': 'enriched',
                     'X-Build-State': 'stale',
                     'X-Cache-Age-Seconds': Math.floor((Date.now() - marketRouteState.lastSuccessfulAt) / 1000).toString(),
                 }

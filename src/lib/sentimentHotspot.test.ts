@@ -8,6 +8,8 @@ import {
     classifySentimentHotspotCandidate,
     evaluateSentimentFundingTurn,
     evaluateSentimentHotspotExitMonitor,
+    clearSentimentHotspotCachesForTest,
+    fetchSentimentHotspotContextMap,
     isSentimentHotspotSquareCandidate,
 } from './sentimentHotspot.ts';
 import { sentimentHotspotStrategy } from '../strategies/sentimentHotspot.ts';
@@ -257,6 +259,67 @@ test('evaluateSentimentHotspotExitMonitor escalates structural and fuel failures
         elapsedMs: 60 * 60 * 1000,
     });
     assert.equal(hold.level, 'hold');
+});
+
+test('fetchSentimentHotspotContextMap can build current OI context without historical segments', async () => {
+    clearSentimentHotspotCachesForTest();
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response(JSON.stringify({ coins: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+    })) as typeof fetch;
+
+    try {
+        const contexts = await fetchSentimentHotspotContextMap(
+            [createTicker({
+                fundingRate: '-0.00005',
+                oiChangePercent: 9.5,
+            })],
+            new Map([[
+                'SAGAUSDT',
+                [
+                    { time: 1, open: 1, high: 1.1, low: 0.9, close: 1, volume: 10, quoteVolume: 10_000_000 },
+                    { time: 2, open: 1, high: 1.1, low: 0.9, close: 1, volume: 10, quoteVolume: 10_000_000 },
+                    { time: 3, open: 1, high: 1.1, low: 0.9, close: 1, volume: 10, quoteVolume: 10_000_000 },
+                    { time: 4, open: 1, high: 1.1, low: 0.9, close: 1, volume: 10, quoteVolume: 10_000_000 },
+                    { time: 5, open: 1, high: 1.1, low: 0.9, close: 1, volume: 10, quoteVolume: 10_000_000 },
+                ],
+            ]]),
+            new Map(),
+            { oiSignalMode: 'current' },
+        );
+
+        const context = contexts.get('SAGAUSDT');
+        assert.ok(context);
+        assert.equal(context.oiChangePct, 9.5);
+        assert.equal(context.oiRising, true);
+        assert.deepEqual(context.oiSegments, []);
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});
+
+test('fetchSentimentHotspotContextMap reuses CoinGecko trending lookups across calls', async () => {
+    clearSentimentHotspotCachesForTest();
+    const originalFetch = globalThis.fetch;
+    let fetchCount = 0;
+    globalThis.fetch = (async () => {
+        fetchCount += 1;
+        return new Response(JSON.stringify({ coins: [] }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+        });
+    }) as typeof fetch;
+
+    try {
+        await fetchSentimentHotspotContextMap([], new Map(), new Map(), { oiSignalMode: 'current' });
+        await fetchSentimentHotspotContextMap([], new Map(), new Map(), { oiSignalMode: 'current' });
+
+        assert.equal(fetchCount, 1);
+    } finally {
+        globalThis.fetch = originalFetch;
+        clearSentimentHotspotCachesForTest();
+    }
 });
 
 test('sentimentHotspotStrategy emits only tradeable sentiment hotspot signals', () => {

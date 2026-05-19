@@ -11,7 +11,6 @@ import SimulatedTrading from '@/components/SimulatedTrading';
 import LongShortPanel from '@/components/LongShortPanel';
 import OnchainTracker from '@/components/OnchainTracker';
 import MacroView from '@/components/MacroView';
-import DailyNewsView from '@/components/DailyNewsView';
 import TabNavigation from '@/components/TabNavigation';
 import ChartDrawer from '@/components/ChartDrawer';
 import WatchlistsPanel from '@/components/WatchlistsPanel';
@@ -44,9 +43,9 @@ import {
   shouldShowOpenInterestUnavailableAlert,
 } from '@/lib/dashboardAlerts';
 
-type AppTab = 'dashboard' | 'leaderboard' | 'macro' | 'news' | 'watchlists' | 'longshort' | 'onchain' | 'strategies' | 'trading';
+type AppTab = 'dashboard' | 'leaderboard' | 'macro' | 'watchlists' | 'longshort' | 'onchain' | 'strategies' | 'trading';
 
-const APP_TABS: AppTab[] = ['dashboard', 'leaderboard', 'macro', 'news', 'watchlists', 'longshort', 'onchain', 'strategies', 'trading'];
+const APP_TABS: AppTab[] = ['dashboard', 'leaderboard', 'macro', 'watchlists', 'longshort', 'onchain', 'strategies', 'trading'];
 
 function isAppTab(value: string | null): value is AppTab {
   return value !== null && APP_TABS.includes(value as AppTab);
@@ -189,9 +188,10 @@ export default function Home() {
   const heavyMarketRefreshInterval = isPageVisible ? 30000 : 300000;
   const multiframeRefreshInterval = isPageVisible ? 30000 : 300000;
   const oiMultiframeRefreshInterval = isPageVisible ? 60000 : 300000;
-  const shouldRunLiveMarketRequests = activeTab !== 'trading' && activeTab !== 'news';
+  const shouldRunLiveMarketRequests = activeTab !== 'trading';
   const shouldRunLeaderboardRequests = activeTab === 'dashboard' || activeTab === 'leaderboard';
-  const shouldRunHeavyMarketRequests = activeTab === 'strategies';
+  const shouldRunHeavyMarketRequests = shouldRunLiveMarketRequests;
+  const heavyMarketEndpoint = activeTab === 'strategies' ? '/api/market/strategy' : '/api/market';
 
   const { data: lightMarketData, error: marketError, isLoading: marketLoading } = usePersistentSWR<TickerData[]>(
     shouldRunLiveMarketRequests ? '/api/market/light' : null,
@@ -209,7 +209,7 @@ export default function Home() {
   const openInterestData: Record<string, unknown> | undefined = undefined;
 
   const { data: heavyMarketPayload } = usePersistentSWR<TimedPayload<TickerData[]>>(
-    shouldRunLiveMarketRequests && shouldRunHeavyMarketRequests && enableHeavyMarket ? '/api/market' : null,
+    shouldRunLiveMarketRequests && shouldRunHeavyMarketRequests && enableHeavyMarket ? heavyMarketEndpoint : null,
     shouldRunLiveMarketRequests && shouldRunHeavyMarketRequests && enableHeavyMarket ? ((url: string) => fetcherWithMeta<TickerData[]>(url)) : null,
     {
       refreshInterval: heavyMarketRefreshInterval,
@@ -217,7 +217,7 @@ export default function Home() {
       dedupingInterval: 15000,
       storageTtlMs: 15 * 60 * 1000,
       persistIntervalMs: 60 * 1000,
-      storageKey: 'persistent-swr:v2:/api/market',
+      storageKey: `persistent-swr:v2:${heavyMarketEndpoint}`,
     }
   );
 
@@ -598,9 +598,6 @@ export default function Home() {
       )}
       {activeTab === 'macro' && (
         <MacroView />
-      )}
-      {activeTab === 'news' && (
-        <DailyNewsView />
       )}
       {activeTab === 'watchlists' && (
         <WatchlistsPanel
