@@ -11,6 +11,7 @@ export function resolveMarketKlineBatchSize(
 
 export interface MarketEnrichmentLimits {
     oiSnapshotSymbolLimit: number;
+    historicalOiChangeSymbolLimit?: number;
     klineEnhancementSymbolLimit: number;
 }
 

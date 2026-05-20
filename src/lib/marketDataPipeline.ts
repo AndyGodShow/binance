@@ -4,7 +4,10 @@ import { fetchKlinesBatch, enhanceTickerData, getBTCReturns } from '@/lib/indica
 import { APP_CONFIG } from '@/lib/config';
 import { logger } from '@/lib/logger';
 import { fetchBinanceJson } from '@/lib/binanceApi';
-import { fetchCurrentOpenInterestMarketSnapshotsBatch } from '@/lib/openInterest';
+import {
+    fetchCurrentOpenInterestMarketSnapshotsBatch,
+    fetchOpenInterestMarketSnapshotsBatch,
+} from '@/lib/openInterest';
 import { fetchSentimentHotspotContextMap } from '@/lib/sentimentHotspot';
 import { WEI_SHEN_UNIVERSE } from '@/lib/weiShenUniverse';
 import { buildWeiShenContext, getWeiShenTimeframes } from '@/lib/weiShenStrategy';
@@ -15,7 +18,11 @@ import {
     resolveMarketKlineBatchSize,
     selectMarketKlineEligibleSymbols,
 } from '@/lib/marketBuildConfig';
-import { attachOpenInterestSnapshotsToTickers } from '@/lib/marketDataTransforms';
+import {
+    attachOpenInterestSnapshotsToTickers,
+    mergeOpenInterestSnapshotMaps,
+    type OpenInterestSnapshotLike,
+} from '@/lib/marketDataTransforms';
 
 interface BinanceExchangeInfoSymbol {
     symbol: string;
@@ -33,11 +40,16 @@ interface MarketTickerInput {
 }
 
 const MARKET_ENRICHMENT_LIMITS = resolveMarketEnrichmentLimits();
+const STRATEGY_MARKET_ENRICHMENT_LIMITS = {
+    oiSnapshotSymbolLimit: 220,
+    historicalOiChangeSymbolLimit: 80,
+    klineEnhancementSymbolLimit: 180,
+};
 const MARKET_ENHANCEMENT_CHUNK_SIZE = 40;
 
 interface MarketEnhancementResources {
     btcReturns: number[];
-    oiSnapshotMap: Awaited<ReturnType<typeof fetchCurrentOpenInterestMarketSnapshotsBatch>>;
+    oiSnapshotMap: Map<string, OpenInterestSnapshotLike>;
     klinesMap: Awaited<ReturnType<typeof fetchKlinesBatch>>;
     trend5mKlinesMap: Awaited<ReturnType<typeof fetchKlinesBatch>>;
     daily1dKlinesMap: Awaited<ReturnType<typeof fetchKlinesBatch>>;
@@ -45,6 +57,14 @@ interface MarketEnhancementResources {
     wei4hKlinesMap: Awaited<ReturnType<typeof fetchKlinesBatch>>;
     wei1dKlinesMap: Awaited<ReturnType<typeof fetchKlinesBatch>>;
     sentimentHotspotMap: Awaited<ReturnType<typeof fetchSentimentHotspotContextMap>>;
+}
+
+interface BuildMarketDataOptions {
+    enrichmentLimits?: {
+        oiSnapshotSymbolLimit: number;
+        historicalOiChangeSymbolLimit?: number;
+        klineEnhancementSymbolLimit: number;
+    };
 }
 
 function chunkArray<T>(items: T[], size: number): T[][] {
@@ -239,19 +259,26 @@ function attachHistoricalTrackerChanges(
     });
 }
 
-export async function buildMarketData(): Promise<TickerData[]> {
+export async function buildMarketData(options: BuildMarketDataOptions = {}): Promise<TickerData[]> {
+    const enrichmentLimits = options.enrichmentLimits ?? MARKET_ENRICHMENT_LIMITS;
     const weiShenTimeframes = getWeiShenTimeframes();
     const baseMarketData = await fetchBaseMarketData();
     const oiTickerInputs = buildTickerInputs(
         [...baseMarketData]
             .sort((a, b) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
-            .slice(0, MARKET_ENRICHMENT_LIMITS.oiSnapshotSymbolLimit)
+            .slice(0, enrichmentLimits.oiSnapshotSymbolLimit)
+    );
+    const historicalOiTickerInputs = oiTickerInputs.slice(
+        0,
+        enrichmentLimits.historicalOiChangeSymbolLimit ?? enrichmentLimits.oiSnapshotSymbolLimit
     );
 
-    const [btcReturns, oiSnapshotMap] = await Promise.all([
+    const [btcReturns, currentOiSnapshotMap, historicalOiChangeSnapshotMap] = await Promise.all([
         getBTCReturns(),
         fetchCurrentOpenInterestMarketSnapshotsBatch(oiTickerInputs, 25),
+        fetchOpenInterestMarketSnapshotsBatch(historicalOiTickerInputs, 25),
     ]);
+    const oiSnapshotMap = mergeOpenInterestSnapshotMaps(currentOiSnapshotMap, historicalOiChangeSnapshotMap);
 
     const marketDataWithOpenInterest = attachOpenInterestSnapshotsToTickers(baseMarketData, oiSnapshotMap);
     const trackedMarketData = attachHistoricalTrackerChanges(marketDataWithOpenInterest, oiSnapshotMap);
@@ -261,7 +288,7 @@ export async function buildMarketData(): Promise<TickerData[]> {
     const eligibleSymbols = selectMarketKlineEligibleSymbols({
         eligibleSymbols: eligibleTickerInputs.map((ticker) => ticker.symbol),
         weiUniverseSymbols,
-        maxEligibleSymbols: MARKET_ENRICHMENT_LIMITS.klineEnhancementSymbolLimit,
+        maxEligibleSymbols: enrichmentLimits.klineEnhancementSymbolLimit,
     });
     const klineBatchSize = resolveMarketKlineBatchSize(APP_CONFIG.API.BATCH_SIZE);
     const weiShenStagePlan = buildMarketKlineEnhancementStagePlan({
@@ -355,4 +382,10 @@ export async function buildMarketData(): Promise<TickerData[]> {
 
     historicalTracker.cleanup();
     return enhancedMarketData;
+}
+
+export function buildStrategyMarketData(): Promise<TickerData[]> {
+    return buildMarketData({
+        enrichmentLimits: STRATEGY_MARKET_ENRICHMENT_LIMITS,
+    });
 }

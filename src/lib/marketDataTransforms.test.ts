@@ -5,6 +5,7 @@ import {
     attachOpenInterestSnapshotsToTickers,
     buildRsrsTickerFields,
     calculateRecentPriceChangePercent,
+    mergeOpenInterestSnapshotMaps,
     normalizeReleaseBarsAgo,
 } from './marketDataTransforms.ts';
 import type { OHLC, TickerData } from './types.ts';
@@ -69,6 +70,67 @@ test('attachOpenInterestSnapshotsToTickers includes OI USD before sentiment clas
 
     assert.equal(sourceTickers[0].openInterest, '100000000');
     assert.equal(sourceTickers[0].openInterestValue, '4000000');
+});
+
+test('attachOpenInterestSnapshotsToTickers keeps current OI value while preserving 4h OI change', () => {
+    const sourceTickers = attachOpenInterestSnapshotsToTickers(
+        [{
+            ...createTicker(),
+            openInterestValue: '3500000',
+            oiChangePercent: 11,
+        }],
+        new Map([
+            ['CGPTUSDT', {
+                currentOpenInterest: '100000000',
+                currentOpenInterestValue: '4000000',
+            }],
+        ]),
+    );
+
+    assert.equal(sourceTickers[0].openInterestValue, '4000000');
+    assert.equal(sourceTickers[0].oiChangePercent, 11);
+});
+
+test('mergeOpenInterestSnapshotMaps combines current OI with historical 4h change', () => {
+    const merged = mergeOpenInterestSnapshotMaps(
+        new Map([
+            ['CGPTUSDT', {
+                currentOpenInterest: '100000000',
+                currentOpenInterestValue: '4000000',
+            }],
+        ]),
+        new Map([
+            ['CGPTUSDT', {
+                currentOpenInterestValue: '3800000',
+                changePercent4h: 12.5,
+            }],
+        ]),
+    );
+
+    assert.equal(merged.get('CGPTUSDT')?.currentOpenInterestValue, '4000000');
+    assert.equal(merged.get('CGPTUSDT')?.changePercent4h, 12.5);
+});
+
+test('mergeOpenInterestSnapshotMaps keeps historical OI value when current USD value is unavailable', () => {
+    const merged = mergeOpenInterestSnapshotMaps(
+        new Map([
+            ['CGPTUSDT', {
+                currentOpenInterest: '100000000',
+                currentOpenInterestValue: undefined,
+            }],
+        ]),
+        new Map([
+            ['CGPTUSDT', {
+                currentOpenInterest: '95000000',
+                currentOpenInterestValue: '3800000',
+                changePercent4h: 12.5,
+            }],
+        ]),
+    );
+
+    assert.equal(merged.get('CGPTUSDT')?.currentOpenInterest, '100000000');
+    assert.equal(merged.get('CGPTUSDT')?.currentOpenInterestValue, '3800000');
+    assert.equal(merged.get('CGPTUSDT')?.changePercent4h, 12.5);
 });
 
 test('buildRsrsTickerFields exposes live RSRS and Bollinger fields for scanner input', () => {

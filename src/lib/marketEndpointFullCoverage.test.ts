@@ -21,11 +21,12 @@ test('ordinary market views request the enriched market endpoint', () => {
     assert.match(pageSource, /activeTab === 'strategies'[\s\S]*\?[\s\S]*'\/api\/market\/strategy'[\s\S]*:[\s\S]*'\/api\/market'/);
 });
 
-test('full market pipeline uses current OI instead of per-symbol historical OI', () => {
+test('full market pipeline combines current OI values with historical 4h OI change', () => {
     const pipelineSource = readFileSync(join(repoRoot, 'src/lib/marketDataPipeline.ts'), 'utf8');
 
     assert.match(pipelineSource, /fetchCurrentOpenInterestMarketSnapshotsBatch/);
-    assert.doesNotMatch(pipelineSource, /fetchOpenInterestMarketSnapshotsBatch/);
+    assert.match(pipelineSource, /fetchOpenInterestMarketSnapshotsBatch/);
+    assert.match(pipelineSource, /mergeOpenInterestSnapshotMaps\(currentOiSnapshotMap, historicalOiChangeSnapshotMap\)/);
     assert.match(pipelineSource, /fetchSentimentHotspotContextMap\([\s\S]*oiSignalMode: 'current'[\s\S]*\)/);
     assert.match(pipelineSource, /const trackedMarketData = attachHistoricalTrackerChanges\(/);
     assert.match(pipelineSource, /new Map\(trackedMarketData\.map/);

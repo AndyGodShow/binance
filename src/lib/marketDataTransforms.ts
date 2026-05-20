@@ -46,6 +46,32 @@ export function attachOpenInterestSnapshotsToTickers(
     });
 }
 
+export function mergeOpenInterestSnapshotMaps(
+    currentSnapshotMap: Map<string, OpenInterestSnapshotLike>,
+    historicalChangeSnapshotMap: Map<string, OpenInterestSnapshotLike>,
+): Map<string, OpenInterestSnapshotLike> {
+    const merged = new Map<string, OpenInterestSnapshotLike>();
+    const symbols = new Set([
+        ...currentSnapshotMap.keys(),
+        ...historicalChangeSnapshotMap.keys(),
+    ]);
+
+    symbols.forEach((symbol) => {
+        const current = currentSnapshotMap.get(symbol);
+        const historical = historicalChangeSnapshotMap.get(symbol);
+
+        merged.set(symbol, {
+            ...historical,
+            ...current,
+            currentOpenInterest: current?.currentOpenInterest ?? historical?.currentOpenInterest,
+            currentOpenInterestValue: current?.currentOpenInterestValue ?? historical?.currentOpenInterestValue,
+            changePercent4h: current?.changePercent4h ?? historical?.changePercent4h,
+        });
+    });
+
+    return merged;
+}
+
 export function buildRsrsTickerFields(klines: OHLC[]): Partial<TickerData> {
     const metrics = calculateRsrsMetrics(
         klines.map((kline) => ({

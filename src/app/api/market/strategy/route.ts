@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { withTimeout } from '@/lib/async';
 import { TickerData } from '@/lib/types';
 import { logger } from '@/lib/logger';
-import { buildMarketData } from '@/lib/marketDataPipeline';
+import { buildStrategyMarketData } from '@/lib/marketDataPipeline';
 import {
     createMarketDataRouteState,
     ensureCachedMarketBuild,
@@ -33,7 +33,7 @@ function strategyMarketResponse(data: TickerData[] | { error: string }, init?: R
 }
 
 function ensureStrategyMarketBuild(): Promise<TickerData[]> {
-    return ensureCachedMarketBuild(strategyMarketRouteState, buildMarketData);
+    return ensureCachedMarketBuild(strategyMarketRouteState, buildStrategyMarketData);
 }
 
 export async function GET() {

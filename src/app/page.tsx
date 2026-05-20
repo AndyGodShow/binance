@@ -98,7 +98,6 @@ function createDemoSignals(now: number): StrategySignal[] {
 
 const MAX_STRATEGY_MARKET_DATA_AGE_MS = 5 * 60 * 1000;
 const MAX_STRATEGY_FRAME_DATA_AGE_SECONDS = 20 * 60;
-const MAX_STRATEGY_RSRS_DATA_AGE_SECONDS = 6 * 60 * 60;
 const MULTIFRAME_BATCH_SIZE = 20;
 const MULTIFRAME_BATCH_DELAY_MS = 100;
 const OI_MULTIFRAME_BATCH_SIZE = 10;
@@ -189,6 +188,7 @@ export default function Home() {
   const multiframeRefreshInterval = isPageVisible ? 30000 : 300000;
   const oiMultiframeRefreshInterval = isPageVisible ? 60000 : 300000;
   const shouldRunLiveMarketRequests = activeTab !== 'trading';
+  const shouldRunDeferredIndicatorRequests = shouldRunLiveMarketRequests && activeTab !== 'strategies';
   const shouldRunLeaderboardRequests = activeTab === 'dashboard' || activeTab === 'leaderboard';
   const shouldRunHeavyMarketRequests = shouldRunLiveMarketRequests;
   const heavyMarketEndpoint = activeTab === 'strategies' ? '/api/market/strategy' : '/api/market';
@@ -222,8 +222,8 @@ export default function Home() {
   );
 
   const { data: rsrsPayload, error: rsrsError } = usePersistentSWR<TimedPayload<RsrsDataMap>>(
-    shouldRunLiveMarketRequests && enableDeferredIndicators ? '/api/rsrs' : null,
-    shouldRunLiveMarketRequests && enableDeferredIndicators ? ((url: string) => fetcherWithMeta<RsrsDataMap>(url)) : null,
+    shouldRunDeferredIndicatorRequests && enableDeferredIndicators ? '/api/rsrs' : null,
+    shouldRunDeferredIndicatorRequests && enableDeferredIndicators ? ((url: string) => fetcherWithMeta<RsrsDataMap>(url)) : null,
     {
     refreshInterval: 60 * 60 * 1000, // Refresh every hour
     revalidateOnFocus: false,
@@ -235,7 +235,7 @@ export default function Home() {
   );
 
   const multiframeSymbols = useMemo(() => {
-    if (!lightMarketData || lightMarketData.length === 0) {
+    if (!shouldRunDeferredIndicatorRequests || !lightMarketData || lightMarketData.length === 0) {
       return [];
     }
 
@@ -245,7 +245,7 @@ export default function Home() {
       initialLimit: DEFERRED_INDICATOR_INITIAL_SYMBOL_LIMIT,
       expandedLimit: DEFERRED_INDICATOR_SYMBOL_LIMIT,
     });
-  }, [deferredIndicatorsExpanded, deferredIndicatorsFullCoverage, lightMarketData]);
+  }, [deferredIndicatorsExpanded, deferredIndicatorsFullCoverage, lightMarketData, shouldRunDeferredIndicatorRequests]);
 
   const multiframeSignature = useMemo(
     () => [...multiframeSymbols].sort().join(','),
@@ -294,7 +294,7 @@ export default function Home() {
     error: frameError,
     setError: setFrameError,
   } = useProgressiveTimedPayload({
-    enabled: shouldRunLiveMarketRequests && enableDeferredIndicators && Boolean(multiframeSignature),
+    enabled: shouldRunDeferredIndicatorRequests && enableDeferredIndicators && Boolean(multiframeSignature),
     symbols: multiframeSymbols,
     batchSize: MULTIFRAME_BATCH_SIZE,
     batchDelayMs: MULTIFRAME_BATCH_DELAY_MS,
@@ -353,20 +353,30 @@ export default function Home() {
   }, [activeTab]);
 
   useEffect(() => {
-    if (!shouldRunLiveMarketRequests || liveMarketSymbolCount === 0 || (enableHeavyMarket && enableDeferredIndicators)) {
+    if (
+      !shouldRunLiveMarketRequests ||
+      liveMarketSymbolCount === 0 ||
+      (enableHeavyMarket && (enableDeferredIndicators || !shouldRunDeferredIndicatorRequests))
+    ) {
       return;
     }
 
     const timer = window.setTimeout(() => {
       setEnableHeavyMarket(true);
-      setEnableDeferredIndicators(true);
+      setEnableDeferredIndicators(shouldRunDeferredIndicatorRequests);
     }, 150);
 
     return () => window.clearTimeout(timer);
-  }, [enableDeferredIndicators, enableHeavyMarket, liveMarketSymbolCount, shouldRunLiveMarketRequests]);
+  }, [
+    enableDeferredIndicators,
+    enableHeavyMarket,
+    liveMarketSymbolCount,
+    shouldRunDeferredIndicatorRequests,
+    shouldRunLiveMarketRequests,
+  ]);
 
   useEffect(() => {
-    if (!shouldRunLiveMarketRequests || !enableDeferredIndicators || liveMarketSymbolCount === 0) {
+    if (!shouldRunDeferredIndicatorRequests || !enableDeferredIndicators || liveMarketSymbolCount === 0) {
       setDeferredIndicatorsExpanded(false);
       setDeferredIndicatorsFullCoverage(false);
       return;
@@ -385,7 +395,7 @@ export default function Home() {
       window.clearTimeout(expandTimer);
       window.clearTimeout(fullCoverageTimer);
     };
-  }, [enableDeferredIndicators, liveMarketSymbolCount, shouldRunLiveMarketRequests]);
+  }, [enableDeferredIndicators, liveMarketSymbolCount, shouldRunDeferredIndicatorRequests]);
 
   useEffect(() => {
     if (shouldRunLiveMarketRequests) {
@@ -445,15 +455,13 @@ export default function Home() {
 
   const isHeavyMarketFreshEnough = isHeavyMarketPayloadFresh(heavyMarketPayload, MAX_STRATEGY_MARKET_DATA_AGE_MS);
   const isFrameDataFreshEnough = isTimedPayloadFresh(framePayload, MAX_STRATEGY_FRAME_DATA_AGE_SECONDS);
-  const isRsrsDataFreshEnough = isTimedPayloadFresh(rsrsPayload, MAX_STRATEGY_RSRS_DATA_AGE_SECONDS);
   const strategyFrameData = isFrameDataFreshEnough ? frameData : undefined;
-  const strategyRsrsData = isRsrsDataFreshEnough ? rsrsData : undefined;
 
   const strategyMarketData = useMemo(
     () => isHeavyMarketFreshEnough
-      ? normalizeTickerUniverse(heavyMarketData, strategyFrameData, strategyRsrsData).filter(isStrategyScanCandidate)
+      ? normalizeTickerUniverse(heavyMarketData, strategyFrameData, undefined).filter(isStrategyScanCandidate)
       : [],
-    [heavyMarketData, isHeavyMarketFreshEnough, strategyFrameData, strategyRsrsData]
+    [heavyMarketData, isHeavyMarketFreshEnough, strategyFrameData]
   );
 
   const deferredStrategyMarketData = useDeferredValue(strategyMarketData);

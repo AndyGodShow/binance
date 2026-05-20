@@ -1,5 +1,6 @@
 import type { TickerData } from './types.ts';
 import type { StrategyId } from './strategyParameters.ts';
+import { isWeiShenUniverseSymbol } from './weiShenUniverse.ts';
 
 function pickTickerFields<const K extends readonly (keyof TickerData)[]>(
     ticker: TickerData,
@@ -269,6 +270,22 @@ function isMissingStrategyInputValue(value: unknown): boolean {
     return false;
 }
 
+function isStrategyReadinessApplicable(ticker: TickerData, strategyId: StrategyId): boolean {
+    if (strategyId === 'strong-breakout') {
+        return ticker.breakout21dHigh !== undefined || ticker.breakout21dPercent !== undefined;
+    }
+
+    if (strategyId === 'wei-shen-ledger') {
+        return isWeiShenUniverseSymbol(ticker.symbol);
+    }
+
+    if (strategyId === 'sentiment-hotspot') {
+        return Boolean(ticker.strategyContexts?.sentimentHotspot);
+    }
+
+    return true;
+}
+
 export function buildStrategyInputReadinessSummary(
     tickers: TickerData[],
     strategyIds: readonly StrategyId[],
@@ -287,6 +304,10 @@ export function buildStrategyInputReadinessSummary(
         const entry = byStrategy[strategyId];
 
         tickers.forEach((ticker) => {
+            if (!isStrategyReadinessApplicable(ticker, strategyId)) {
+                return;
+            }
+
             const missingFields = requiredFields.filter((field) =>
                 isMissingStrategyInputValue(getTickerPathValue(ticker, field))
             );

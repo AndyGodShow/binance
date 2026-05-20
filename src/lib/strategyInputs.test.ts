@@ -239,7 +239,7 @@ test('strategy input adapters preserve the declared ticker fields', () => {
 
 test('strategy input readiness summary reports missing key fields per strategy', () => {
     const fallbackTicker: TickerData = {
-        symbol: 'LIGHTUSDT',
+        symbol: 'BTCUSDT',
         lastPrice: '100',
         priceChange: '1',
         priceChangePercent: '2',
@@ -251,6 +251,21 @@ test('strategy input readiness summary reports missing key fields per strategy',
         quoteVolume: '5678',
         openTime: 1,
         closeTime: 2,
+        strategyContexts: {
+            sentimentHotspot: {
+                heatSourceCount: 1,
+                hasSquare: false,
+                hasCoinGecko: false,
+                hasVolSurge: true,
+                volumeSurgeRatio: 3,
+                oiUsd: 10_000_000,
+                oiChangePct: 10,
+                oiSegments: [],
+                oiRising: true,
+                oiStrong: false,
+                fundingRatePct: -0.02,
+            },
+        },
     };
 
     const summary = buildStrategyInputReadinessSummary([fallbackTicker], [
@@ -273,5 +288,39 @@ test('strategy input readiness summary reports missing key fields per strategy',
     assert.equal(summary.byStrategy['wei-shen-ledger'].symbolsMissingRequiredFields, 1);
     assert.ok(summary.byStrategy['wei-shen-ledger'].missingFieldCounts['strategyContexts.weiShen'] >= 1);
     assert.equal(summary.byStrategy['sentiment-hotspot'].symbolsMissingRequiredFields, 1);
-    assert.ok(summary.byStrategy['sentiment-hotspot'].missingFieldCounts['strategyContexts.sentimentHotspot'] >= 1);
+    assert.ok(summary.byStrategy['sentiment-hotspot'].missingFieldCounts.fundingRate >= 1);
+});
+
+test('strategy input readiness only checks strategy-specific applicable symbols', () => {
+    const ordinaryTicker: TickerData = {
+        symbol: 'LIGHTUSDT',
+        lastPrice: '100',
+        priceChange: '1',
+        priceChangePercent: '2',
+        weightedAvgPrice: '99',
+        prevClosePrice: '98',
+        highPrice: '105',
+        lowPrice: '95',
+        volume: '1234',
+        quoteVolume: '5678',
+        openTime: 1,
+        closeTime: 2,
+        fundingRate: '0.0001',
+    };
+
+    const weiShenTicker: TickerData = {
+        ...ordinaryTicker,
+        symbol: 'BTCUSDT',
+    };
+
+    const summary = buildStrategyInputReadinessSummary([ordinaryTicker, weiShenTicker], [
+        'strong-breakout',
+        'wei-shen-ledger',
+        'sentiment-hotspot',
+    ]);
+
+    assert.equal(summary.byStrategy['strong-breakout'].symbolsMissingRequiredFields, 0);
+    assert.equal(summary.byStrategy['wei-shen-ledger'].symbolsMissingRequiredFields, 1);
+    assert.deepEqual(summary.byStrategy['wei-shen-ledger'].sampleSymbols, ['BTCUSDT']);
+    assert.equal(summary.byStrategy['sentiment-hotspot'].symbolsMissingRequiredFields, 0);
 });
