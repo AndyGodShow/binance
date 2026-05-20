@@ -62,6 +62,8 @@ test('selectOpenInterestCoverageSymbols keeps every valid futures symbol for ful
         { symbol: 'BUSDT', quoteVolume: '5000' },
         { symbol: 'BTCUSDT', quoteVolume: '1000' },
         { symbol: '币安人生USDT', quoteVolume: '9999' },
+        { symbol: '我踏马来了USDT', quoteVolume: '6000' },
+        { symbol: '龙虾USDT', quoteVolume: '5500' },
         { symbol: 'ETHUSDT', quoteVolume: '4000' },
         { symbol: 'SOLUSDT', quoteVolume: '3000' },
         { symbol: 'DOGEUSDT', quoteVolume: '2000' },
@@ -70,7 +72,7 @@ test('selectOpenInterestCoverageSymbols keeps every valid futures symbol for ful
 
     assert.deepEqual(
         selectOpenInterestCoverageSymbols(tickers),
-        ['BUSDT', 'ETHUSDT', 'SOLUSDT', 'DOGEUSDT', 'BTCUSDT']
+        ['币安人生USDT', '我踏马来了USDT', '龙虾USDT', 'BUSDT', 'ETHUSDT', 'SOLUSDT', 'DOGEUSDT', 'BTCUSDT']
     );
 });
 

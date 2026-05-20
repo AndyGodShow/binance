@@ -3,6 +3,7 @@ export type ValidationResult<T> =
     | { ok: false; details: string };
 
 const FUTURES_SYMBOL_PATTERN = /^[A-Z0-9]{1,20}USDT$/;
+const LOCALIZED_FUTURES_SYMBOL_PATTERN = /^[\p{L}\p{N}]{1,40}USDT$/u;
 const BACKTEST_INTERVALS = new Set(['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '8h', '12h', '1d']);
 const LONG_SHORT_PERIODS = new Set(['5m', '15m', '30m', '1h', '2h', '4h', '6h', '12h', '1d']);
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
@@ -44,14 +45,19 @@ export function invalidRequestBody(details: string) {
     };
 }
 
-export function normalizeFuturesSymbol(value: string | null, fallback?: string): ValidationResult<string> {
+export function normalizeFuturesSymbol(
+    value: string | null,
+    fallback?: string,
+    options: { allowLocalized?: boolean } = {}
+): ValidationResult<string> {
     const raw = value ?? fallback;
     if (typeof raw !== 'string' || raw.trim().length === 0) {
         return invalid('symbol is required');
     }
 
     const symbol = raw.trim().toUpperCase();
-    if (!FUTURES_SYMBOL_PATTERN.test(symbol)) {
+    const pattern = options.allowLocalized ? LOCALIZED_FUTURES_SYMBOL_PATTERN : FUTURES_SYMBOL_PATTERN;
+    if (!pattern.test(symbol)) {
         return invalid('symbol must match Binance USDT futures format');
     }
 
@@ -100,7 +106,7 @@ function parseTimestamp(searchParams: URLSearchParams, key: string): ValidationR
 
 export function validateSymbolsParam(
     searchParams: URLSearchParams,
-    options: { maxSymbols: number }
+    options: { maxSymbols: number; allowLocalized?: boolean }
 ): ValidationResult<string[]> {
     const raw = searchParams.get('symbols');
     if (!raw || raw.trim().length === 0) {
@@ -110,7 +116,7 @@ export function validateSymbolsParam(
     const symbols: string[] = [];
     const seen = new Set<string>();
     for (const part of raw.split(',')) {
-        const symbolResult = normalizeFuturesSymbol(part);
+        const symbolResult = normalizeFuturesSymbol(part, undefined, { allowLocalized: options.allowLocalized });
         if (!symbolResult.ok) {
             return symbolResult;
         }

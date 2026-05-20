@@ -136,7 +136,7 @@ test('buildDashboardLeaderboards ranks price, oi ratio, and funding slices', () 
     );
 });
 
-test('getOpenInterestCoverageSummary counts only OI-compatible futures symbols', () => {
+test('getOpenInterestCoverageSummary includes localized OI-compatible futures symbols', () => {
     const tickers = [
         createTicker('BUSDT'),
         createTicker('BTCUSDT'),
@@ -161,10 +161,19 @@ test('getOpenInterestCoverageSummary counts only OI-compatible futures symbols',
             change4h: { percent: 1, value: 1 },
             change24h: { percent: 1, value: 1 },
         },
+        币安人生USDT: {
+            symbol: '币安人生USDT',
+            asOf: 1,
+            currentValue: 100,
+            change15m: { percent: 1, value: 1 },
+            change1h: { percent: 1, value: 1 },
+            change4h: { percent: 1, value: 1 },
+            change24h: { percent: 1, value: 1 },
+        },
     };
 
     assert.deepEqual(getOpenInterestCoverageSummary(tickers, oiSnapshots), {
-        covered: 2,
-        compatible: 2,
+        covered: 3,
+        compatible: 3,
     });
 });

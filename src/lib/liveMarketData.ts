@@ -2,6 +2,7 @@ import type { OpenInterestFrameSnapshot, TickerData } from './types.ts';
 import { extractSymbolValueMap } from './dataQualityStatus.ts';
 
 const INDICATOR_SYMBOL_PATTERN = /^[A-Z0-9]{1,20}USDT$/;
+const OPEN_INTEREST_SYMBOL_PATTERN = /^[\p{L}\p{N}]{1,40}USDT$/u;
 
 export type MultiFrameDataMap = Record<string, { o15m: number; o1h: number; o4h: number }>;
 export type OpenInterestFrameDataMap = Record<string, OpenInterestFrameSnapshot>;
@@ -131,7 +132,10 @@ export function selectFullCoverageFuturesIndicatorSymbols(
 export function selectOpenInterestCoverageSymbols(
     tickers: Array<Pick<TickerData, 'symbol' | 'quoteVolume'>>
 ): string[] {
-    return selectValidFuturesIndicatorSymbols(tickers);
+    return [...tickers]
+        .filter((ticker) => OPEN_INTEREST_SYMBOL_PATTERN.test(ticker.symbol))
+        .sort((a, b) => Number(b.quoteVolume) - Number(a.quoteVolume))
+        .map((ticker) => ticker.symbol);
 }
 
 export function isStrategyScanCandidate(

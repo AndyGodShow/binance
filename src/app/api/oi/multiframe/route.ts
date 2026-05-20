@@ -13,7 +13,10 @@ const REQUEST_TIMEOUT_MS = 35000;
 const REQUEST_BATCH_SIZE = 10;
 
 export async function GET(request: Request) {
-    const validatedSymbols = validateSymbolsParam(new URL(request.url).searchParams, { maxSymbols: 50 });
+    const validatedSymbols = validateSymbolsParam(new URL(request.url).searchParams, {
+        maxSymbols: 50,
+        allowLocalized: true,
+    });
     if (!validatedSymbols.ok) {
         return NextResponse.json(invalidRequestBody(validatedSymbols.details), { status: 400 });
     }

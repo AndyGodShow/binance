@@ -101,6 +101,30 @@ test('deduplicates and normalizes symbol batches', () => {
     }
 });
 
+test('accepts localized Binance symbols only when enabled for symbol batches', () => {
+    const strictResult = validateSymbolsParam(new URLSearchParams('symbols=币安人生USDT'), { maxSymbols: 20 });
+    assert.equal(strictResult.ok, false);
+
+    const localizedResult = validateSymbolsParam(
+        new URLSearchParams('symbols=币安人生USDT,龙虾USDT'),
+        { maxSymbols: 20, allowLocalized: true }
+    );
+
+    assert.equal(localizedResult.ok, true);
+    if (localizedResult.ok) {
+        assert.deepEqual(localizedResult.value, ['币安人生USDT', '龙虾USDT']);
+    }
+});
+
+test('rejects unsafe localized symbol batch values', () => {
+    const result = validateSymbolsParam(
+        new URLSearchParams('symbols=https://evil.test/币安人生USDT'),
+        { maxSymbols: 20, allowLocalized: true }
+    );
+
+    assert.equal(result.ok, false);
+});
+
 test('validates onchain keyword length and scope', () => {
     const tooLongKeyword = 'A'.repeat(65);
     const result = validateOnchainDashboardParams(new URLSearchParams(`keyword=${tooLongKeyword}&scope=contracts`));
