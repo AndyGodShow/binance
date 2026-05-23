@@ -12,6 +12,7 @@ interface DetectVisibleStrategySignalsForTickerParams {
     runtimeState: StrategyRuntimeState;
     minConfidence: number;
     parameterOverrides?: DeepPartial<StrategyParameterConfigMap>;
+    onSignalFiltered?: (signal: StrategySignal) => void;
 }
 
 export function detectVisibleStrategySignalsForTicker({
@@ -21,6 +22,7 @@ export function detectVisibleStrategySignalsForTicker({
     runtimeState,
     minConfidence,
     parameterOverrides,
+    onSignalFiltered,
 }: DetectVisibleStrategySignalsForTickerParams): StrategySignal[] {
     const symbolSignals: StrategySignal[] = [];
 
@@ -33,8 +35,14 @@ export function detectVisibleStrategySignalsForTicker({
             now,
             runtimeState,
             parameterOverrides,
+            cooldownPolicy: 'evaluate-only',
         });
-        if (!signal || !isStrategySignalVisible(signal, minConfidence)) {
+        if (!signal) {
+            return;
+        }
+
+        if (!isStrategySignalVisible(signal, minConfidence)) {
+            onSignalFiltered?.(signal);
             return;
         }
 

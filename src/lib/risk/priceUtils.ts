@@ -3,7 +3,7 @@
  * 根据价格大小动态调整精度
  */
 
-const MAX_PRICE_DECIMALS = 8;
+const MAX_PRICE_DECIMALS = 12;
 
 function clampPricePrecision(precision: number): number {
     return Math.min(MAX_PRICE_DECIMALS, Math.max(0, precision));
@@ -29,7 +29,7 @@ export function getPricePrecision(price: number | string, extraDecimals: number 
 
     const basePrecision = numericPrice >= 1
         ? 2
-        : Math.ceil(-Math.log10(numericPrice)) + 1;
+        : Math.ceil(-Math.log10(numericPrice)) + 3;
 
     return clampPricePrecision(basePrecision + extraDecimals);
 }

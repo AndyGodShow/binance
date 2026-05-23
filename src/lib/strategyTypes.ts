@@ -9,6 +9,7 @@ import type { DeepPartial, StrategyParameterConfigMap } from './strategyParamete
 import type { StrategyRuntimeState } from './strategyRuntimeState.ts';
 
 export type StrategySignalStatus = 'active' | 'snapshot' | 'cooling';
+export type StrategyCooldownPolicy = 'enforce-and-record' | 'evaluate-only';
 
 export interface StrategyPortfolioState {
     activeSymbols?: string[];
@@ -26,6 +27,7 @@ export interface StrategyDetectionContext {
     portfolioState?: StrategyPortfolioState;
     parameterOverrides?: DeepPartial<StrategyParameterConfigMap>;
     runtimeState?: StrategyRuntimeState;
+    cooldownPolicy?: StrategyCooldownPolicy;
 }
 
 export interface StrategySignalExplainLayer {

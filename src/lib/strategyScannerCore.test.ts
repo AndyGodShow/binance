@@ -65,3 +65,42 @@ test('detectVisibleStrategySignalsForTicker forwards parameter overrides to stra
     assert.equal(signals.length, 1);
     assert.equal(receivedOverrides, parameterOverrides);
 });
+
+test('detectVisibleStrategySignalsForTicker evaluates strategies without enforcing cooldown', () => {
+    let receivedCooldownPolicy: unknown;
+    const strategy: TradingStrategy = {
+        id: 'test-strategy',
+        name: 'Test Strategy',
+        description: 'test',
+        category: 'special',
+        enabled: true,
+        detect: (_ticker, context) => {
+            receivedCooldownPolicy = context?.cooldownPolicy;
+            if (context?.cooldownPolicy !== 'evaluate-only') {
+                return null;
+            }
+
+            return {
+                symbol: 'BTCUSDT',
+                strategyId: 'test-strategy',
+                strategyName: 'Test Strategy',
+                direction: 'long',
+                confidence: 90,
+                reason: 'test',
+                metrics: {},
+                timestamp: context?.now ?? 0,
+            };
+        },
+    };
+
+    const signals = detectVisibleStrategySignalsForTicker({
+        ticker: createTicker(),
+        strategies: [strategy],
+        now: 123,
+        runtimeState: createStrategyRuntimeState(),
+        minConfidence: 80,
+    });
+
+    assert.equal(receivedCooldownPolicy, 'evaluate-only');
+    assert.equal(signals.length, 1);
+});

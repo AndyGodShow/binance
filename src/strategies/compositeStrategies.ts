@@ -4,7 +4,11 @@ import { logger } from '../lib/logger.ts';
 import { APP_CONFIG } from '../lib/config.ts';
 import { getTrendConfirmationRules } from '../lib/trendStateManager.ts';
 import { getStrategyParameterConfig } from '../lib/strategyParameters.ts';
-import { getStrategyRuntimeState } from '../lib/strategyRuntimeState.ts';
+import {
+    getStrategyRuntimeState,
+    shouldEnforceStrategyCooldown,
+    shouldRecordStrategyCooldown,
+} from '../lib/strategyRuntimeState.ts';
 import { calculateRiskManagement } from '../lib/risk/riskCalculator.ts';
 import {
     toCapitalInflowStrategyInput,
@@ -37,7 +41,7 @@ export const strongBreakoutStrategy: TradingStrategy = {
         const input = toStrongBreakoutStrategyInput(ticker);
         const params = getStrategyParameterConfig('strong-breakout', context?.parameterOverrides?.['strong-breakout']);
         const runtimeState = getStrategyRuntimeState(context);
-        if (runtimeState.cooldown.check(input.symbol, 'strong-breakout', params.cooldownPeriodMs)) {
+        if (shouldEnforceStrategyCooldown(context) && runtimeState.cooldown.check(input.symbol, 'strong-breakout', params.cooldownPeriodMs)) {
             return null;
         }
 
@@ -202,7 +206,9 @@ export const strongBreakoutStrategy: TradingStrategy = {
 
             const metConditions = conditions.filter(c => c.met).map(c => c.description);
 
-            runtimeState.cooldown.record(input.symbol, 'strong-breakout');
+            if (shouldRecordStrategyCooldown(context)) {
+                runtimeState.cooldown.record(input.symbol, 'strong-breakout');
+            }
 
             // 🔥 计算风险管理参数
             let riskManagement;
@@ -274,7 +280,7 @@ export const trendConfirmationStrategy: TradingStrategy = {
         const params = getStrategyParameterConfig('trend-confirmation', context?.parameterOverrides?.['trend-confirmation']);
         const trendRules = getTrendConfirmationRules();
         const runtimeState = getStrategyRuntimeState(context);
-        if (runtimeState.cooldown.check(input.symbol, 'trend-confirmation', params.cooldownPeriodMs)) {
+        if (shouldEnforceStrategyCooldown(context) && runtimeState.cooldown.check(input.symbol, 'trend-confirmation', params.cooldownPeriodMs)) {
             return null;
         }
 
@@ -474,7 +480,9 @@ export const trendConfirmationStrategy: TradingStrategy = {
 
         const metConditions = conditions.filter(c => c.met).map(c => c.description);
 
-        runtimeState.cooldown.record(input.symbol, 'trend-confirmation');
+        if (shouldRecordStrategyCooldown(context)) {
+            runtimeState.cooldown.record(input.symbol, 'trend-confirmation');
+        }
         const eventLabel = evaluation.event === 'reversal'
             ? '趋势反转确认'
             : evaluation.event === 'resume'
@@ -548,7 +556,7 @@ export const capitalInflowStrategy: TradingStrategy = {
         const input = toCapitalInflowStrategyInput(ticker);
         const params = getStrategyParameterConfig('capital-inflow', context?.parameterOverrides?.['capital-inflow']);
         const runtimeState = getStrategyRuntimeState(context);
-        if (runtimeState.cooldown.check(input.symbol, 'capital-inflow', params.cooldownPeriodMs)) {
+        if (shouldEnforceStrategyCooldown(context) && runtimeState.cooldown.check(input.symbol, 'capital-inflow', params.cooldownPeriodMs)) {
             return null;
         }
 
@@ -656,7 +664,9 @@ export const capitalInflowStrategy: TradingStrategy = {
             }
 
             const metConditions = conditions.filter(c => c.met).map(c => c.description);
-            runtimeState.cooldown.record(input.symbol, 'capital-inflow');
+            if (shouldRecordStrategyCooldown(context)) {
+                runtimeState.cooldown.record(input.symbol, 'capital-inflow');
+            }
 
             // 🔥 计算风险管理参数
             let riskManagement;

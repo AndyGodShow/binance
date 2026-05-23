@@ -4,6 +4,16 @@ export interface MacroSourceAsset {
     market: string;
     price: number;
     changePercent: number;
+    dataTimestamp?: string;
+    session?: MacroAssetSession;
+}
+
+export interface MacroAssetSession {
+    state: 'pre' | 'post';
+    label: string;
+    price: number;
+    changePercent: number;
+    dataTimestamp?: string;
 }
 
 export const BTC_LONG_SHORT_RATIO_PERIOD = '15m';
@@ -12,6 +22,7 @@ export interface FearGreedSnapshot {
     value: number;
     valueText?: string;
     timestamp?: string;
+    nextUpdateSeconds?: number;
 }
 
 export interface BtcSnapshot {
@@ -21,11 +32,16 @@ export interface BtcSnapshot {
     low24h: number;
     fundingRate: number;
     longShortRatio: number;
+    dataTimestamp?: string;
+    fundingTimestamp?: string;
+    nextFundingTimestamp?: string;
+    longShortRatioTimestamp?: string;
 }
 
 export interface EthBtcSnapshot {
     price: number;
     changePercent: number;
+    dataTimestamp?: string;
 }
 
 export interface BtcEtfFlowEntry {
@@ -44,9 +60,16 @@ export interface BtcEtfFlowSnapshot {
     rolling7dNegativeDays: number;
 }
 
+interface BitboBtcEtfFlowApiPayload {
+    data?: unknown;
+}
+
 export interface MacroSourcePayload {
     updatedAt: string;
     assets: Record<string, MacroSourceAsset>;
+    usEquities?: Record<string, MacroSourceAsset>;
+    hkEquities?: Record<string, MacroSourceAsset>;
+    aShareEquities?: Record<string, MacroSourceAsset>;
     fearGreed: FearGreedSnapshot;
     btc: BtcSnapshot;
     ethBtc: EthBtcSnapshot;
@@ -59,6 +82,7 @@ export interface MacroBoardItem {
     market: string;
     price: number;
     changePercent: number;
+    session?: MacroAssetSession;
 }
 
 export interface MacroBoardGroup {
@@ -84,6 +108,84 @@ export interface MacroSourceStatus {
     detail?: string;
     errorKind?: 'timeout' | 'upstream_error' | 'empty_response' | 'invalid_response' | 'unknown';
     updatedAt?: number;
+    dataTimestamp?: string;
+    latencyMs?: number;
+    freshness?: 'realtime' | 'intraday' | 'daily' | 'stale' | 'unknown';
+}
+
+export interface MacroUsEquityGroupSummary {
+    title: string;
+    averageChangePercent: number;
+    advancers: number;
+    decliners: number;
+    totalCount: number;
+}
+
+export interface MacroUsEquitiesDashboard {
+    groups: MacroBoardGroup[];
+    summary: {
+        totalCount: number;
+        advancers: number;
+        decliners: number;
+        averageChangePercent: number;
+        strongest?: MacroBoardItem;
+        weakest?: MacroBoardItem;
+        strongestGroup?: MacroUsEquityGroupSummary;
+        weakestGroup?: MacroUsEquityGroupSummary;
+    };
+    session?: {
+        label: string;
+        state: 'pre' | 'post';
+        activeCount: number;
+        dataTimestamp?: string;
+    };
+}
+
+export type MacroEquityObserverDashboard = MacroUsEquitiesDashboard;
+
+export type MacroFreshnessTarget = 'realtime' | 'intraday' | 'daily';
+
+export function classifyMacroFreshness(
+    dataTimestamp: string | undefined,
+    nowMs = Date.now(),
+    target: MacroFreshnessTarget = 'intraday'
+): MacroSourceStatus['freshness'] {
+    if (!dataTimestamp) {
+        return 'unknown';
+    }
+
+    const parsed = Date.parse(dataTimestamp);
+    if (!Number.isFinite(parsed)) {
+        return 'unknown';
+    }
+
+    const ageMs = Math.max(0, nowMs - parsed);
+    if (target === 'realtime') {
+        return ageMs <= 5 * 60 * 1000 ? 'realtime' : ageMs <= 24 * 60 * 60 * 1000 ? 'intraday' : 'stale';
+    }
+    if (target === 'daily') {
+        return ageMs <= 3 * 24 * 60 * 60 * 1000 ? 'daily' : 'stale';
+    }
+    return ageMs <= 24 * 60 * 60 * 1000 ? 'intraday' : 'stale';
+}
+
+function getEtfProviderPriority(provider?: string): number {
+    if (provider === 'Bitbo API') return 3;
+    if (provider === 'Bitbo') return 2;
+    if (provider === 'Farside') return 1;
+    return 0;
+}
+
+export function selectFreshestBtcEtfFlow(snapshots: Array<BtcEtfFlowSnapshot | undefined>): BtcEtfFlowSnapshot | undefined {
+    return snapshots
+        .filter((snapshot): snapshot is BtcEtfFlowSnapshot => Boolean(snapshot))
+        .sort((left, right) => {
+            const dateComparison = right.date.localeCompare(left.date);
+            if (dateComparison !== 0) {
+                return dateComparison;
+            }
+            return getEtfProviderPriority(right.provider) - getEtfProviderPriority(left.provider);
+        })[0];
 }
 
 export function buildEtfFlowSourceStatus(input: {
@@ -98,14 +200,15 @@ export function buildEtfFlowSourceStatus(input: {
             provider: 'Unavailable',
             status: 'unavailable',
             detail: 'ETF flow 当前不可用',
+            freshness: 'unknown',
         };
     }
 
     const detailParts = [input.snapshot.date];
     if (!input.primaryAvailable && input.secondaryAvailable) {
         detailParts.push('主源不可用，正在使用备用 ETF 数据源');
-    } else if (input.snapshot.provider === 'Bitbo' && input.primaryAvailable) {
-        detailParts.push('Bitbo 更新更靠前');
+    } else if (!['Bitbo API', 'Bitbo'].includes(input.snapshot.provider || '') && input.primaryAvailable) {
+        detailParts.push('备用源更新更靠前');
     }
     if (input.primaryAvailable && input.secondaryAvailable) {
         detailParts.push('备用源已交叉拉取');
@@ -117,6 +220,8 @@ export function buildEtfFlowSourceStatus(input: {
         provider: input.snapshot.provider || 'Unknown',
         status: input.primaryAvailable ? 'live' : 'fallback',
         detail: detailParts.join(' · '),
+        dataTimestamp: input.snapshot.date,
+        freshness: 'daily',
     };
 }
 
@@ -147,12 +252,18 @@ export interface MacroDashboardData {
         lsRatio: MacroMonitorCard;
     };
     etfFlow?: BtcEtfFlowSnapshot;
+    usEquities: MacroUsEquitiesDashboard;
+    hkEquities: MacroEquityObserverDashboard;
+    aShareEquities: MacroEquityObserverDashboard;
     insights: string[];
     sourceStatus: MacroSourceStatus[];
 }
 
-type PersistedMacroDashboardData = Omit<Partial<MacroDashboardData>, 'etfFlow'> & {
+type PersistedMacroDashboardData = Omit<Partial<MacroDashboardData>, 'etfFlow' | 'usEquities' | 'hkEquities' | 'aShareEquities'> & {
     etfFlow?: Partial<BtcEtfFlowSnapshot>;
+    usEquities?: Partial<MacroUsEquitiesDashboard>;
+    hkEquities?: Partial<MacroEquityObserverDashboard>;
+    aShareEquities?: Partial<MacroEquityObserverDashboard>;
 };
 
 const ETF_COLUMN_SYMBOLS = ['IBIT', 'FBTC', 'BITB', 'ARKB', 'BTCO', 'EZBC', 'BRRR', 'HODL', 'BTCW', 'GBTC', 'BTC', 'DEFI'];
@@ -169,6 +280,24 @@ const MACRO_GROUPS: Array<{ title: string; markets: string[] }> = [
     { title: '大宗商品', markets: ['大宗商品', '大宗'] },
     { title: '数字资产 ETF', markets: ['数字资产 ETF', '比特币 ETF'] },
     { title: '中韩日指数', markets: ['中韩日指数', '韩日指数'] },
+];
+
+const US_EQUITY_GROUPS: Array<{ title: string; markets: string[] }> = [
+    { title: '七姐妹', markets: ['七姐妹'] },
+    { title: '多空杠杆 ETF/ETN', markets: ['多空杠杆 ETF/ETN', '多空杠杆 ETF'] },
+    { title: '加密相关股', markets: ['加密相关股'] },
+    { title: '中概观察', markets: ['中概观察'] },
+    { title: '板块总览', markets: ['板块总览'] },
+];
+
+const CHINA_EQUITY_GROUPS: Array<{ title: string; markets: string[] }> = [
+    { title: '指数/宽基', markets: ['指数/宽基', '指数宽基'] },
+    { title: '科技互联网', markets: ['科技互联网'] },
+    { title: '金融地产', markets: ['金融地产'] },
+    { title: '汽车新能源', markets: ['汽车新能源'] },
+    { title: '半导体AI', markets: ['半导体AI', '半导体 AI'] },
+    { title: '消费医药', markets: ['消费医药'] },
+    { title: '资源公用', markets: ['资源公用'] },
 ];
 
 function clampScore(score: number): number {
@@ -256,8 +385,11 @@ function formatSignedPercent(value: number, fractionDigits = 2): string {
     return `${sign}${value.toFixed(fractionDigits)}%`;
 }
 
-function buildGroups(assets: Record<string, MacroSourceAsset>): MacroBoardGroup[] {
-    return MACRO_GROUPS.map((group) => ({
+function buildBoardGroups(
+    assets: Record<string, MacroSourceAsset>,
+    groups: Array<{ title: string; markets: string[] }>
+): MacroBoardGroup[] {
+    return groups.map((group) => ({
         title: group.title,
         items: Object.values(assets)
             .filter((asset) => group.markets.includes(asset.market))
@@ -267,8 +399,71 @@ function buildGroups(assets: Record<string, MacroSourceAsset>): MacroBoardGroup[
                 market: asset.market,
                 price: asset.price,
                 changePercent: asset.changePercent,
+                session: asset.session,
             })),
     })).filter((group) => group.items.length > 0);
+}
+
+function buildGroups(assets: Record<string, MacroSourceAsset>): MacroBoardGroup[] {
+    return buildBoardGroups(assets, MACRO_GROUPS);
+}
+
+function summarizeEquityGroup(group: MacroBoardGroup): MacroUsEquityGroupSummary {
+    const totalChange = group.items.reduce((sum, item) => sum + item.changePercent, 0);
+    return {
+        title: group.title,
+        averageChangePercent: group.items.length > 0 ? totalChange / group.items.length : 0,
+        advancers: group.items.filter((item) => item.changePercent > 0).length,
+        decliners: group.items.filter((item) => item.changePercent < 0).length,
+        totalCount: group.items.length,
+    };
+}
+
+function buildEquitiesDashboard(
+    assets: Record<string, MacroSourceAsset> = {},
+    groupConfig: Array<{ title: string; markets: string[] }> = US_EQUITY_GROUPS
+): MacroEquityObserverDashboard {
+    const groups = buildBoardGroups(assets, groupConfig);
+    const items = groups.flatMap((group) => group.items);
+    const averageChangePercent = items.length > 0
+        ? items.reduce((sum, item) => sum + item.changePercent, 0) / items.length
+        : 0;
+    const groupSummaries = groups.map(summarizeEquityGroup);
+    const sessionItems = items.filter((item) => item.session);
+    const latestSession = sessionItems
+        .map((item) => item.session)
+        .filter((session): session is MacroAssetSession => Boolean(session))
+        .sort((left, right) => Date.parse(right.dataTimestamp || '') - Date.parse(left.dataTimestamp || ''))[0];
+
+    return {
+        groups,
+        summary: {
+            totalCount: items.length,
+            advancers: items.filter((item) => item.changePercent > 0).length,
+            decliners: items.filter((item) => item.changePercent < 0).length,
+            averageChangePercent,
+            strongest: [...items].sort((left, right) => right.changePercent - left.changePercent)[0],
+            weakest: [...items].sort((left, right) => left.changePercent - right.changePercent)[0],
+            strongestGroup: [...groupSummaries].sort((left, right) => right.averageChangePercent - left.averageChangePercent)[0],
+            weakestGroup: [...groupSummaries].sort((left, right) => left.averageChangePercent - right.averageChangePercent)[0],
+        },
+        session: latestSession
+            ? {
+                label: latestSession.label,
+                state: latestSession.state,
+                activeCount: sessionItems.length,
+                dataTimestamp: latestSession.dataTimestamp,
+            }
+            : undefined,
+    };
+}
+
+function buildUsEquitiesDashboard(assets: Record<string, MacroSourceAsset> = {}): MacroUsEquitiesDashboard {
+    return buildEquitiesDashboard(assets, US_EQUITY_GROUPS);
+}
+
+function buildChinaEquitiesDashboard(assets: Record<string, MacroSourceAsset> = {}): MacroEquityObserverDashboard {
+    return buildEquitiesDashboard(assets, CHINA_EQUITY_GROUPS);
 }
 
 function computeMomentumScore(payload: MacroSourcePayload): number {
@@ -465,8 +660,26 @@ export function buildMacroDashboard(payload: MacroSourcePayload): MacroDashboard
             },
         },
         etfFlow: payload.etfFlow,
+        usEquities: buildUsEquitiesDashboard(payload.usEquities),
+        hkEquities: buildChinaEquitiesDashboard(payload.hkEquities),
+        aShareEquities: buildChinaEquitiesDashboard(payload.aShareEquities),
         insights,
         sourceStatus: [],
+    };
+}
+
+function normalizeEquityDashboard(
+    dashboard?: Partial<MacroEquityObserverDashboard>,
+    defaults: MacroEquityObserverDashboard = buildEquitiesDashboard()
+): MacroEquityObserverDashboard {
+    return {
+        ...defaults,
+        ...(dashboard as Partial<MacroEquityObserverDashboard> | undefined),
+        groups: Array.isArray(dashboard?.groups) ? dashboard.groups : [],
+        summary: {
+            ...defaults.summary,
+            ...(dashboard?.summary || {}),
+        },
     };
 }
 
@@ -476,6 +689,9 @@ export function normalizeMacroDashboardData(data: PersistedMacroDashboardData): 
         groups: Array.isArray(data.groups) ? data.groups : [],
         insights: Array.isArray(data.insights) ? data.insights : [],
         sourceStatus: Array.isArray(data.sourceStatus) ? data.sourceStatus : [],
+        usEquities: normalizeEquityDashboard(data.usEquities, buildUsEquitiesDashboard()),
+        hkEquities: normalizeEquityDashboard(data.hkEquities, buildChinaEquitiesDashboard()),
+        aShareEquities: normalizeEquityDashboard(data.aShareEquities, buildChinaEquitiesDashboard()),
         etfFlow: data.etfFlow
             ? {
                 ...(data.etfFlow as BtcEtfFlowSnapshot),
@@ -612,7 +828,8 @@ export function parseBitboBtcEtfFlowHtml(html: string): BtcEtfFlowSnapshot {
         throw new Error('Bitbo ETF flow rows could not be parsed');
     }
 
-    const latest = rows[0];
+    const rowsByNewestDate = [...rows].sort((left, right) => right.date.localeCompare(left.date));
+    const latest = rowsByNewestDate[0];
     const latestFlows = headers
         .slice(1, totalIndex)
         .map((symbol, index) => ({
@@ -622,7 +839,7 @@ export function parseBitboBtcEtfFlowHtml(html: string): BtcEtfFlowSnapshot {
         .filter((entry) => entry.netInflowUsdMillion !== 0)
         .sort((left, right) => right.netInflowUsdMillion - left.netInflowUsdMillion);
 
-    const rolling = rows.slice(0, 7);
+    const rolling = rowsByNewestDate.slice(0, 7);
 
     return {
         date: latest.date,
@@ -631,5 +848,56 @@ export function parseBitboBtcEtfFlowHtml(html: string): BtcEtfFlowSnapshot {
         rolling7dNetInflowUsdMillion: rolling.reduce((sum, row) => sum + sanitizeFlowNumber(row.cells[totalIndex]), 0),
         rolling7dPositiveDays: rolling.filter((row) => sanitizeFlowNumber(row.cells[totalIndex]) > 0).length,
         rolling7dNegativeDays: rolling.filter((row) => sanitizeFlowNumber(row.cells[totalIndex]) < 0).length,
+    };
+}
+
+function parseBitboApiNumber(value: unknown): number {
+    if (typeof value === 'number') {
+        return Number.isFinite(value) ? value : 0;
+    }
+    if (typeof value !== 'string') {
+        return 0;
+    }
+
+    const parsed = Number.parseFloat(value.replace(/,/g, ''));
+    return Number.isFinite(parsed) ? parsed : 0;
+}
+
+export function parseBitboBtcEtfFlowApiResponse(payload: BitboBtcEtfFlowApiPayload): BtcEtfFlowSnapshot {
+    const rows = Array.isArray(payload.data)
+        ? payload.data
+            .filter((row): row is unknown[] => Array.isArray(row))
+            .map((row) => {
+                const dateValue = typeof row[0] === 'string' ? row[0] : '';
+                const date = /^\d{4}-\d{2}-\d{2}$/.test(dateValue) ? dateValue : null;
+                const rawDailyEtfChangeBtc = parseBitboApiNumber(row[2]);
+                const btcPrice = parseBitboApiNumber(row[5]);
+                return {
+                    date,
+                    totalNetInflowUsdMillion: (rawDailyEtfChangeBtc * btcPrice) / 1_000_000,
+                    btcPrice,
+                };
+            })
+            .filter((row): row is { date: string; totalNetInflowUsdMillion: number; btcPrice: number } =>
+                row.date !== null && Number.isFinite(row.totalNetInflowUsdMillion)
+            )
+            .sort((left, right) => right.date.localeCompare(left.date))
+        : [];
+
+    if (rows.length === 0) {
+        throw new Error('Bitbo ETF flow API returned no parseable rows');
+    }
+
+    const latest = rows[0];
+    const rolling = rows.slice(0, 7);
+
+    return {
+        date: latest.date,
+        totalNetInflowUsdMillion: latest.totalNetInflowUsdMillion,
+        btcPrice: latest.btcPrice || undefined,
+        flows: [],
+        rolling7dNetInflowUsdMillion: rolling.reduce((sum, row) => sum + row.totalNetInflowUsdMillion, 0),
+        rolling7dPositiveDays: rolling.filter((row) => row.totalNetInflowUsdMillion > 0).length,
+        rolling7dNegativeDays: rolling.filter((row) => row.totalNetInflowUsdMillion < 0).length,
     };
 }

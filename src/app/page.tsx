@@ -472,7 +472,7 @@ export default function Home() {
   );
 
   // Run strategy scanner
-  const { signals, readinessSummary, dismissSignal, clearAll: clearAllSignals } = useStrategyScanner(strategyScanData, {
+  const { signals, scanDiagnostics, dismissSignal, clearAll: clearAllSignals } = useStrategyScanner(strategyScanData, {
     parameterOverrides: strategyParameterOverrides,
   });
   const strategyMarketDataStatus = useMemo(
@@ -638,7 +638,7 @@ export default function Home() {
           clearAllSignals={clearAllSignals}
           onSymbolClick={handleSymbolClick}
           marketDataStatus={strategyMarketDataStatus}
-          readinessSummary={readinessSummary}
+          scanDiagnostics={scanDiagnostics}
         />
       )}
       {activeTab === 'trading' && (

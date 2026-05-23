@@ -22,3 +22,11 @@ export function createStrategyRuntimeState(): StrategyRuntimeState {
 export function getStrategyRuntimeState(context?: StrategyDetectionContext): StrategyRuntimeState {
     return context?.runtimeState ?? singletonStrategyRuntimeState;
 }
+
+export function shouldEnforceStrategyCooldown(context?: StrategyDetectionContext): boolean {
+    return context?.cooldownPolicy !== 'evaluate-only';
+}
+
+export function shouldRecordStrategyCooldown(context?: StrategyDetectionContext): boolean {
+    return context?.cooldownPolicy !== 'evaluate-only';
+}

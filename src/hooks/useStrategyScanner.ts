@@ -14,6 +14,7 @@ import { evaluateSentimentHotspotExitMonitor } from '@/lib/sentimentHotspot';
 import { createDismissedSignalKey } from '@/lib/strategySignalKeys';
 import { detectVisibleStrategySignalsForTicker } from '@/lib/strategyScannerCore';
 import { buildStrategyInputReadinessSummary } from '@/lib/strategyInputs';
+import { getStrategyParameterConfig } from '@/lib/strategyParameters';
 import type { DeepPartial, StrategyParameterConfigMap } from '@/lib/strategyParameters';
 import type { StrategyId } from '@/lib/strategyParameters';
 import type { StrategyInputReadinessSummary } from '@/lib/strategyInputs';
@@ -28,6 +29,16 @@ type DismissedSignalMap = Record<string, number>;
 
 interface UseStrategyScannerOptions {
     parameterOverrides?: DeepPartial<StrategyParameterConfigMap>;
+}
+
+export interface StrategyScanDiagnostics {
+    totalCandidates: number;
+    rescannedSymbols: number;
+    digestSkippedSymbols: number;
+    cooldownBlockedSignals: number;
+    confidenceFilteredSignals: number;
+    missingInputStrategyCount: number;
+    lastScannedAt: number | null;
 }
 
 const STATUS_PRIORITY: Record<StrategySignalStatus, number> = {
@@ -51,6 +62,82 @@ function compareSignals(a: StrategySignal, b: StrategySignal) {
         return statusDelta;
     }
     return b.timestamp - a.timestamp;
+}
+
+function createEmptyScanDiagnostics(): StrategyScanDiagnostics {
+    return {
+        totalCandidates: 0,
+        rescannedSymbols: 0,
+        digestSkippedSymbols: 0,
+        cooldownBlockedSignals: 0,
+        confidenceFilteredSignals: 0,
+        missingInputStrategyCount: 0,
+        lastScannedAt: null,
+    };
+}
+
+function stableStringify(value: unknown): string {
+    if (value === null || typeof value !== 'object') {
+        return JSON.stringify(value);
+    }
+
+    if (Array.isArray(value)) {
+        return `[${value.map(stableStringify).join(',')}]`;
+    }
+
+    return `{${Object.entries(value as Record<string, unknown>)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([key, entryValue]) => `${JSON.stringify(key)}:${stableStringify(entryValue)}`)
+        .join(',')}}`;
+}
+
+function getSignalStrategyIds(signal: StrategySignal): string[] {
+    const ids = new Set<string>([signal.strategyId]);
+    signal.stackedSignalDetails?.forEach((detail) => ids.add(detail.strategyId));
+    return Array.from(ids);
+}
+
+function getCooldownPeriodMs(
+    strategyId: string,
+    parameterOverrides?: DeepPartial<StrategyParameterConfigMap>,
+): number | null {
+    if (
+        strategyId === 'strong-breakout' ||
+        strategyId === 'trend-confirmation' ||
+        strategyId === 'capital-inflow' ||
+        strategyId === 'rsrs-trend' ||
+        strategyId === 'volatility-squeeze'
+    ) {
+        return getStrategyParameterConfig(strategyId, parameterOverrides?.[strategyId]).cooldownPeriodMs;
+    }
+
+    if (strategyId === SENTIMENT_HOTSPOT_ID) {
+        return getStrategyParameterConfig(SENTIMENT_HOTSPOT_ID, parameterOverrides?.[SENTIMENT_HOTSPOT_ID]).cooldownMs;
+    }
+
+    return null;
+}
+
+function isSignalInCooldown(
+    signal: StrategySignal,
+    parameterOverrides?: DeepPartial<StrategyParameterConfigMap>,
+): boolean {
+    return getSignalStrategyIds(signal).some((strategyId) => {
+        const period = getCooldownPeriodMs(strategyId, parameterOverrides);
+        return period !== null && singletonStrategyRuntimeState.cooldown.check(signal.symbol, strategyId, period);
+    });
+}
+
+function recordSignalCooldown(
+    signal: StrategySignal,
+    parameterOverrides?: DeepPartial<StrategyParameterConfigMap>,
+) {
+    getSignalStrategyIds(signal).forEach((strategyId) => {
+        const period = getCooldownPeriodMs(strategyId, parameterOverrides);
+        if (period !== null) {
+            singletonStrategyRuntimeState.cooldown.record(signal.symbol, strategyId);
+        }
+    });
 }
 
 function hasStrongBreakoutReset(ticker: TickerData): boolean {
@@ -222,12 +309,14 @@ export function useStrategyScanner(data: TickerData[], options: UseStrategyScann
     // 保存上一次的数据摘要，用于检测变化
     const prevDataDigest = useRef<Map<string, string>>(new Map());
     const prevStrategyVersion = useRef(0);
+    const prevParameterDigest = useRef('');
     const prevReadinessDigest = useRef('');
 
     const dismissedSignalsRef = useRef<DismissedSignalMap>({});
     const [strategyVersion, setStrategyVersion] = useState(0);
     const [isHydrated, setIsHydrated] = useState(false);
     const [readinessSummary, setReadinessSummary] = useState<StrategyInputReadinessSummary | null>(null);
+    const [scanDiagnostics, setScanDiagnostics] = useState<StrategyScanDiagnostics>(() => createEmptyScanDiagnostics());
     const hasCompletedInitialScan = useRef(false);
 
     // 在客户端加载后从 localStorage 读取
@@ -285,8 +374,15 @@ export function useStrategyScanner(data: TickerData[], options: UseStrategyScann
             }
             setReadinessSummary(readinessSummary);
             const parameterOverrides = options.parameterOverrides;
-            const forceRescan = prevStrategyVersion.current !== strategyVersion;
+            const parameterDigest = stableStringify(parameterOverrides || {});
+            const forceRescan =
+                prevStrategyVersion.current !== strategyVersion ||
+                prevParameterDigest.current !== parameterDigest;
             const isInitialScan = !hasCompletedInitialScan.current;
+            let rescannedSymbols = 0;
+            let digestSkippedSymbols = 0;
+            let confidenceFilteredSignals = 0;
+            let cooldownBlockedSignals = 0;
 
             const existingSignalsMap = new Map<string, StrategySignal>();
             signalsRef.current.forEach((sig) => {
@@ -303,8 +399,10 @@ export function useStrategyScanner(data: TickerData[], options: UseStrategyScann
 
             const prevDigest = prevDataDigest.current.get(ticker.symbol);
             if (!forceRescan && prevDigest === digest) {
+                digestSkippedSymbols += 1;
                 return;
             }
+            rescannedSymbols += 1;
 
             const symbolSignals = detectVisibleStrategySignalsForTicker({
                 ticker,
@@ -313,6 +411,9 @@ export function useStrategyScanner(data: TickerData[], options: UseStrategyScann
                 runtimeState: singletonStrategyRuntimeState,
                 minConfidence: APP_CONFIG.STRATEGY.MIN_CONFIDENCE,
                 parameterOverrides,
+                onSignalFiltered: () => {
+                    confidenceFilteredSignals += 1;
+                },
             });
 
             scanResults.set(ticker.symbol, selectScannerSignalForSymbol(symbolSignals));
@@ -320,6 +421,7 @@ export function useStrategyScanner(data: TickerData[], options: UseStrategyScann
 
         prevDataDigest.current = currentDataDigest;
         prevStrategyVersion.current = strategyVersion;
+        prevParameterDigest.current = parameterDigest;
 
         const updatedSignals: StrategySignal[] = [];
         data.forEach((ticker) => {
@@ -345,6 +447,9 @@ export function useStrategyScanner(data: TickerData[], options: UseStrategyScann
             }
 
             if (scanResult) {
+                if (isSignalInCooldown(scanResult, parameterOverrides)) {
+                    cooldownBlockedSignals += 1;
+                }
                 const existingStatus = existing?.status ?? 'active';
                 const nextStatus: StrategySignalStatus = isInitialScan && existingStatus !== 'cooling'
                     ? 'snapshot'
@@ -377,6 +482,14 @@ export function useStrategyScanner(data: TickerData[], options: UseStrategyScann
                     breakoutResetRef.current.set(symbol, false);
                 }
 
+                if (
+                    !existing ||
+                    existing.status === 'cooling' ||
+                    existing.strategyId !== nextSignal.strategyId
+                ) {
+                    recordSignalCooldown(nextSignal, parameterOverrides);
+                }
+
                 const nextDismissedAt = dismissedSignalsRef.current[createDismissedSignalKey(nextSignal)];
                 if (nextDismissedAt === nextSignal.timestamp) {
                     return;
@@ -407,6 +520,17 @@ export function useStrategyScanner(data: TickerData[], options: UseStrategyScann
 
         signalsRef.current = nextSignals;
         setSignals(nextSignals);
+        setScanDiagnostics({
+            totalCandidates: data.length,
+            rescannedSymbols,
+            digestSkippedSymbols,
+            cooldownBlockedSignals,
+            confidenceFilteredSignals,
+            missingInputStrategyCount: Object.values(readinessSummary.byStrategy)
+                .filter((entry) => entry.symbolsMissingRequiredFields > 0)
+                .length,
+            lastScannedAt: now,
+        });
         hasCompletedInitialScan.current = true;
         };
 
@@ -458,6 +582,7 @@ export function useStrategyScanner(data: TickerData[], options: UseStrategyScann
         signalsRef.current = [];
         breakoutResetRef.current.clear();
         setSignals([]);
+        setScanDiagnostics(createEmptyScanDiagnostics());
         dismissedSignalsRef.current = {};
         hasCompletedInitialScan.current = false;
         localStorage.removeItem(DISMISSED_SIGNALS_STORAGE_KEY);
@@ -467,6 +592,7 @@ export function useStrategyScanner(data: TickerData[], options: UseStrategyScann
     return {
         signals: sortedSignals,
         readinessSummary,
+        scanDiagnostics,
         dismissSignal,
         clearAll,
     };

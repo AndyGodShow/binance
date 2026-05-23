@@ -1,16 +1,30 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import {
     BTC_LONG_SHORT_RATIO_PERIOD,
     buildEtfFlowSourceStatus,
     buildMacroDashboard,
+    classifyMacroFreshness,
     DIGITAL_ASSET_ETF_ASSETS,
+    parseBitboBtcEtfFlowApiResponse,
     parseBitboBtcEtfFlowHtml,
     parseBtcEtfFlowText,
     normalizeMacroDashboardData,
+    selectFreshestBtcEtfFlow,
     type MacroSourcePayload,
 } from './macro.ts';
+
+const NOW = Date.parse('2026-04-17T12:00:00.000Z');
+const MACRO_ROUTE_SOURCE = readFileSync(new URL('../app/api/macro/route.ts', import.meta.url), 'utf8');
+
+function extractRouteAssetSymbols(assetListName: string): string[] {
+    const match = MACRO_ROUTE_SOURCE.match(new RegExp(`const ${assetListName}: YahooAssetConfig\\[] = \\[([\\s\\S]*?)\\];`));
+    assert.ok(match, `missing ${assetListName}`);
+
+    return [...match[1].matchAll(/symbol:\s*'([^']+)'/g)].map((symbolMatch) => symbolMatch[1]);
+}
 
 function createPayload(overrides: Partial<MacroSourcePayload> = {}): MacroSourcePayload {
     return {
@@ -62,6 +76,112 @@ function createPayload(overrides: Partial<MacroSourcePayload> = {}): MacroSource
         ...overrides,
     };
 }
+
+test('classifyMacroFreshness separates realtime intraday daily and stale data', () => {
+    assert.equal(classifyMacroFreshness('2026-04-17T11:59:10.000Z', NOW, 'realtime'), 'realtime');
+    assert.equal(classifyMacroFreshness('2026-04-17T10:30:00.000Z', NOW, 'intraday'), 'intraday');
+    assert.equal(classifyMacroFreshness('2026-04-16', NOW, 'daily'), 'daily');
+    assert.equal(classifyMacroFreshness('2026-04-10', NOW, 'daily'), 'stale');
+    assert.equal(classifyMacroFreshness(undefined, NOW, 'intraday'), 'unknown');
+});
+
+test('classifyMacroFreshness keeps last trading day stock observer data valid over weekends', () => {
+    const saturdayNightShanghai = Date.parse('2026-05-23T13:30:00.000Z');
+
+    assert.equal(classifyMacroFreshness('2026-05-22T08:30:00.000Z', saturdayNightShanghai, 'daily'), 'daily');
+    assert.equal(classifyMacroFreshness('2026-05-22T08:30:00.000Z', saturdayNightShanghai, 'intraday'), 'stale');
+});
+
+test('macro equity observer source statuses use daily freshness to avoid weekend stale labels', () => {
+    assert.match(
+        MACRO_ROUTE_SOURCE,
+        /key:\s*'us-equities'[\s\S]*?freshness:\s*classifyMacroFreshness\(latestUsEquityTimestamp,\s*Date\.now\(\),\s*'daily'\)/
+    );
+    assert.match(
+        MACRO_ROUTE_SOURCE,
+        /key:\s*'hk-equities'[\s\S]*?freshness:\s*classifyMacroFreshness\(latestHkEquityTimestamp,\s*Date\.now\(\),\s*'daily'\)/
+    );
+    assert.match(
+        MACRO_ROUTE_SOURCE,
+        /key:\s*'a-share-equities'[\s\S]*?freshness:\s*classifyMacroFreshness\(latestAShareEquityTimestamp,\s*Date\.now\(\),\s*'daily'\)/
+    );
+});
+
+test('macro route keeps HK and A-share observer pools broad enough for sector scanning', () => {
+    const expectedSymbols = [
+        '0005.HK',
+        '2020.HK',
+        '0883.HK',
+        '0700.HK',
+        '601398.SS',
+        '601127.SS',
+        '300308.SZ',
+        '600900.SS',
+    ];
+
+    for (const symbol of expectedSymbols) {
+        assert.match(
+            MACRO_ROUTE_SOURCE,
+            new RegExp(`symbol:\\s*'${symbol.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}'`)
+        );
+    }
+});
+
+test('macro route curates HK and A-share observer pools to avoid noisy long tails', () => {
+    const hkSymbols = extractRouteAssetSymbols('HK_EQUITY_ASSETS');
+    const aShareSymbols = extractRouteAssetSymbols('A_SHARE_EQUITY_ASSETS');
+    const removedLongTailSymbols = [
+        '1024.HK',
+        '9999.HK',
+        '9888.HK',
+        '3968.HK',
+        '2628.HK',
+        '0823.HK',
+        '0016.HK',
+        '1177.HK',
+        '000858.SZ',
+        '600887.SS',
+        '601688.SS',
+        '601288.SS',
+        '603501.SS',
+        '002230.SZ',
+        '600050.SS',
+    ];
+
+    assert.ok(hkSymbols.length <= 32, `HK observer pool should stay curated, got ${hkSymbols.length}`);
+    assert.ok(aShareSymbols.length <= 35, `A-share observer pool should stay curated, got ${aShareSymbols.length}`);
+    for (const symbol of removedLongTailSymbols) {
+        assert.equal(hkSymbols.includes(symbol) || aShareSymbols.includes(symbol), false, `${symbol} should be removed`);
+    }
+});
+
+test('macro route includes HK and A-share sector ETFs for board-level observation', () => {
+    const expectedSectorEtfs = [
+        '3067.HK',
+        '3191.HK',
+        '2845.HK',
+        '3174.HK',
+        '512480.SS',
+        '512800.SS',
+        '512880.SS',
+        '512010.SS',
+        '515030.SS',
+        '515790.SS',
+    ];
+
+    for (const symbol of expectedSectorEtfs) {
+        assert.match(
+            MACRO_ROUTE_SOURCE,
+            new RegExp(`symbol:\\s*'${symbol.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}'`)
+        );
+    }
+});
+
+test('macro route falls back across Yahoo chart hosts for equity data resilience', () => {
+    assert.match(MACRO_ROUTE_SOURCE, /query1\.finance\.yahoo\.com/);
+    assert.match(MACRO_ROUTE_SOURCE, /query2\.finance\.yahoo\.com/);
+    assert.match(MACRO_ROUTE_SOURCE, /YAHOO_CHART_HOST_TIMEOUT_MS\s*=\s*4000/);
+});
 
 test('buildMacroDashboard produces neutral regime when risk assets offset macro pressure', () => {
     const dashboard = buildMacroDashboard(createPayload());
@@ -143,6 +263,127 @@ test('buildMacroDashboard exposes localized macro market groups', () => {
     );
 });
 
+test('buildMacroDashboard exposes US equity observer groups and summary', () => {
+    const dashboard = buildMacroDashboard(createPayload({
+        usEquities: {
+            AAPL: { symbol: 'AAPL', label: '苹果', market: '七姐妹', price: 212.4, changePercent: 1.2 },
+            MSFT: { symbol: 'MSFT', label: '微软', market: '七姐妹', price: 512.8, changePercent: -0.4 },
+            TQQQ: { symbol: 'TQQQ', label: '纳指三倍做多', market: '多空杠杆 ETF/ETN', price: 86.2, changePercent: 3.6 },
+            SQQQ: { symbol: 'SQQQ', label: '纳指三倍做空', market: '多空杠杆 ETF/ETN', price: 15.1, changePercent: -3.3 },
+            COIN: { symbol: 'COIN', label: 'Coinbase 交易所', market: '加密相关股', price: 287.3, changePercent: 2.1 },
+            XLK: { symbol: 'XLK', label: '科技板块', market: '板块总览', price: 251.2, changePercent: 0.8 },
+            BABA: { symbol: 'BABA', label: '阿里巴巴', market: '中概观察', price: 124.6, changePercent: 0.9 },
+            JD: { symbol: 'JD', label: '京东', market: '中概观察', price: 38.4, changePercent: -0.6 },
+        },
+    }));
+
+    assert.deepEqual(
+        dashboard.usEquities.groups.map((group) => [group.title, group.items.map((item) => item.symbol)]),
+        [
+            ['七姐妹', ['AAPL', 'MSFT']],
+            ['多空杠杆 ETF/ETN', ['TQQQ', 'SQQQ']],
+            ['加密相关股', ['COIN']],
+            ['中概观察', ['BABA', 'JD']],
+            ['板块总览', ['XLK']],
+        ]
+    );
+    assert.equal(dashboard.usEquities.summary.totalCount, 8);
+    assert.equal(dashboard.usEquities.summary.advancers, 5);
+    assert.equal(dashboard.usEquities.summary.decliners, 3);
+    assert.equal(dashboard.usEquities.summary.strongest?.symbol, 'TQQQ');
+    assert.equal(dashboard.usEquities.summary.weakest?.symbol, 'SQQQ');
+});
+
+test('buildMacroDashboard exposes HK and A-share equity observer groups', () => {
+    const dashboard = buildMacroDashboard(createPayload({
+        hkEquities: {
+            '^HSI': { symbol: '^HSI', label: '恒生指数', market: '指数/宽基', price: 25880, changePercent: 0.8 },
+            '0700.HK': { symbol: '0700.HK', label: '腾讯控股', market: '科技互联网', price: 388.6, changePercent: 1.6 },
+            '3690.HK': { symbol: '3690.HK', label: '美团', market: '科技互联网', price: 122.4, changePercent: -0.7 },
+            '1299.HK': { symbol: '1299.HK', label: '友邦保险', market: '金融地产', price: 62.8, changePercent: 0.3 },
+            '1211.HK': { symbol: '1211.HK', label: '比亚迪股份', market: '汽车新能源', price: 246.2, changePercent: 2.4 },
+        },
+        aShareEquities: {
+            '000001.SS': { symbol: '000001.SS', label: '上证指数', market: '指数/宽基', price: 3180, changePercent: -0.2 },
+            '600519.SS': { symbol: '600519.SS', label: '贵州茅台', market: '消费医药', price: 1688, changePercent: 1.1 },
+            '300750.SZ': { symbol: '300750.SZ', label: '宁德时代', market: '汽车新能源', price: 196.8, changePercent: -1.4 },
+            '688981.SS': { symbol: '688981.SS', label: '中芯国际', market: '半导体AI', price: 92.3, changePercent: 2.2 },
+        },
+    }));
+
+    assert.deepEqual(
+        dashboard.hkEquities.groups.map((group) => [group.title, group.items.map((item) => item.symbol)]),
+        [
+            ['指数/宽基', ['^HSI']],
+            ['科技互联网', ['0700.HK', '3690.HK']],
+            ['金融地产', ['1299.HK']],
+            ['汽车新能源', ['1211.HK']],
+        ]
+    );
+    assert.equal(dashboard.hkEquities.summary.totalCount, 5);
+    assert.equal(dashboard.hkEquities.summary.strongest?.symbol, '1211.HK');
+
+    assert.deepEqual(
+        dashboard.aShareEquities.groups.map((group) => [group.title, group.items.map((item) => item.symbol)]),
+        [
+            ['指数/宽基', ['000001.SS']],
+            ['汽车新能源', ['300750.SZ']],
+            ['半导体AI', ['688981.SS']],
+            ['消费医药', ['600519.SS']],
+        ]
+    );
+    assert.equal(dashboard.aShareEquities.summary.totalCount, 4);
+    assert.equal(dashboard.aShareEquities.summary.weakest?.symbol, '300750.SZ');
+});
+
+test('US equity observer assets do not affect the global macro regime score', () => {
+    const baseDashboard = buildMacroDashboard(createPayload());
+    const withWeakStocks = buildMacroDashboard(createPayload({
+        usEquities: {
+            AAPL: { symbol: 'AAPL', label: '苹果', market: '七姐妹', price: 180, changePercent: -8.5 },
+            MSFT: { symbol: 'MSFT', label: '微软', market: '七姐妹', price: 430, changePercent: -7.4 },
+            NVDA: { symbol: 'NVDA', label: '英伟达', market: '七姐妹', price: 132, changePercent: -9.1 },
+            TQQQ: { symbol: 'TQQQ', label: '纳指三倍做多', market: '多空杠杆 ETF/ETN', price: 68, changePercent: -18.2 },
+            COIN: { symbol: 'COIN', label: 'Coinbase 交易所', market: '加密相关股', price: 240, changePercent: -11.6 },
+        },
+    }));
+
+    assert.equal(withWeakStocks.regime.score, baseDashboard.regime.score);
+    assert.equal(withWeakStocks.regime.code, baseDashboard.regime.code);
+});
+
+test('HK and A-share observers do not affect the global macro regime score', () => {
+    const baseDashboard = buildMacroDashboard(createPayload());
+    const withWeakChinaMarkets = buildMacroDashboard(createPayload({
+        hkEquities: {
+            '^HSI': { symbol: '^HSI', label: '恒生指数', market: '指数/宽基', price: 22000, changePercent: -4.5 },
+            '0700.HK': { symbol: '0700.HK', label: '腾讯控股', market: '科技互联网', price: 330, changePercent: -8.2 },
+        },
+        aShareEquities: {
+            '000001.SS': { symbol: '000001.SS', label: '上证指数', market: '指数/宽基', price: 2880, changePercent: -3.2 },
+            '300750.SZ': { symbol: '300750.SZ', label: '宁德时代', market: '汽车新能源', price: 160, changePercent: -9.1 },
+        },
+    }));
+
+    assert.equal(withWeakChinaMarkets.regime.score, baseDashboard.regime.score);
+    assert.equal(withWeakChinaMarkets.regime.code, baseDashboard.regime.code);
+});
+
+test('buildMacroDashboard keeps partial US equity observer data renderable', () => {
+    const dashboard = buildMacroDashboard(createPayload({
+        usEquities: {
+            MSTR: { symbol: 'MSTR', label: 'Strategy 持币公司', market: '加密相关股', price: 1560, changePercent: -1.5 },
+        },
+    }));
+
+    assert.deepEqual(
+        dashboard.usEquities.groups.map((group) => [group.title, group.items.map((item) => item.displaySymbol)]),
+        [['加密相关股', ['Strategy 持币公司']]]
+    );
+    assert.equal(dashboard.usEquities.summary.totalCount, 1);
+    assert.equal(dashboard.usEquities.summary.decliners, 1);
+});
+
 test('digital asset ETF defaults include listed single-asset crypto ETFs', () => {
     assert.deepEqual(
         DIGITAL_ASSET_ETF_ASSETS.map((asset) => [asset.symbol, asset.label]),
@@ -159,11 +400,11 @@ test('BTC long-short ratio uses a 15 minute period for intraday macro monitoring
     assert.equal(BTC_LONG_SHORT_RATIO_PERIOD, '15m');
 });
 
-test('buildEtfFlowSourceStatus marks Farside primary data as live', () => {
+test('buildEtfFlowSourceStatus marks preferred ETF data as live', () => {
     const status = buildEtfFlowSourceStatus({
         snapshot: {
             date: '2026-04-17',
-            provider: 'Farside',
+            provider: 'Bitbo',
             totalNetInflowUsdMillion: 120,
             rolling7dNetInflowUsdMillion: 300,
             rolling7dPositiveDays: 4,
@@ -175,15 +416,17 @@ test('buildEtfFlowSourceStatus marks Farside primary data as live', () => {
     });
 
     assert.equal(status.status, 'live');
-    assert.equal(status.provider, 'Farside');
+    assert.equal(status.provider, 'Bitbo');
+    assert.equal(status.freshness, 'daily');
+    assert.equal(status.dataTimestamp, '2026-04-17');
     assert.match(status.detail || '', /备用源已交叉拉取/);
 });
 
-test('buildEtfFlowSourceStatus marks Bitbo-only ETF data as fallback', () => {
+test('buildEtfFlowSourceStatus marks fallback-only ETF data as fallback', () => {
     const status = buildEtfFlowSourceStatus({
         snapshot: {
             date: '2026-04-17',
-            provider: 'Bitbo',
+            provider: 'Farside',
             totalNetInflowUsdMillion: 88,
             rolling7dNetInflowUsdMillion: 240,
             rolling7dPositiveDays: 3,
@@ -195,7 +438,9 @@ test('buildEtfFlowSourceStatus marks Bitbo-only ETF data as fallback', () => {
     });
 
     assert.equal(status.status, 'fallback');
-    assert.equal(status.provider, 'Bitbo');
+    assert.equal(status.provider, 'Farside');
+    assert.equal(status.freshness, 'daily');
+    assert.equal(status.dataTimestamp, '2026-04-17');
     assert.match(status.detail || '', /正在使用备用 ETF 数据源/);
 });
 
@@ -207,7 +452,84 @@ test('buildEtfFlowSourceStatus marks missing ETF data as unavailable', () => {
 
     assert.equal(status.status, 'unavailable');
     assert.equal(status.provider, 'Unavailable');
+    assert.equal(status.freshness, 'unknown');
     assert.match(status.detail || '', /ETF flow 当前不可用/);
+});
+
+test('selectFreshestBtcEtfFlow prefers newer ETF flow dates over source priority', () => {
+    const selected = selectFreshestBtcEtfFlow([
+        {
+            date: '2026-04-16',
+            provider: 'Bitbo API',
+            totalNetInflowUsdMillion: 100,
+            rolling7dNetInflowUsdMillion: 300,
+            rolling7dPositiveDays: 4,
+            rolling7dNegativeDays: 2,
+            flows: [],
+        },
+        {
+            date: '2026-04-17',
+            provider: 'Farside',
+            totalNetInflowUsdMillion: 180,
+            rolling7dNetInflowUsdMillion: 360,
+            rolling7dPositiveDays: 5,
+            rolling7dNegativeDays: 1,
+            flows: [{ symbol: 'IBIT', netInflowUsdMillion: 100 }],
+        },
+    ]);
+
+    assert.equal(selected?.provider, 'Farside');
+    assert.equal(selected?.date, '2026-04-17');
+});
+
+test('selectFreshestBtcEtfFlow prefers structured ETF API data on the same date', () => {
+    const selected = selectFreshestBtcEtfFlow([
+        {
+            date: '2026-04-17',
+            provider: 'Farside',
+            totalNetInflowUsdMillion: 180,
+            rolling7dNetInflowUsdMillion: 360,
+            rolling7dPositiveDays: 5,
+            rolling7dNegativeDays: 1,
+            flows: [{ symbol: 'IBIT', netInflowUsdMillion: 100 }],
+        },
+        {
+            date: '2026-04-17',
+            provider: 'Bitbo API',
+            totalNetInflowUsdMillion: 175,
+            rolling7dNetInflowUsdMillion: 350,
+            rolling7dPositiveDays: 4,
+            rolling7dNegativeDays: 2,
+            flows: [],
+        },
+    ]);
+
+    assert.equal(selected?.provider, 'Bitbo API');
+});
+
+test('selectFreshestBtcEtfFlow prefers Bitbo over Farside on the same date', () => {
+    const selected = selectFreshestBtcEtfFlow([
+        {
+            date: '2026-04-17',
+            provider: 'Farside',
+            totalNetInflowUsdMillion: 180,
+            rolling7dNetInflowUsdMillion: 360,
+            rolling7dPositiveDays: 5,
+            rolling7dNegativeDays: 1,
+            flows: [{ symbol: 'IBIT', netInflowUsdMillion: 100 }],
+        },
+        {
+            date: '2026-04-17',
+            provider: 'Bitbo',
+            totalNetInflowUsdMillion: 175,
+            rolling7dNetInflowUsdMillion: 350,
+            rolling7dPositiveDays: 4,
+            rolling7dNegativeDays: 2,
+            flows: [],
+        },
+    ]);
+
+    assert.equal(selected?.provider, 'Bitbo');
 });
 
 test('buildMacroDashboard does not claim fallback ETF flow data when no ETF flow snapshot exists', () => {
@@ -269,6 +591,24 @@ test('normalizeMacroDashboardData preserves degraded macro data quality metadata
     assert.equal(normalized.sourceStatus[0].errorKind, 'timeout');
 });
 
+test('normalizeMacroDashboardData makes legacy US equity observer data safe to render', () => {
+    const normalized = normalizeMacroDashboardData({
+        updatedAt: '2026-04-18T00:00:00.000Z',
+        groups: [],
+        insights: [],
+        sourceStatus: [],
+        usEquities: {
+            groups: undefined,
+            summary: undefined,
+            session: undefined,
+        },
+    });
+
+    assert.deepEqual(normalized.usEquities.groups, []);
+    assert.equal(normalized.usEquities.summary.totalCount, 0);
+    assert.equal(normalized.usEquities.session, undefined);
+});
+
 test('parseBtcEtfFlowText extracts latest day and rolling 7d totals', () => {
     const parsed = parseBtcEtfFlowText(`
 Bitcoin ETF Flow (US$m)
@@ -324,18 +664,18 @@ test('parseBitboBtcEtfFlowHtml extracts latest row and rolling totals from table
                     <th><span>Totals</span></th>
                 </tr>
                 <tr>
-                    <td><span>Apr 13, 2026</span></td>
-                    <td><span>35.2</span></td>
-                    <td><span>-231.7</span></td>
-                    <td><span>-1.4</span></td>
-                    <td><span>-197.9</span></td>
-                </tr>
-                <tr>
                     <td><span>Apr 10, 2026</span></td>
                     <td><span>139.2</span></td>
                     <td><span>78.9</span></td>
                     <td><span>-0.5</span></td>
                     <td><span>217.6</span></td>
+                </tr>
+                <tr>
+                    <td><span>Apr 13, 2026</span></td>
+                    <td><span>35.2</span></td>
+                    <td><span>-231.7</span></td>
+                    <td><span>-1.4</span></td>
+                    <td><span>-197.9</span></td>
                 </tr>
             </tbody>
         </table>
@@ -347,6 +687,24 @@ test('parseBitboBtcEtfFlowHtml extracts latest row and rolling totals from table
     assert.equal(parsed.flows[0].netInflowUsdMillion, 35.2);
     assert.equal(parsed.flows[2].symbol, 'FBTC');
     assert.ok(Math.abs(parsed.rolling7dNetInflowUsdMillion - 19.7) < 1e-9);
+    assert.equal(parsed.rolling7dPositiveDays, 1);
+    assert.equal(parsed.rolling7dNegativeDays, 1);
+});
+
+test('parseBitboBtcEtfFlowApiResponse converts aggregate BTC flow rows to USD millions', () => {
+    const parsed = parseBitboBtcEtfFlowApiResponse({
+        data: [
+            ['2026-04-12', '450', '-25.5', '-10.0', '450', '74000'],
+            ['2026-04-14', '450', '12.25', '4.0', '450', '76000'],
+            ['2026-04-13', '450', '0', '0', '450', '75000'],
+        ],
+    });
+
+    assert.equal(parsed.date, '2026-04-14');
+    assert.ok(Math.abs(parsed.totalNetInflowUsdMillion - 0.931) < 1e-9);
+    assert.equal(parsed.btcPrice, 76000);
+    assert.deepEqual(parsed.flows, []);
+    assert.ok(Math.abs(parsed.rolling7dNetInflowUsdMillion - -0.956) < 1e-9);
     assert.equal(parsed.rolling7dPositiveDays, 1);
     assert.equal(parsed.rolling7dNegativeDays, 1);
 });

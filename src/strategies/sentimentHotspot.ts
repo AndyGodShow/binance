@@ -3,7 +3,11 @@ import type { TickerData } from '../lib/types.ts';
 import {
     classifySentimentHotspotCandidate,
 } from '../lib/sentimentHotspot.ts';
-import { getStrategyRuntimeState } from '../lib/strategyRuntimeState.ts';
+import {
+    getStrategyRuntimeState,
+    shouldEnforceStrategyCooldown,
+    shouldRecordStrategyCooldown,
+} from '../lib/strategyRuntimeState.ts';
 import { getStrategyParameterConfig } from '../lib/strategyParameters.ts';
 import { toSentimentHotspotStrategyInput } from '../lib/strategyInputs.ts';
 
@@ -45,7 +49,7 @@ export const sentimentHotspotStrategy: TradingStrategy = {
         }
 
         const runtimeState = getStrategyRuntimeState(context);
-        if (runtimeState.cooldown.check(input.symbol, 'sentiment-hotspot', params.cooldownMs)) {
+        if (shouldEnforceStrategyCooldown(context) && runtimeState.cooldown.check(input.symbol, 'sentiment-hotspot', params.cooldownMs)) {
             return null;
         }
 
@@ -107,7 +111,9 @@ export const sentimentHotspotStrategy: TradingStrategy = {
         const entryDescription = describeEntryHint(entry?.entryHint);
 
         const conditionsMet = conditions.filter((condition) => condition.met).length;
-        runtimeState.cooldown.record(input.symbol, 'sentiment-hotspot');
+        if (shouldRecordStrategyCooldown(context)) {
+            runtimeState.cooldown.record(input.symbol, 'sentiment-hotspot');
+        }
 
         const confidence = isAPlus ? 94 : 88;
 

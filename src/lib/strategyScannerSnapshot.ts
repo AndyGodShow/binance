@@ -19,10 +19,24 @@ function toStackedSignalDetail(signal: StrategySignal) {
     };
 }
 
+function summarizeOhlcForDigest(ticker: TickerData) {
+    return ticker.ohlc?.slice(-3).map((candle) => ({
+        time: candle.time,
+        open: candle.open,
+        high: candle.high,
+        low: candle.low,
+        close: candle.close,
+        volume: candle.volume,
+        quoteVolume: candle.quoteVolume,
+        takerBuyQuoteVolume: candle.takerBuyQuoteVolume,
+    }));
+}
+
 export function buildStrategyScannerTickerDigest(ticker: TickerData): string {
     return JSON.stringify({
         lastPrice: ticker.lastPrice,
         priceChangePercent: ticker.priceChangePercent,
+        volume: ticker.volume,
         change15m: ticker.change15m,
         change1h: ticker.change1h,
         change4h: ticker.change4h,
@@ -39,6 +53,7 @@ export function buildStrategyScannerTickerDigest(ticker: TickerData): string {
         multiEmaTrend: ticker.multiEmaTrend,
         multiEmaAlignmentScore: ticker.multiEmaAlignmentScore,
         quoteVolume: ticker.quoteVolume,
+        volumeChangePercent: ticker.volumeChangePercent,
         openInterest: ticker.openInterest,
         openInterestValue: ticker.openInterestValue,
         oiChangePercent: ticker.oiChangePercent,
@@ -62,6 +77,7 @@ export function buildStrategyScannerTickerDigest(ticker: TickerData): string {
         val: ticker.val,
         poc: ticker.poc,
         bollingerUpper: ticker.bollingerUpper,
+        bollingerMid: ticker.bollingerMid,
         bollingerLower: ticker.bollingerLower,
         keltnerUpper: ticker.keltnerUpper,
         keltnerMid: ticker.keltnerMid,
@@ -77,7 +93,10 @@ export function buildStrategyScannerTickerDigest(ticker: TickerData): string {
         momentumValue: ticker.momentumValue,
         momentumColor: ticker.momentumColor,
         adx: ticker.adx,
+        plusDI: ticker.plusDI,
+        minusDI: ticker.minusDI,
         bandwidthPercentile: ticker.bandwidthPercentile,
+        ohlc: summarizeOhlcForDigest(ticker),
         strategyContexts: {
             weiShen: ticker.strategyContexts?.weiShen,
             sentimentHotspot: ticker.strategyContexts?.sentimentHotspot,

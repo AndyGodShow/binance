@@ -4,7 +4,11 @@ import { logger } from '../lib/logger.ts';
 import { APP_CONFIG } from '../lib/config.ts';
 import { calculateRiskManagement } from '../lib/risk/riskCalculator.ts';
 import { getStrategyParameterConfig } from '../lib/strategyParameters.ts';
-import { getStrategyRuntimeState } from '../lib/strategyRuntimeState.ts';
+import {
+    getStrategyRuntimeState,
+    shouldEnforceStrategyCooldown,
+    shouldRecordStrategyCooldown,
+} from '../lib/strategyRuntimeState.ts';
 import {
     type VolatilitySqueezeStrategyInput,
     toVolatilitySqueezeStrategyInput,
@@ -52,7 +56,7 @@ export const volatilitySqueezeStrategy: TradingStrategy = {
         const params = getStrategyParameterConfig('volatility-squeeze', context?.parameterOverrides?.['volatility-squeeze']);
         const runtimeState = getStrategyRuntimeState(context);
         // 冷却期检查
-        if (runtimeState.cooldown.check(input.symbol, 'volatility-squeeze', params.cooldownPeriodMs)) {
+        if (shouldEnforceStrategyCooldown(context) && runtimeState.cooldown.check(input.symbol, 'volatility-squeeze', params.cooldownPeriodMs)) {
             return null;
         }
 
@@ -231,7 +235,9 @@ export const volatilitySqueezeStrategy: TradingStrategy = {
         }
 
         const metConditions = conditions.filter(c => c.met).map(c => c.description);
-        runtimeState.cooldown.record(input.symbol, 'volatility-squeeze');
+        if (shouldRecordStrategyCooldown(context)) {
+            runtimeState.cooldown.record(input.symbol, 'volatility-squeeze');
+        }
 
         // 🔥 计算风险管理参数
         let riskManagement;

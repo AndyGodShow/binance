@@ -4,7 +4,11 @@ import { logger } from '../lib/logger.ts';
 import { calculateRiskManagement } from '../lib/risk/riskCalculator.ts';
 import { APP_CONFIG } from '../lib/config.ts';
 import { getStrategyParameterConfig } from '../lib/strategyParameters.ts';
-import { getStrategyRuntimeState } from '../lib/strategyRuntimeState.ts';
+import {
+    getStrategyRuntimeState,
+    shouldEnforceStrategyCooldown,
+    shouldRecordStrategyCooldown,
+} from '../lib/strategyRuntimeState.ts';
 import { toRsrsStrategyInput } from '../lib/strategyInputs.ts';
 
 // 策略参数配置：检查条件并创建条件对象
@@ -33,7 +37,7 @@ export const rsrsStrategy: TradingStrategy = {
         const params = getStrategyParameterConfig('rsrs-trend', context?.parameterOverrides?.['rsrs-trend']);
         const runtimeState = getStrategyRuntimeState(context);
         // 冷却期检查
-        if (runtimeState.cooldown.check(input.symbol, 'rsrs-trend', params.cooldownPeriodMs)) {
+        if (shouldEnforceStrategyCooldown(context) && runtimeState.cooldown.check(input.symbol, 'rsrs-trend', params.cooldownPeriodMs)) {
             return null;
         }
 
@@ -205,7 +209,9 @@ export const rsrsStrategy: TradingStrategy = {
             }
 
             // 记录信号，启动冷却期
-            runtimeState.cooldown.record(input.symbol, 'rsrs-trend');
+            if (shouldRecordStrategyCooldown(context)) {
+                runtimeState.cooldown.record(input.symbol, 'rsrs-trend');
+            }
             const metConditions = conditions.filter(c => c.met).map(c => c.description);
 
             return {

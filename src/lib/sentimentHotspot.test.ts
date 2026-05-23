@@ -13,6 +13,7 @@ import {
     isSentimentHotspotSquareCandidate,
 } from './sentimentHotspot.ts';
 import { sentimentHotspotStrategy } from '../strategies/sentimentHotspot.ts';
+import { createStrategyRuntimeState } from './strategyRuntimeState.ts';
 
 function createTicker(overrides: Partial<TickerData> = {}): TickerData {
     return {
@@ -355,4 +356,22 @@ test('sentimentHotspotStrategy emits only tradeable sentiment hotspot signals', 
     }));
 
     assert.equal(weak, null);
+});
+
+test('sentimentHotspotStrategy evaluate-only mode does not write cooldown', () => {
+    const runtimeState = createStrategyRuntimeState();
+    const first = sentimentHotspotStrategy.detect(createTicker(), {
+        now: 1234567890,
+        runtimeState,
+        cooldownPolicy: 'evaluate-only',
+    });
+    const second = sentimentHotspotStrategy.detect(createTicker(), {
+        now: 1234567990,
+        runtimeState,
+        cooldownPolicy: 'evaluate-only',
+    });
+
+    assert.ok(first);
+    assert.ok(second);
+    assert.equal(runtimeState.cooldown.snapshot().size, 0);
 });

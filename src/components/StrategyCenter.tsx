@@ -3,12 +3,11 @@
 import { useState, useEffect } from 'react';
 import { StrategySignal } from '@/lib/strategyTypes';
 import type { MarketDataStatus } from '@/lib/strategyScannerDiagnostics';
+import type { StrategyScanDiagnostics } from '@/hooks/useStrategyScanner';
 import {
-    buildReadinessDebugRows,
     isMarketDataStatusDegraded,
 } from '@/lib/strategyScannerDiagnostics';
 import { filterScannerSignalsByEnabledStrategies } from '@/lib/strategyScannerSnapshot';
-import type { StrategyInputReadinessSummary } from '@/lib/strategyInputs';
 import { strategyRegistry } from '@/strategies/registry';
 import SignalCard from './SignalCard';
 import { ChevronDown, ChevronUp } from 'lucide-react';
@@ -20,7 +19,7 @@ interface StrategyCenterProps {
     clearAllSignals?: () => void; // 一键清除全部
     onSymbolClick?: (symbol: string) => void;
     marketDataStatus: MarketDataStatus;
-    readinessSummary?: StrategyInputReadinessSummary | null;
+    scanDiagnostics?: StrategyScanDiagnostics;
 }
 
 export default function StrategyCenter({
@@ -29,7 +28,7 @@ export default function StrategyCenter({
     clearAllSignals,
     onSymbolClick,
     marketDataStatus,
-    readinessSummary,
+    scanDiagnostics,
 }: StrategyCenterProps) {
     // 使用本地状态存储策略列表，以便响应式更新
     const [allStrategies, setAllStrategies] = useState(() => strategyRegistry.getAll());
@@ -61,17 +60,10 @@ export default function StrategyCenter({
 
     // 折叠/展开状态
     const [isCollapsed, setIsCollapsed] = useState(false);
-    const [showDebug, setShowDebug] = useState(false);
-    const isDevelopment = process.env.NODE_ENV === 'development';
     const isDegraded = isMarketDataStatusDegraded(marketDataStatus);
-    const readinessRows = buildReadinessDebugRows(readinessSummary);
-    const missingStrategyCount = readinessRows.length;
-    const missingFieldCount = readinessRows.reduce((sum, row) => sum + row.missingFields.length, 0);
-    const shouldShowReadinessWarning = isDevelopment && filteredSignals.length === 0 && missingStrategyCount > 0;
-    const missingFieldPreview = readinessRows
-        .flatMap((row) => row.missingFields.map((field) => `${row.strategyId}:${field}`))
-        .slice(0, 4)
-        .join('，');
+    const scanTimeLabel = scanDiagnostics?.lastScannedAt
+        ? new Date(scanDiagnostics.lastScannedAt).toLocaleTimeString('zh-CN', { hour12: false })
+        : '待扫描';
 
     const handleToggle = (id: string) => {
         strategyRegistry.toggleStrategy(id);
@@ -123,15 +115,17 @@ export default function StrategyCenter({
                             <span>build: {marketDataStatus.buildState}</span>
                             <span>source: {marketDataStatus.dataSource}</span>
                         </div>
+                        {scanDiagnostics && (
+                            <div className={styles.marketStatusLine}>
+                                <span>scan: {scanTimeLabel}</span>
+                                <span>候选: {scanDiagnostics.totalCandidates}</span>
+                                <span>重扫: {scanDiagnostics.rescannedSymbols}</span>
+                                <span>跳过: {scanDiagnostics.digestSkippedSymbols}</span>
+                            </div>
+                        )}
                         {isDegraded && (
                             <div className={styles.degradedHint}>
                                 {marketDataStatus.message || '部分外部数据源失败，结果已降级'}
-                            </div>
-                        )}
-                        {shouldShowReadinessWarning && (
-                            <div className={styles.degradedHint}>
-                                策略输入缺字段：影响 {missingStrategyCount} 个策略，{missingFieldCount} 类字段
-                                {missingFieldPreview ? `（${missingFieldPreview}）` : ''}
                             </div>
                         )}
                     </div>
@@ -158,26 +152,6 @@ export default function StrategyCenter({
                         )}
                     </div>
                 </div>
-
-                {isDevelopment && readinessRows.length > 0 && (
-                    <details
-                        className={styles.debugPanel}
-                        open={showDebug}
-                        onToggle={(event) => setShowDebug(event.currentTarget.open)}
-                    >
-                        <summary>策略输入诊断 ({readinessRows.length})</summary>
-                        <div className={styles.debugRows}>
-                            {readinessRows.map((row) => (
-                                <div key={row.strategyId} className={styles.debugRow}>
-                                    <strong>{row.strategyId}</strong>
-                                    <span>缺字段币种 {row.missingSymbolCount}</span>
-                                    <span>{row.missingFields.slice(0, 6).join(', ')}</span>
-                                    <span>样本 {row.sampleSymbols.join(', ')}</span>
-                                </div>
-                            ))}
-                        </div>
-                    </details>
-                )}
 
                 <div className={styles.signalList}>
                     {filteredSignals.length === 0 ? (

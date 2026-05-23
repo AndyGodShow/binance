@@ -52,6 +52,34 @@ test('buildStrategyScannerTickerDigest changes when tracked scanner fields chang
     assert.notEqual(baseline, changedContext);
 });
 
+test('buildStrategyScannerTickerDigest changes when strategy-only inputs change', () => {
+    const ticker = createTicker({
+        volume: '1000',
+        volumeChangePercent: 4,
+        bollingerMid: 100,
+        plusDI: 24,
+        minusDI: 18,
+        ohlc: [
+            { time: 1, open: 99, high: 101, low: 98, close: 100, volume: 10 },
+            { time: 2, open: 100, high: 103, low: 99, close: 102, volume: 12 },
+        ],
+    });
+    const baseline = buildStrategyScannerTickerDigest(ticker);
+
+    assert.notEqual(baseline, buildStrategyScannerTickerDigest(createTicker({ ...ticker, volume: '1001' })));
+    assert.notEqual(baseline, buildStrategyScannerTickerDigest(createTicker({ ...ticker, volumeChangePercent: 5 })));
+    assert.notEqual(baseline, buildStrategyScannerTickerDigest(createTicker({ ...ticker, bollingerMid: 101 })));
+    assert.notEqual(baseline, buildStrategyScannerTickerDigest(createTicker({ ...ticker, plusDI: 25 })));
+    assert.notEqual(baseline, buildStrategyScannerTickerDigest(createTicker({ ...ticker, minusDI: 19 })));
+    assert.notEqual(baseline, buildStrategyScannerTickerDigest(createTicker({
+        ...ticker,
+        ohlc: [
+            { time: 1, open: 99, high: 101, low: 98, close: 100, volume: 10 },
+            { time: 2, open: 100, high: 104, low: 99, close: 103, volume: 12 },
+        ],
+    })));
+});
+
 test('selectScannerSignalForSymbol prefers tradable signals and applies combo bonus', () => {
     const selected = selectScannerSignalForSymbol([
         createSignal({ strategyId: 'a', strategyName: 'A', confidence: 88 }),
