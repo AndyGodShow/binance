@@ -32,6 +32,10 @@ import {
 } from '@/lib/weiShenStrategy';
 import { buildBacktestValidationStageRequest } from '@/lib/backtestValidationPlanner';
 import { shouldDeferBacktestValidationFailure } from '@/lib/backtestValidation';
+import {
+    isBacktestSymbolCandidate,
+    selectBacktestSymbolsByVolume,
+} from '@/lib/backtestSymbolSelection';
 import DataQualityCard from './DataQualityCard';
 import RiskConfigPanel from './RiskConfigPanel';
 import StrategyParameterPanel from './StrategyParameterPanel';
@@ -245,6 +249,7 @@ function buildRiskCalculationParams(
         val: ticker.val,
         poc: ticker.poc,
         bollingerLower: ticker.bollingerLower,
+        bollingerMid: ticker.bollingerMid,
         bollingerUpper: ticker.bollingerUpper,
         momentumColor: ticker.momentumColor,
         cvdSlope: ticker.cvdSlope,
@@ -285,10 +290,6 @@ function resolveStrategyBacktestIntervalsWithOverrides(
         executionInterval: resolveExecutionInterval(executionSelection, signalInterval),
         parameterOverrides,
     });
-}
-
-function isBacktestSymbolCandidate(symbol: string): boolean {
-    return /^[A-Z0-9]+USDT$/.test(symbol);
 }
 
 function buildBacktestValidationUrl(symbol: string, stage: BacktestValidationStage): string {
@@ -575,15 +576,13 @@ async function fetchSymbolsByVolume(): Promise<string[]> {
         throw new Error('市场数据格式异常');
     }
 
-    return payload
-        .filter((ticker): ticker is TickerData =>
+    return selectBacktestSymbolsByVolume(
+        payload.filter((ticker): ticker is TickerData =>
             ticker &&
             typeof ticker.symbol === 'string' &&
-            typeof ticker.quoteVolume === 'string' &&
-            ticker.symbol.endsWith('USDT')
+            typeof ticker.quoteVolume === 'string'
         )
-        .sort((a, b) => parseFloat(b.quoteVolume || '0') - parseFloat(a.quoteVolume || '0'))
-        .map((ticker) => ticker.symbol);
+    );
 }
 
 async function runWithConcurrency<T, R>(
@@ -1025,7 +1024,7 @@ export default function BacktestPanel({
                     activeExecutionInterval,
                     nextStartTime,
                     nextEndTime,
-                    { includeAuxiliary: false }
+                    { includeAuxiliary: true }
                 ),
         });
 

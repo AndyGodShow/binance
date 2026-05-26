@@ -96,13 +96,15 @@ export function adaptKlinesToBacktestDataSlice(klines: KlineData[]): BacktestDat
         }
 
         const fundingRate = parseFiniteNumber(kline.fundingRate);
-        if (fundingRate !== null && Number.isFinite(kline.closeTime)) {
-            const quality = toQuality(kline.fundingRateSource);
+        const fundingQuality = toQuality(kline.fundingRateSource);
+        const isSettlementFundingPoint = fundingQuality !== 'forward-fill';
+        if (fundingRate !== null && Number.isFinite(kline.closeTime) && isSettlementFundingPoint) {
+            const quality = fundingQuality === 'missing' ? 'exact' : fundingQuality;
             funding.push({
                 time: kline.closeTime,
                 rate: fundingRate,
-                source: quality === 'missing' ? 'kline' : quality,
-                quality: quality === 'missing' ? 'forward-fill' : quality,
+                source: quality,
+                quality,
             });
         } else {
             missingFunding += 1;

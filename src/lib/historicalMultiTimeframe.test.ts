@@ -144,3 +144,37 @@ test('buildHistoricalTickerOverrides attaches sentiment hotspot context from his
     assert.ok(sentimentHotspot.oiChangePct >= 8);
     assert.ok(Math.abs(sentimentHotspot.fundingRatePct - (-0.036)) < 0.000001);
 });
+
+test('buildHistoricalTickerOverrides keeps sentiment hotspot context even before heat is confirmed', async () => {
+    const startTime = Date.UTC(2025, 0, 1);
+    const baseKlines = Array.from({ length: 80 }, (_, index) => {
+        const close = 100 + index * 0.02;
+        const kline = createKline(startTime + ((index + 1) * 60 * 60 * 1000), close, close * 1.005);
+        return {
+            ...kline,
+            quoteVolume: '8000000',
+            openInterestValue: String(5_000_000 + index * 10_000),
+            fundingRate: '-0.00012',
+        };
+    });
+
+    const overrides = await buildHistoricalTickerOverrides({
+        strategyId: 'sentiment-hotspot',
+        symbol: 'SAGAUSDT',
+        startTime,
+        endTime: baseKlines[baseKlines.length - 1].closeTime,
+        baseInterval: '1h',
+        baseKlines,
+        fetchRangeData: async () => baseKlines,
+    });
+
+    const sample = overrides.get(baseKlines[baseKlines.length - 1].closeTime);
+    const sentimentHotspot = sample?.strategyContexts?.sentimentHotspot;
+
+    assert.ok(sentimentHotspot);
+    assert.equal(sentimentHotspot.heatSourceCount, 0);
+    assert.equal(sentimentHotspot.hasVolSurge, false);
+    assert.equal(sentimentHotspot.hasSquare, false);
+    assert.ok(Number.isFinite(sentimentHotspot.oiUsd));
+    assert.ok(Number.isFinite(sentimentHotspot.fundingRatePct));
+});

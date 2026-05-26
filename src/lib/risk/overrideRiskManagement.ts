@@ -1,7 +1,8 @@
-import { TickerData } from '@/lib/types';
-import { roundPercentage, roundPrice } from './priceUtils';
-import { getStrategyRiskConfig, StrategyRiskConfig } from './riskConfig';
-import { RiskManagement, StopLoss, TakeProfitTarget } from './types';
+import type { TickerData } from '../types.ts';
+import { roundPercentage, roundPrice } from './priceUtils.ts';
+import { getStrategyRiskConfig } from './riskConfig.ts';
+import type { StrategyRiskConfig } from './riskConfig.ts';
+import type { RiskManagement, StopLoss, TakeProfitTarget } from './types.ts';
 
 interface RiskOverrideParams {
     strategyId: string;
@@ -90,6 +91,10 @@ export function applyRiskConfigOverrides({
     ticker,
     direction,
 }: RiskOverrideParams): RiskManagement {
+    if (!overrideConfig) {
+        return baseRisk;
+    }
+
     const config = getStrategyRiskConfig(strategyId, overrideConfig || undefined);
     const entryPrice = Number(ticker.lastPrice);
 

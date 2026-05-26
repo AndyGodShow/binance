@@ -650,13 +650,6 @@ export class BacktestEngine {
                 const fundingRate = fundingByTime.get(bar.time)?.rate ?? NaN;
                 currentPosition.accruedFunding += this.calculateFundingCashflow(currentPosition, fundingRate);
 
-                if (currentHigh > currentPosition.highestPrice) {
-                    currentPosition.highestPrice = currentHigh;
-                }
-                if (currentLow < currentPosition.lowestPrice) {
-                    currentPosition.lowestPrice = currentLow;
-                }
-
                 let shouldExit = false;
                 let exitReason: Trade['exitReason'] = 'end_of_data';
                 let exitPrice = currentClose;
@@ -856,6 +849,12 @@ export class BacktestEngine {
                 } else if (currentPosition && currentPosition.remainingSize <= 0.0001) {
                     currentPosition = null;
                 } else if (currentPosition) {
+                    if (currentHigh > currentPosition.highestPrice) {
+                        currentPosition.highestPrice = currentHigh;
+                    }
+                    if (currentLow < currentPosition.lowestPrice) {
+                        currentPosition.lowestPrice = currentLow;
+                    }
                     currentPosition.executionHistory.push(bar);
                 }
             }

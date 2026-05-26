@@ -9,6 +9,7 @@ import { calculateBreakoutRisk } from './breakoutRisk.ts';
 import { calculateTrendRisk } from './trendRisk.ts';
 import { calculateInflowRisk } from './inflowRisk.ts';
 import { calculateRSRSRisk } from './rsrsRisk.ts';
+import { calculateSentimentHotspotRisk } from './sentimentHotspotRisk.ts';
 import { atrPercentToPriceDistance, roundPrice, roundPercentage } from './priceUtils.ts';
 
 /**
@@ -33,6 +34,9 @@ export function calculateRiskManagement(
 
         case 'volatility-squeeze':
             return calculateSqueezeRisk(params);
+
+        case 'sentiment-hotspot':
+            return calculateSentimentHotspotRisk(params);
 
         default:
             // 降级为基础风控
@@ -124,3 +128,4 @@ export * from './breakoutRisk.ts';
 export * from './trendRisk.ts';
 export * from './inflowRisk.ts';
 export * from './rsrsRisk.ts';
+export * from './sentimentHotspotRisk.ts';

@@ -320,7 +320,7 @@ async function runSingleBacktest(params: {
                 resolvedIntervals.executionInterval,
                 nextStartTime,
                 nextEndTime,
-                { includeAuxiliary: false },
+                { includeAuxiliary: true },
             ),
     });
 

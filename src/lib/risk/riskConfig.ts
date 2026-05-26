@@ -170,6 +170,27 @@ export const DEFAULT_RISK_CONFIGS: Record<string, StrategyRiskConfig> = {
         historicalAvgWin: 3.4,
         historicalAvgLoss: 1.8,
     },
+
+    // 情绪热点策略：题材/热度驱动，只做多，强调快速验证和热度衰减退出
+    'sentiment-hotspot': {
+        stopLoss: {
+            type: 'indicator',
+            atrMultiplier: 1.6,
+            maxPercentage: 4,
+        },
+        takeProfit: {
+            targets: [
+                { stopMultiplier: 1.4, closePercentage: 35, moveStopToEntry: true },
+                { stopMultiplier: 2.4, closePercentage: 35, moveStopToEntry: false },
+                { stopMultiplier: 4.2, closePercentage: 30, moveStopToEntry: false },
+            ],
+        },
+        timeStop: { maxBars: 4, profitThreshold: 2.0 },
+        maxLeverage: 2,
+        historicalWinRate: 0.50,
+        historicalAvgWin: 4.2,
+        historicalAvgLoss: 2.2,
+    },
 };
 
 /**

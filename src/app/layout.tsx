@@ -14,6 +14,11 @@ export default function RootLayout({
 }) {
   return (
     <html lang="zh-CN">
+      <head>
+        <link rel="preconnect" href="https://www.tradingview.com" />
+        <link rel="preconnect" href="https://s3.tradingview.com" />
+        <link rel="preconnect" href="https://data.tradingview.com" />
+      </head>
       <body>
         <ErrorBoundary>
           {children}

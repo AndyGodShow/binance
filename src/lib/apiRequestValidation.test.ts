@@ -46,6 +46,15 @@ test('rejects invalid interval for backtest klines', () => {
     }
 });
 
+test('accepts localized symbols for backtest klines', () => {
+    const result = validateBacktestKlinesParams(new URLSearchParams('symbol=币安人生USDT&interval=1h'));
+
+    assert.equal(result.ok, true);
+    if (result.ok) {
+        assert.equal(result.value.symbol, '币安人生USDT');
+    }
+});
+
 test('rejects invalid long short period', () => {
     const result = validateLongShortParams(new URLSearchParams('symbol=BTCUSDT&period=3d'));
 

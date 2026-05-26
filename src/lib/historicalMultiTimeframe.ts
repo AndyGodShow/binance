@@ -494,7 +494,6 @@ export async function buildHistoricalTickerOverrides(
             const heatSourceCount = Number(hasVolSurge) + Number(hasSquare);
 
             if (
-                heatSourceCount > 0 &&
                 Number.isFinite(oiUsd) &&
                 oiUsd > 0 &&
                 Number.isFinite(fundingRate)

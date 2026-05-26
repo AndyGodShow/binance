@@ -20,6 +20,7 @@ import { useWatchlists } from '@/hooks/useWatchlists';
 import { formatPrice } from '@/lib/risk/priceUtils';
 import { StrategySignal } from '@/lib/strategyTypes';
 import type { DeepPartial, StrategyParameterConfigMap } from '@/lib/strategyParameters';
+import { prewarmTradingViewAdvancedChartWidget } from '@/lib/tradingViewWidget';
 import {
   isHeavyMarketPayloadFresh,
   isStrategyScanCandidate,
@@ -335,6 +336,18 @@ export default function Home() {
     if (isAppTab(requestedTab)) {
       setActiveTab(requestedTab);
     }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      void prewarmTradingViewAdvancedChartWidget();
+    }, 800);
+
+    return () => window.clearTimeout(timer);
   }, []);
 
   useEffect(() => {

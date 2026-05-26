@@ -108,16 +108,73 @@
 /* Chart Container */
 .chartContainer {
     flex: 1;
+    min-height: 0;
     padding: 1rem;
+    overflow: hidden;
+    position: relative;
+}
+
+.widgetHost {
+    width: 100%;
+    height: 100%;
+    min-height: 480px;
+    border-radius: 0.5rem;
     overflow: hidden;
 }
 
-.widget {
+.widgetHost :global(.tradingview-widget-container) {
     width: 100%;
     height: 100%;
-    border: none;
+}
+
+.widgetHost :global(.tradingview-widget-container iframe) {
+    width: 100% !important;
+    height: calc(100% - 32px) !important;
+    min-height: 448px;
+}
+
+.chartStatus {
+    position: absolute;
+    inset: 1rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+}
+
+.spinner {
+    width: 2.5rem;
+    height: 2.5rem;
+    border: 3px solid rgba(148, 163, 184, 0.25);
+    border-top-color: #facc15;
+    border-radius: 50%;
+    animation: chartSpin 0.9s linear infinite;
+}
+
+.retryButton {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    border: 1px solid rgba(250, 204, 21, 0.35);
     border-radius: 0.5rem;
-    overflow: hidden;
+    background: rgba(17, 24, 39, 0.92);
+    color: #facc15;
+    padding: 0.65rem 0.9rem;
+    font-size: 0.875rem;
+    font-weight: 700;
+    cursor: pointer;
+    pointer-events: auto;
+}
+
+.retryButton:hover {
+    background: rgba(31, 41, 55, 0.95);
+    border-color: rgba(250, 204, 21, 0.55);
+}
+
+@keyframes chartSpin {
+    to {
+        transform: rotate(360deg);
+    }
 }
 
 /* Responsive */

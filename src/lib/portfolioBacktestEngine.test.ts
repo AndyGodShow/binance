@@ -83,6 +83,24 @@ function createBacktestResult(symbol: string, trades: Trade[]): BacktestResult {
     };
 }
 
+function createBacktestResultWithEquityCurve(
+    symbol: string,
+    trades: Trade[],
+    equityCurve: BacktestResult['equityCurve'],
+): BacktestResult {
+    return {
+        ...createBacktestResult(symbol, trades),
+        equityCurve,
+    };
+}
+
+function createBacktestResultWithLegs(symbol: string, trades: Trade[], tradeLegs: Trade[]): BacktestResult {
+    return {
+        ...createBacktestResult(symbol, trades),
+        tradeLegs,
+    };
+}
+
 test('runPortfolioBacktest applies wei-shen core cluster limits to BTC/ETH/SOL overlap', () => {
     const entryTime = Date.UTC(2025, 0, 1);
     const exitTime = entryTime + HOUR_MS;
@@ -343,4 +361,78 @@ test('runPortfolioBacktest recalculates profitUSDT, size, and finalCapital from 
     assert.equal(result.trades[1]?.profitUSDT, 400);
     assert.equal(result.trades[1]?.size, 0.2);
     assert.equal(result.finalCapital, 11_200);
+});
+
+test('runPortfolioBacktest samples open positions between trade boundaries for drawdown', () => {
+    const start = Date.UTC(2025, 1, 8);
+    const mid = start + HOUR_MS;
+    const exit = start + (2 * HOUR_MS);
+    const trade = createTrade('BTCUSDT', start, exit, 0, 1);
+
+    const result = runPortfolioBacktest([
+        {
+            symbol: 'BTCUSDT',
+            result: createBacktestResultWithEquityCurve('BTCUSDT', [trade], [
+                { time: start, equity: 100, drawdown: 0 },
+                { time: mid, equity: 80, drawdown: 20 },
+                { time: exit, equity: 100, drawdown: 0 },
+            ]),
+        },
+    ], {
+        initialCapital: 10_000,
+        maxConcurrentPositions: 1,
+        positionSizePercent: 100,
+    });
+
+    assert.equal(result.finalCapital, 10_000);
+    assert.equal(result.maxDrawdown, 20);
+    assert.ok(result.equityCurve.some((point) => point.time === mid && point.equity === 80));
+});
+
+test('runPortfolioBacktest releases partial exit capital before later entries', () => {
+    const start = Date.UTC(2025, 1, 9);
+    const partialExit = start + HOUR_MS;
+    const nextEntry = start + (2 * HOUR_MS);
+    const finalExit = start + (4 * HOUR_MS);
+    const btcAggregate = createTrade('BTCUSDT', start, finalExit, 5, 1);
+    const btcFirstLeg = createTrade('BTCUSDT', start, partialExit, 10, 0.5);
+    const btcFinalLeg = createTrade('BTCUSDT', start, finalExit, 0, 0.5);
+    const ethTrade = createTrade('ETHUSDT', nextEntry, nextEntry + HOUR_MS, 4, 1);
+
+    const result = runPortfolioBacktest([
+        {
+            symbol: 'BTCUSDT',
+            result: createBacktestResultWithLegs('BTCUSDT', [btcAggregate], [btcFirstLeg, btcFinalLeg]),
+        },
+        {
+            symbol: 'ETHUSDT',
+            result: createBacktestResult('ETHUSDT', [ethTrade]),
+        },
+    ], {
+        initialCapital: 10_000,
+        maxConcurrentPositions: 2,
+        positionSizePercent: 100,
+    });
+
+    assert.equal(result.executedTrades, 2);
+    assert.equal(result.skippedTrades, 0);
+    assert.deepEqual(result.trades.map((trade) => trade.symbol), ['ETHUSDT', 'BTCUSDT']);
+    assert.equal(result.finalCapital, 10_720);
+});
+
+test('runPortfolioBacktest does not expose internal candidate fields on output trades', () => {
+    const start = Date.UTC(2025, 1, 10);
+    const trade = createTrade('BTCUSDT', start, start + HOUR_MS, 3, 0.5);
+
+    const result = runPortfolioBacktest([
+        { symbol: 'BTCUSDT', result: createBacktestResult('BTCUSDT', [trade]) },
+    ], {
+        initialCapital: 10_000,
+        maxConcurrentPositions: 1,
+        positionSizePercent: 50,
+    });
+
+    assert.equal(Object.hasOwn(result.trades[0], 'equityCurve'), false);
+    assert.equal(Object.hasOwn(result.trades[0], 'entryBaselineEquity'), false);
+    assert.equal(Object.hasOwn(result.trades[0], 'settlementLegs'), false);
 });

@@ -6,7 +6,7 @@ import styles from './BacktestPanel.module.css';
 
 interface RiskConfigPanelProps {
     strategyId: string;
-    onChange: (config: StrategyRiskConfig) => void;
+    onChange: (config: StrategyRiskConfig | null) => void;
 }
 
 export default function RiskConfigPanel({ strategyId, onChange }: RiskConfigPanelProps) {
@@ -18,7 +18,7 @@ export default function RiskConfigPanel({ strategyId, onChange }: RiskConfigPane
     useEffect(() => {
         const nextDefaults = getDefaultRiskConfig(strategyId);
         setConfig(nextDefaults);
-        onChange(nextDefaults);
+        onChange(null);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [strategyId]);
 
@@ -56,7 +56,7 @@ export default function RiskConfigPanel({ strategyId, onChange }: RiskConfigPane
     const resetToDefaults = () => {
         const newDefaults = getDefaultRiskConfig(strategyId);
         setConfig(newDefaults);
-        onChange(newDefaults);
+        onChange(null);
     };
 
     const stopLossTypeLabels: Record<string, string> = {

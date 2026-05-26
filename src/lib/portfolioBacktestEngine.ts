@@ -67,12 +67,17 @@ interface CandidateTrade extends Trade {
     symbol: string;
     equityCurve: EquityPoint[];
     entryBaselineEquity: number;
+    settlementLegs: Trade[];
 }
 
 interface ActivePosition {
     trade: CandidateTrade;
     allocatedCapital: number;
+    remainingAllocatedCapital: number;
+    realizedProfitUSDT: number;
+    nextSettlementIndex: number;
     riskPct?: number;
+    lastMarkedTime: number;
 }
 
 interface WeiShenPortfolioState {
@@ -124,6 +129,50 @@ function findEquityAtOrBefore(curve: EquityPoint[], timestamp: number): number |
     return result >= 0 ? curve[result].equity : null;
 }
 
+function buildSettlementLegs(tradeLegs: Trade[], trade: Trade, fallbackSymbol: string): Trade[] {
+    const symbol = trade.symbol || fallbackSymbol;
+    const legs = tradeLegs
+        .filter((leg) =>
+            (leg.symbol || fallbackSymbol) === symbol &&
+            leg.entryTime === trade.entryTime &&
+            leg.entryPrice === trade.entryPrice &&
+            leg.direction === trade.direction
+        )
+        .sort((a, b) => {
+            if (a.exitTime !== b.exitTime) return a.exitTime - b.exitTime;
+            return a.exitPrice - b.exitPrice;
+        });
+
+    return legs.length > 0 ? legs : [trade];
+}
+
+function toOutputTrade(trade: CandidateTrade): Trade {
+    return {
+        symbol: trade.symbol,
+        entryTime: trade.entryTime,
+        exitTime: trade.exitTime,
+        entryPrice: trade.entryPrice,
+        exitPrice: trade.exitPrice,
+        direction: trade.direction,
+        size: trade.size,
+        profit: trade.profit,
+        profitUSDT: trade.profitUSDT,
+        qty: trade.qty,
+        margin: trade.margin,
+        notional: trade.notional,
+        fee: trade.fee,
+        slippageCost: trade.slippageCost,
+        funding: trade.funding,
+        pnl: trade.pnl,
+        pnlPct: trade.pnlPct,
+        holdingTime: trade.holdingTime,
+        exitReason: trade.exitReason,
+        strategyRiskPct: trade.strategyRiskPct,
+        plannedPositionPct: trade.plannedPositionPct,
+        stopLossPct: trade.stopLossPct,
+    };
+}
+
 function interpolateEquity(curve: EquityPoint[], timestamp: number): number | null {
     if (curve.length === 0) {
         return null;
@@ -168,7 +217,7 @@ function interpolateEquity(curve: EquityPoint[], timestamp: number): number | nu
 
 function getMarkedPositionValue(position: ActivePosition, timestamp: number): number {
     if (timestamp <= position.trade.entryTime) {
-        return position.allocatedCapital;
+        return position.remainingAllocatedCapital;
     }
 
     const sampleTime = Math.min(timestamp, position.trade.exitTime);
@@ -181,13 +230,13 @@ function getMarkedPositionValue(position: ActivePosition, timestamp: number): nu
         Number.isFinite(baselineEquity) &&
         baselineEquity > 0
     ) {
-        return position.allocatedCapital * (sampledEquity / baselineEquity);
+        return position.remainingAllocatedCapital * (sampledEquity / baselineEquity);
     }
 
     const duration = Math.max(1, position.trade.exitTime - position.trade.entryTime);
     const elapsed = Math.max(0, Math.min(sampleTime - position.trade.entryTime, duration));
     const progress = elapsed / duration;
-    return position.allocatedCapital * (1 + (position.trade.profit * progress) / 100);
+    return position.remainingAllocatedCapital * (1 + (position.trade.profit * progress) / 100);
 }
 
 function computeMetrics(
@@ -334,6 +383,7 @@ export function runPortfolioBacktest(
                 symbol: trade.symbol || run.symbol,
                 equityCurve: run.result.equityCurve,
                 entryBaselineEquity: findEquityAtOrBefore(run.result.equityCurve, trade.entryTime) ?? 100,
+                settlementLegs: buildSettlementLegs(run.result.tradeLegs, trade, run.symbol),
             }))
         )
         .sort((a, b) => {
@@ -396,41 +446,103 @@ export function runPortfolioBacktest(
         });
     };
 
-    const settlePositionsUpTo = (timestamp: number) => {
-        activePositions.sort((a, b) => a.trade.exitTime - b.trade.exitTime);
+    const sampleOpenPositionsUpTo = (timestamp: number) => {
+        const sampleTimes = Array.from(new Set(
+            activePositions.flatMap((position) =>
+                position.trade.equityCurve
+                    .map((point) => point.time)
+                    .filter((time) =>
+                        time > position.lastMarkedTime &&
+                        time < position.trade.exitTime &&
+                        time <= timestamp
+                    )
+            )
+        )).sort((a, b) => a - b);
 
-        let index = 0;
-        while (index < activePositions.length) {
-            const position = activePositions[index];
-            if (position.trade.exitTime > timestamp) {
-                index += 1;
-                continue;
-            }
-
-            activePositions.splice(index, 1);
-            const realizedProfitUSDT = position.allocatedCapital * (position.trade.profit / 100);
-            cash += position.allocatedCapital + realizedProfitUSDT;
-            executedTrades.push({
-                ...position.trade,
-                profitUSDT: realizedProfitUSDT,
-                size: position.allocatedCapital / config.initialCapital,
-            });
-
-            if (isWeiShen) {
-                if (position.trade.profit < 0) {
-                    weiShenState.consecutiveLosses += 1;
-                    if (weiShenState.consecutiveLosses >= weiShenParams!.risk.maxConsecutiveLossesBeforeCooldown) {
-                        weiShenState.cooldownUntil = Math.max(
-                            weiShenState.cooldownUntil,
-                            position.trade.exitTime + weiShenCooldownMs,
-                        );
-                    }
-                } else if (position.trade.profit > 0) {
-                    weiShenState.consecutiveLosses = 0;
+        sampleTimes.forEach((time) => {
+            activePositions.forEach((position) => {
+                if (time > position.lastMarkedTime && time < position.trade.exitTime) {
+                    position.lastMarkedTime = time;
                 }
+            });
+            pushEquityPoint(time);
+        });
+    };
+
+    const getNextSettlementTime = (position: ActivePosition) =>
+        position.trade.settlementLegs[position.nextSettlementIndex]?.exitTime ?? Number.POSITIVE_INFINITY;
+
+    const finalizePosition = (position: ActivePosition) => {
+        const realizedProfitUSDT = position.realizedProfitUSDT;
+        const realizedProfitPct = position.allocatedCapital > 0
+            ? (realizedProfitUSDT / position.allocatedCapital) * 100
+            : 0;
+        executedTrades.push({
+            ...toOutputTrade(position.trade),
+            profit: realizedProfitPct,
+            profitUSDT: realizedProfitUSDT,
+            size: position.allocatedCapital / config.initialCapital,
+        });
+
+        if (isWeiShen) {
+            if (realizedProfitPct < 0) {
+                weiShenState.consecutiveLosses += 1;
+                if (weiShenState.consecutiveLosses >= weiShenParams!.risk.maxConsecutiveLossesBeforeCooldown) {
+                    weiShenState.cooldownUntil = Math.max(
+                        weiShenState.cooldownUntil,
+                        position.trade.exitTime + weiShenCooldownMs,
+                    );
+                }
+            } else if (realizedProfitPct > 0) {
+                weiShenState.consecutiveLosses = 0;
             }
-            pushEquityPoint(position.trade.exitTime);
         }
+    };
+
+    const settlePositionsUpTo = (timestamp: number) => {
+        while (activePositions.length > 0) {
+            const nextSettlementTime = Math.min(...activePositions.map(getNextSettlementTime));
+            if (nextSettlementTime > timestamp) {
+                break;
+            }
+
+            sampleOpenPositionsUpTo(nextSettlementTime);
+
+            let index = 0;
+            while (index < activePositions.length) {
+                const position = activePositions[index];
+                const leg = position.trade.settlementLegs[position.nextSettlementIndex];
+                if (!leg || leg.exitTime !== nextSettlementTime) {
+                    index += 1;
+                    continue;
+                }
+
+                const totalLegSize = position.trade.settlementLegs.reduce((sum, settlementLeg) => sum + settlementLeg.size, 0);
+                const legShare = totalLegSize > 0 ? leg.size / totalLegSize : 1;
+                const capitalReturned = position.allocatedCapital * legShare;
+                const realizedProfitUSDT = capitalReturned * (leg.profit / 100);
+                position.remainingAllocatedCapital = Math.max(0, position.remainingAllocatedCapital - capitalReturned);
+                position.realizedProfitUSDT += realizedProfitUSDT;
+                position.nextSettlementIndex += 1;
+                cash += capitalReturned + realizedProfitUSDT;
+
+                const isPositionSettled =
+                    position.nextSettlementIndex >= position.trade.settlementLegs.length ||
+                    position.remainingAllocatedCapital <= 0.000001 ||
+                    leg.exitTime >= position.trade.exitTime;
+
+                if (isPositionSettled) {
+                    activePositions.splice(index, 1);
+                    finalizePosition(position);
+                } else {
+                    index += 1;
+                }
+
+                pushEquityPoint(leg.exitTime);
+            }
+        }
+
+        sampleOpenPositionsUpTo(timestamp);
     };
 
     candidateTrades.forEach((trade) => {
@@ -524,7 +636,11 @@ export function runPortfolioBacktest(
         activePositions.push({
             trade,
             allocatedCapital,
+            remainingAllocatedCapital: allocatedCapital,
+            realizedProfitUSDT: 0,
+            nextSettlementIndex: 0,
             riskPct: entryRiskPct,
+            lastMarkedTime: trade.entryTime,
         });
         maxConcurrentPositionsUsed = Math.max(maxConcurrentPositionsUsed, activePositions.length);
         tradedSymbols.add(trade.symbol);

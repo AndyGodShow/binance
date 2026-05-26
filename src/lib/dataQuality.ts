@@ -37,6 +37,7 @@ export function calculateDataQuality(klines: KlineData[]): DataQualityMetrics {
     let oiAvailableCount = 0;
     let oiExactCount = 0;
     let fundingAvailableCount = 0;
+    let fundingExactCount = 0;
 
     klines.forEach(kline => {
         if (kline.openInterest && parseFloat(kline.openInterest) > 0) {
@@ -50,6 +51,9 @@ export function calculateDataQuality(klines: KlineData[]): DataQualityMetrics {
             const fr = parseFloat(kline.fundingRate);
             if (!isNaN(fr) && Math.abs(fr) <= 0.05) {
                 fundingAvailableCount++;
+                if (kline.fundingRateSource === 'exact') {
+                    fundingExactCount++;
+                }
             }
         }
     });
@@ -57,12 +61,11 @@ export function calculateDataQuality(klines: KlineData[]): DataQualityMetrics {
     const oiCoverage = (oiAvailableCount / totalDataPoints) * 100;
     const fundingCoverage = (fundingAvailableCount / totalDataPoints) * 100;
     const oiExactCoverage = (oiExactCount / totalDataPoints) * 100;
-    // 资金费率天然每8小时只更新一次，区间内的 forward-fill 即为最真实的费率，不应扣减分数
-    const fundingExactCoverage = fundingCoverage;
+    const fundingExactCoverage = (fundingExactCount / totalDataPoints) * 100;
 
     const avgAvailableCoverage = (oiCoverage + fundingCoverage) / 2;
     const avgExactCoverage = (oiExactCoverage + fundingExactCoverage) / 2;
-    const realDataPoints = Math.round((oiExactCount + fundingAvailableCount) / 2);
+    const realDataPoints = Math.round((oiExactCount + fundingExactCount) / 2);
     const missingDataPoints = totalDataPoints - realDataPoints;
     const simulatedDataRatio = ((totalDataPoints - realDataPoints) / totalDataPoints) * 100;
 

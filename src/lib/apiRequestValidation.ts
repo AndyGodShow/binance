@@ -135,7 +135,7 @@ export function validateSymbolsParam(
 }
 
 export function validateBacktestKlinesParams(searchParams: URLSearchParams): ValidationResult<BacktestKlinesParams> {
-    const symbol = normalizeFuturesSymbol(searchParams.get('symbol'));
+    const symbol = normalizeFuturesSymbol(searchParams.get('symbol'), undefined, { allowLocalized: true });
     if (!symbol.ok) return symbol;
 
     const interval = searchParams.get('interval') || '1h';

@@ -82,6 +82,7 @@ export interface RiskCalculationParams {
     val?: number;
     poc?: number;
     bollingerLower?: number;
+    bollingerMid?: number;
     bollingerUpper?: number;
 
     // 动态参数
