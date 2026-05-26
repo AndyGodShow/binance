@@ -23,11 +23,22 @@
 
 ## 技术栈
 
-- Next.js
-- React
-- TypeScript
+- Next.js 16 App Router
+- React 19
+- TypeScript 5
 - SWR
 - Recharts
+- CSS Modules
+
+## GitHub 与线上地址
+
+- GitHub 仓库：<https://github.com/AndyGodShow/binance>
+- 默认分支：`main`
+- 当前仓库可见性：公开仓库
+- 线上地址：<https://binance-psi-eosin.vercel.app>
+- License：待确认
+
+公开仓库内只应保留源码、说明文档、测试和可公开样例。真实 API key、私有 token、本地 `.env.local`、大型历史数据、Playwright 临时日志、链上/新闻抓取缓存和个人研究原始数据不要提交到 GitHub。
 
 ## 快速开始
 
@@ -42,9 +53,35 @@ npm run dev
 http://localhost:3000
 ```
 
+可选环境变量参考 `.env.example`：
+
+```text
+COINALYZE_API_KEY=
+MORALIS_API_KEY=
+SOLANA_NETWORK=mainnet
+BINANCE_FAPI_BASES=
+BLOB_READ_WRITE_TOKEN=
+CRON_SECRET=
+DATA_DOWNLOAD_TOKEN=
+```
+
+其中 `COINALYZE_API_KEY`、`MORALIS_API_KEY`、`BLOB_READ_WRITE_TOKEN`、`CRON_SECRET` 和 `DATA_DOWNLOAD_TOKEN` 都应只放在本地或部署平台的环境变量中，不要写入源码、README、截图或 issue。
+
 ## 说明
 
 该项目仍在持续迭代中，主要用于个人研究、数据观察和策略验证。
+
+## 推送前隐私检查
+
+推送到 GitHub 前建议至少检查：
+
+```bash
+git status --short
+git ls-files .env .env.local .env.production .env.development .env.example
+git grep -I -n -i -E 'api[_-]?key|secret|private[_-]?key|password|token|bearer|authorization|client_secret|mnemonic|database_url' -- . ':!package-lock.json'
+```
+
+预期结果是：只有 `.env.example` 被 git 跟踪；`.env.local` 和真实凭据文件不应出现在 `git ls-files` 里。更多公开仓库检查项见 `docs/github-publication-checklist.md`。
 
 ## 账本反推策略框架
 
