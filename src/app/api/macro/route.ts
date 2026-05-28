@@ -107,6 +107,12 @@ const US_EQUITY_ASSETS: YahooAssetConfig[] = [
     { symbol: 'META', label: 'Meta 平台', market: '七姐妹', includePrePost: true },
     { symbol: 'GOOGL', label: '谷歌母公司', market: '七姐妹', includePrePost: true },
     { symbol: 'TSLA', label: '特斯拉', market: '七姐妹', includePrePost: true },
+    { symbol: 'AVGO', label: '博通', market: 'AI半导体', includePrePost: true },
+    { symbol: 'AMD', label: 'AMD', market: 'AI半导体', includePrePost: true },
+    { symbol: 'TSM', label: '台积电 ADR', market: 'AI半导体', includePrePost: true },
+    { symbol: 'ASML', label: '阿斯麦 ADR', market: 'AI半导体', includePrePost: true },
+    { symbol: 'MU', label: '美光科技', market: 'AI半导体', includePrePost: true },
+    { symbol: 'SNDK', label: '闪迪', market: 'AI半导体', includePrePost: true },
     { symbol: 'TQQQ', label: '纳指三倍做多', market: '多空杠杆 ETF/ETN', includePrePost: true },
     { symbol: 'SQQQ', label: '纳指三倍做空', market: '多空杠杆 ETF/ETN', includePrePost: true },
     { symbol: 'SOXL', label: '半导体三倍做多', market: '多空杠杆 ETF/ETN', includePrePost: true },
@@ -167,6 +173,9 @@ const HK_EQUITY_ASSETS: YahooAssetConfig[] = [
     { symbol: '9868.HK', label: '小鹏汽车-W', market: '汽车新能源' },
     { symbol: '2015.HK', label: '理想汽车-W', market: '汽车新能源' },
     { symbol: '0981.HK', label: '中芯国际', market: '半导体AI' },
+    { symbol: '1347.HK', label: '华虹半导体', market: '半导体AI' },
+    { symbol: '7709.HK', label: '南方两倍做多海力士', market: '半导体AI' },
+    { symbol: '7747.HK', label: '南方两倍做多三星', market: '半导体AI' },
     { symbol: '2269.HK', label: '药明生物', market: '消费医药' },
     { symbol: '2020.HK', label: '安踏体育', market: '消费医药' },
     { symbol: '0883.HK', label: '中国海洋石油', market: '资源公用' },
@@ -275,6 +284,37 @@ function delay(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function calculateChangePercent(current: number, previous?: number): number | undefined {
+    if (!Number.isFinite(current) || !Number.isFinite(previous) || previous === 0) {
+        return undefined;
+    }
+
+    return ((current - (previous as number)) / (previous as number)) * 100;
+}
+
+function pickCloseByTradingDays(closes: number[], tradingDaysAgo: number): number | undefined {
+    const index = Math.max(0, closes.length - 1 - tradingDaysAgo);
+    return closes[index];
+}
+
+function buildAssetPerformance(input: {
+    closes: number[];
+    price: number;
+    dayChangePercent: number;
+}): MacroSourceAsset['performance'] | undefined {
+    const closes = input.closes.filter((value) => Number.isFinite(value));
+    if (closes.length === 0 || !Number.isFinite(input.price)) {
+        return undefined;
+    }
+
+    return {
+        year: calculateChangePercent(input.price, closes[0]),
+        month: calculateChangePercent(input.price, pickCloseByTradingDays(closes, 21)),
+        week: calculateChangePercent(input.price, pickCloseByTradingDays(closes, 5)),
+        day: input.dayChangePercent,
+    };
+}
+
 async function settleTimed<T>(factory: () => Promise<T>): Promise<TimedSettled<T>> {
     const startedAt = Date.now();
     try {
@@ -316,7 +356,7 @@ function buildYahooAssetSession(
     };
 }
 
-async function fetchYahooAsset(asset: YahooAssetConfig): Promise<MacroSourceAsset | null> {
+async function fetchYahooAsset(asset: YahooAssetConfig, includePerformance = false): Promise<MacroSourceAsset | null> {
     const querySymbols = asset.querySymbols && asset.querySymbols.length > 0 ? asset.querySymbols : [asset.symbol];
     let lastError: unknown;
 
@@ -324,7 +364,8 @@ async function fetchYahooAsset(asset: YahooAssetConfig): Promise<MacroSourceAsse
         for (const yahooHost of YAHOO_CHART_HOSTS) {
             try {
                 const includePrePost = asset.includePrePost ? 'true' : 'false';
-                const url = `https://${yahooHost}/v8/finance/chart/${encodeURIComponent(querySymbol)}?interval=1d&range=5d&includePrePost=${includePrePost}`;
+                const range = includePerformance ? '1y' : '5d';
+                const url = `https://${yahooHost}/v8/finance/chart/${encodeURIComponent(querySymbol)}?interval=1d&range=${range}&includePrePost=${includePrePost}`;
                 const response = await withTimeout(fetch(url, {
                     headers: {
                         'User-Agent': 'Mozilla/5.0',
@@ -373,6 +414,7 @@ async function fetchYahooAsset(asset: YahooAssetConfig): Promise<MacroSourceAsse
                     market: asset.market,
                     price,
                     changePercent,
+                    performance: includePerformance ? buildAssetPerformance({ closes, price, dayChangePercent: changePercent }) : undefined,
                     dataTimestamp: toIsoTimestampSeconds(
                         result.meta?.regularMarketTime ?? result.timestamp?.filter(Number.isFinite).at(-1)
                     ),
@@ -394,13 +436,14 @@ async function fetchYahooAsset(asset: YahooAssetConfig): Promise<MacroSourceAsse
 async function fetchYahooAssetsInBatches(
     assets: YahooAssetConfig[],
     batchSize: number,
-    batchDelayMs: number
+    batchDelayMs: number,
+    includePerformance = false
 ): Promise<Array<PromiseSettledResult<MacroSourceAsset | null>>> {
     const results: Array<PromiseSettledResult<MacroSourceAsset | null>> = [];
 
     for (let index = 0; index < assets.length; index += batchSize) {
         const batch = assets.slice(index, index + batchSize);
-        results.push(...await Promise.allSettled(batch.map((asset) => fetchYahooAsset(asset))));
+        results.push(...await Promise.allSettled(batch.map((asset) => fetchYahooAsset(asset, includePerformance))));
         if (index + batchSize < assets.length) {
             await delay(batchDelayMs);
         }
@@ -645,17 +688,20 @@ export async function GET() {
             settleTimed(() => fetchYahooAssetsInBatches(
                 US_EQUITY_ASSETS,
                 YAHOO_EQUITY_BATCH_SIZE,
-                YAHOO_EQUITY_BATCH_DELAY_MS
+                YAHOO_EQUITY_BATCH_DELAY_MS,
+                true
             )),
             settleTimed(() => fetchYahooAssetsInBatches(
                 HK_EQUITY_ASSETS,
                 YAHOO_EQUITY_BATCH_SIZE,
-                YAHOO_EQUITY_BATCH_DELAY_MS
+                YAHOO_EQUITY_BATCH_DELAY_MS,
+                true
             )),
             settleTimed(() => fetchYahooAssetsInBatches(
                 A_SHARE_EQUITY_ASSETS,
                 YAHOO_EQUITY_BATCH_SIZE,
-                YAHOO_EQUITY_BATCH_DELAY_MS
+                YAHOO_EQUITY_BATCH_DELAY_MS,
+                true
             )),
         ]);
 

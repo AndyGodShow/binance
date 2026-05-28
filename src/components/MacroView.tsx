@@ -18,7 +18,7 @@ import {
 } from 'lucide-react';
 
 import { usePersistentSWR } from '@/hooks/usePersistentSWR';
-import { normalizeMacroDashboardData, type MacroBoardGroup, type MacroDashboardData, type MacroMonitorCard } from '@/lib/macro';
+import { normalizeMacroDashboardData, type MacroAssetPerformance, type MacroBoardGroup, type MacroDashboardData, type MacroMonitorCard } from '@/lib/macro';
 import styles from './MacroView.module.css';
 
 const fetcher = async (url: string) => {
@@ -35,6 +35,14 @@ type MacroSection = 'global' | 'us-equities' | 'hk-equities' | 'a-share-equities
 type Tone = MacroMonitorCard['tone'];
 type MacroSource = MacroDashboardData['sourceStatus'][number];
 type EquityDashboard = MacroDashboardData['usEquities'];
+type PerformanceKey = keyof MacroAssetPerformance;
+
+const PERFORMANCE_PERIODS: Array<{ key: PerformanceKey; label: string }> = [
+    { key: 'year', label: 'year' },
+    { key: 'month', label: 'month' },
+    { key: 'week', label: 'week' },
+    { key: 'day', label: 'day' },
+];
 
 function formatSignedPercent(value: number): string {
     return `${value > 0 ? '+' : ''}${value.toFixed(2)}%`;
@@ -106,6 +114,17 @@ function getToneClass(tone: MacroMonitorCard['tone']): string {
 
 function getChangeClass(value: number): string {
     return value >= 0 ? styles.tonePositive : styles.toneNegative;
+}
+
+function getPerformanceEntries(performance?: MacroAssetPerformance) {
+    if (!performance) return [];
+
+    return PERFORMANCE_PERIODS
+        .map((period) => ({
+            ...period,
+            value: performance[period.key],
+        }))
+        .filter((entry): entry is { key: PerformanceKey; label: string; value: number } => Number.isFinite(entry.value));
 }
 
 function isSourceStale(source: MacroDashboardData['sourceStatus'][number]): boolean {
@@ -231,29 +250,45 @@ function EquityObserverPanel({
                         <div key={group.title} className={styles.usEquityGroup}>
                             <div className={styles.marketGroupLabel}>{group.title}</div>
                             <div className={styles.usEquityRows}>
-                                {group.items.map((item) => (
-                                    <article key={item.symbol} className={styles.usEquityRow}>
-                                        <div className={styles.usEquityNameBlock}>
-                                            <span className={styles.marketSymbol}>{item.symbol}</span>
-                                            <span className={styles.usEquityLabel}>{item.displaySymbol}</span>
-                                        </div>
-                                        <div className={styles.usEquityPriceBlock}>
-                                            <span className={styles.marketPrice}>{formatAssetPrice(item.symbol, item.price)}</span>
-                                            <span className={`${styles.marketChange} ${getChangeClass(item.changePercent)}`}>
-                                                {formatSignedPercent(item.changePercent)}
-                                            </span>
-                                        </div>
-                                        {item.session && (
-                                            <div className={styles.sessionLine}>
-                                                <span>{item.session.label}</span>
-                                                <span>{formatAssetPrice(item.symbol, item.session.price)}</span>
-                                                <span className={getChangeClass(item.session.changePercent)}>
-                                                    {formatSignedPercent(item.session.changePercent)}
+                                {group.items.map((item) => {
+                                    const performanceEntries = getPerformanceEntries(item.performance);
+
+                                    return (
+                                        <article key={item.symbol} className={styles.usEquityRow}>
+                                            <div className={styles.usEquityNameBlock}>
+                                                <span className={styles.marketSymbol}>{item.symbol}</span>
+                                                <span className={styles.usEquityLabel}>{item.displaySymbol}</span>
+                                            </div>
+                                            <div className={styles.usEquityPriceBlock}>
+                                                <span className={styles.marketPrice}>{formatAssetPrice(item.symbol, item.price)}</span>
+                                                <span className={`${styles.marketChange} ${getChangeClass(item.changePercent)}`}>
+                                                    {formatSignedPercent(item.changePercent)}
                                                 </span>
                                             </div>
-                                        )}
-                                    </article>
-                                ))}
+                                            {performanceEntries.length > 0 && (
+                                                <div className={styles.performanceStrip} aria-label={`${item.displaySymbol} 周期涨跌幅`}>
+                                                    {performanceEntries.map((entry) => (
+                                                        <div key={entry.key} className={styles.performanceCell}>
+                                                            <span className={`${styles.performanceValue} ${getChangeClass(entry.value)}`}>
+                                                                {formatSignedPercent(entry.value)}
+                                                            </span>
+                                                            <span className={styles.performanceLabel}>{entry.label}</span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                            {item.session && (
+                                                <div className={styles.sessionLine}>
+                                                    <span>{item.session.label}</span>
+                                                    <span>{formatAssetPrice(item.symbol, item.session.price)}</span>
+                                                    <span className={getChangeClass(item.session.changePercent)}>
+                                                        {formatSignedPercent(item.session.changePercent)}
+                                                    </span>
+                                                </div>
+                                            )}
+                                        </article>
+                                    );
+                                })}
                             </div>
                         </div>
                     ))}

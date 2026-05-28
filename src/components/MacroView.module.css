@@ -787,16 +787,17 @@
 
 .usEquityRows {
     display: grid;
-    gap: 7px;
+    gap: 10px;
 }
 
 .usEquityRow {
     display: grid;
-    grid-template-columns: minmax(130px, 1fr) auto;
-    gap: 6px 14px;
+    grid-template-columns: minmax(126px, 150px) minmax(0, 1fr) minmax(104px, max-content);
+    gap: 12px 8px;
     align-items: center;
     min-width: 0;
-    padding: 10px 11px;
+    min-height: 86px;
+    padding: 15px 16px;
     border-radius: 8px;
     border: 1px solid rgba(255, 255, 255, 0.055);
     background: rgba(255, 255, 255, 0.024);
@@ -805,16 +806,19 @@
 .usEquityNameBlock,
 .usEquityPriceBlock {
     display: grid;
-    gap: 3px;
+    gap: 5px;
     min-width: 0;
 }
 
 .usEquityPriceBlock {
+    grid-column: 3;
     justify-items: end;
 }
 
 .usEquityRow .marketPrice {
-    font-size: 18px;
+    font-size: 20px;
+    text-align: right;
+    white-space: nowrap;
 }
 
 .usEquityLabel,
@@ -831,6 +835,41 @@
     padding-top: 6px;
     border-top: 1px solid rgba(255, 255, 255, 0.05);
     font-family: 'Roboto Mono', monospace;
+}
+
+.performanceStrip {
+    grid-column: 2;
+    grid-row: 1;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    justify-content: start;
+    gap: 8px;
+    min-width: 0;
+    max-width: 380px;
+}
+
+.performanceCell {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+}
+
+.performanceValue {
+    overflow-wrap: anywhere;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 14px;
+    font-weight: 800;
+    letter-spacing: 0;
+    line-height: 1.15;
+}
+
+.performanceLabel {
+    color: rgba(255, 255, 255, 0.42);
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0;
+    line-height: 1.15;
+    text-transform: uppercase;
 }
 
 .footerNote {
@@ -935,6 +974,17 @@
     .twoColMeta,
     .usEquityRow {
         grid-template-columns: 1fr;
+    }
+
+    .performanceStrip,
+    .usEquityPriceBlock {
+        grid-column: auto;
+        grid-row: auto;
+    }
+
+    .performanceStrip {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        width: 100%;
     }
 
     .monitorMetric {

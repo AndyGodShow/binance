@@ -266,8 +266,17 @@ test('buildMacroDashboard exposes localized macro market groups', () => {
 test('buildMacroDashboard exposes US equity observer groups and summary', () => {
     const dashboard = buildMacroDashboard(createPayload({
         usEquities: {
-            AAPL: { symbol: 'AAPL', label: '苹果', market: '七姐妹', price: 212.4, changePercent: 1.2 },
+            AAPL: {
+                symbol: 'AAPL',
+                label: '苹果',
+                market: '七姐妹',
+                price: 212.4,
+                changePercent: 1.2,
+                performance: { year: 18.4, month: 4.1, week: -0.8, day: 1.2 },
+            },
             MSFT: { symbol: 'MSFT', label: '微软', market: '七姐妹', price: 512.8, changePercent: -0.4 },
+            MU: { symbol: 'MU', label: '美光科技', market: 'AI半导体', price: 142.5, changePercent: 2.8 },
+            SNDK: { symbol: 'SNDK', label: '闪迪', market: 'AI半导体', price: 85.7, changePercent: -1.1 },
             TQQQ: { symbol: 'TQQQ', label: '纳指三倍做多', market: '多空杠杆 ETF/ETN', price: 86.2, changePercent: 3.6 },
             SQQQ: { symbol: 'SQQQ', label: '纳指三倍做空', market: '多空杠杆 ETF/ETN', price: 15.1, changePercent: -3.3 },
             COIN: { symbol: 'COIN', label: 'Coinbase 交易所', market: '加密相关股', price: 287.3, changePercent: 2.1 },
@@ -281,17 +290,19 @@ test('buildMacroDashboard exposes US equity observer groups and summary', () => 
         dashboard.usEquities.groups.map((group) => [group.title, group.items.map((item) => item.symbol)]),
         [
             ['七姐妹', ['AAPL', 'MSFT']],
+            ['AI半导体', ['MU', 'SNDK']],
             ['多空杠杆 ETF/ETN', ['TQQQ', 'SQQQ']],
             ['加密相关股', ['COIN']],
             ['中概观察', ['BABA', 'JD']],
             ['板块总览', ['XLK']],
         ]
     );
-    assert.equal(dashboard.usEquities.summary.totalCount, 8);
-    assert.equal(dashboard.usEquities.summary.advancers, 5);
-    assert.equal(dashboard.usEquities.summary.decliners, 3);
+    assert.equal(dashboard.usEquities.summary.totalCount, 10);
+    assert.equal(dashboard.usEquities.summary.advancers, 6);
+    assert.equal(dashboard.usEquities.summary.decliners, 4);
     assert.equal(dashboard.usEquities.summary.strongest?.symbol, 'TQQQ');
     assert.equal(dashboard.usEquities.summary.weakest?.symbol, 'SQQQ');
+    assert.deepEqual(dashboard.usEquities.groups[0].items[0].performance, { year: 18.4, month: 4.1, week: -0.8, day: 1.2 });
 });
 
 test('buildMacroDashboard exposes HK and A-share equity observer groups', () => {
@@ -302,6 +313,10 @@ test('buildMacroDashboard exposes HK and A-share equity observer groups', () => 
             '3690.HK': { symbol: '3690.HK', label: '美团', market: '科技互联网', price: 122.4, changePercent: -0.7 },
             '1299.HK': { symbol: '1299.HK', label: '友邦保险', market: '金融地产', price: 62.8, changePercent: 0.3 },
             '1211.HK': { symbol: '1211.HK', label: '比亚迪股份', market: '汽车新能源', price: 246.2, changePercent: 2.4 },
+            '0981.HK': { symbol: '0981.HK', label: '中芯国际', market: '半导体AI', price: 70.2, changePercent: 3.1 },
+            '1347.HK': { symbol: '1347.HK', label: '华虹半导体', market: '半导体AI', price: 55.4, changePercent: 1.9 },
+            '7709.HK': { symbol: '7709.HK', label: '南方两倍做多海力士', market: '半导体AI', price: 99.4, changePercent: 2.6 },
+            '7747.HK': { symbol: '7747.HK', label: '南方两倍做多三星', market: '半导体AI', price: 102.7, changePercent: -0.5 },
         },
         aShareEquities: {
             '000001.SS': { symbol: '000001.SS', label: '上证指数', market: '指数/宽基', price: 3180, changePercent: -0.2 },
@@ -318,10 +333,11 @@ test('buildMacroDashboard exposes HK and A-share equity observer groups', () => 
             ['科技互联网', ['0700.HK', '3690.HK']],
             ['金融地产', ['1299.HK']],
             ['汽车新能源', ['1211.HK']],
+            ['半导体AI', ['0981.HK', '1347.HK', '7709.HK', '7747.HK']],
         ]
     );
-    assert.equal(dashboard.hkEquities.summary.totalCount, 5);
-    assert.equal(dashboard.hkEquities.summary.strongest?.symbol, '1211.HK');
+    assert.equal(dashboard.hkEquities.summary.totalCount, 9);
+    assert.equal(dashboard.hkEquities.summary.strongest?.symbol, '0981.HK');
 
     assert.deepEqual(
         dashboard.aShareEquities.groups.map((group) => [group.title, group.items.map((item) => item.symbol)]),

@@ -4,8 +4,16 @@ export interface MacroSourceAsset {
     market: string;
     price: number;
     changePercent: number;
+    performance?: MacroAssetPerformance;
     dataTimestamp?: string;
     session?: MacroAssetSession;
+}
+
+export interface MacroAssetPerformance {
+    year?: number;
+    month?: number;
+    week?: number;
+    day?: number;
 }
 
 export interface MacroAssetSession {
@@ -82,6 +90,7 @@ export interface MacroBoardItem {
     market: string;
     price: number;
     changePercent: number;
+    performance?: MacroAssetPerformance;
     session?: MacroAssetSession;
 }
 
@@ -284,6 +293,7 @@ const MACRO_GROUPS: Array<{ title: string; markets: string[] }> = [
 
 const US_EQUITY_GROUPS: Array<{ title: string; markets: string[] }> = [
     { title: '七姐妹', markets: ['七姐妹'] },
+    { title: 'AI半导体', markets: ['AI半导体', 'AI 半导体', '半导体AI', '半导体 AI'] },
     { title: '多空杠杆 ETF/ETN', markets: ['多空杠杆 ETF/ETN', '多空杠杆 ETF'] },
     { title: '加密相关股', markets: ['加密相关股'] },
     { title: '中概观察', markets: ['中概观察'] },
@@ -399,6 +409,7 @@ function buildBoardGroups(
                 market: asset.market,
                 price: asset.price,
                 changePercent: asset.changePercent,
+                performance: asset.performance,
                 session: asset.session,
             })),
     })).filter((group) => group.items.length > 0);
