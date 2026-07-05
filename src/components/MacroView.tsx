@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo, useState } from 'react';
+import { memo, useMemo, useState } from 'react';
 import {
     Activity,
     AlertTriangle,
     BarChart3,
     CircleDot,
+    ExternalLink,
     Gauge,
     Globe2,
     Landmark,
@@ -19,6 +20,11 @@ import {
 
 import { usePersistentSWR } from '@/hooks/usePersistentSWR';
 import { normalizeMacroDashboardData, type MacroAssetPerformance, type MacroBoardGroup, type MacroDashboardData, type MacroMonitorCard } from '@/lib/macro';
+import {
+    buildMacroEquityTradingViewSymbol,
+    buildMacroEquityTradingViewUrl,
+    canEmbedMacroEquityChart,
+} from '@/lib/macroTradingView';
 import styles from './MacroView.module.css';
 
 const fetcher = async (url: string) => {
@@ -187,12 +193,14 @@ function EquityObserverPanel({
     dashboard,
     source,
     emptyText,
+    onSymbolClick,
 }: {
     title: string;
     heading: string;
     dashboard: EquityDashboard;
     source?: MacroSource;
     emptyText: string;
+    onSymbolClick?: (symbol: string) => void;
 }) {
     return (
         <section className={styles.usObserver}>
@@ -252,11 +260,15 @@ function EquityObserverPanel({
                             <div className={styles.usEquityRows}>
                                 {group.items.map((item) => {
                                     const performanceEntries = getPerformanceEntries(item.performance);
-
-                                    return (
-                                        <article key={item.symbol} className={styles.usEquityRow}>
+                                    const tradingViewSymbol = buildMacroEquityTradingViewSymbol(item.symbol);
+                                    const canEmbedChart = canEmbedMacroEquityChart(item.symbol);
+                                    const rowContent = (
+                                        <>
                                             <div className={styles.usEquityNameBlock}>
-                                                <span className={styles.marketSymbol}>{item.symbol}</span>
+                                                <span className={styles.marketSymbol}>
+                                                    {item.symbol}
+                                                    {!canEmbedChart && <ExternalLink size={12} aria-hidden="true" />}
+                                                </span>
                                                 <span className={styles.usEquityLabel}>{item.displaySymbol}</span>
                                             </div>
                                             <div className={styles.usEquityPriceBlock}>
@@ -286,7 +298,30 @@ function EquityObserverPanel({
                                                     </span>
                                                 </div>
                                             )}
-                                        </article>
+                                        </>
+                                    );
+
+                                    return canEmbedChart ? (
+                                        <button
+                                            key={item.symbol}
+                                            type="button"
+                                            className={styles.usEquityRow}
+                                            onClick={() => onSymbolClick?.(tradingViewSymbol)}
+                                            aria-label={`打开 ${item.displaySymbol} K线`}
+                                        >
+                                            {rowContent}
+                                        </button>
+                                    ) : (
+                                        <a
+                                            key={item.symbol}
+                                            className={styles.usEquityRow}
+                                            href={buildMacroEquityTradingViewUrl(item.symbol)}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            aria-label={`在 TradingView 打开 ${item.displaySymbol} K线`}
+                                        >
+                                            {rowContent}
+                                        </a>
                                     );
                                 })}
                             </div>
@@ -300,7 +335,7 @@ function EquityObserverPanel({
     );
 }
 
-export default function MacroView() {
+function MacroView({ onSymbolClick }: { onSymbolClick?: (symbol: string) => void }) {
     const [activeSection, setActiveSection] = useState<MacroSection>('global');
     const { data: rawData, error, isLoading } = usePersistentSWR<MacroDashboardData>(
         '/api/macro',
@@ -788,6 +823,7 @@ export default function MacroView() {
                     dashboard={data.usEquities}
                     source={usEquitySource}
                     emptyText="美股观察数据暂未拉到，全球总览仍可正常用于宏观定位。"
+                    onSymbolClick={onSymbolClick}
                 />
             ) : activeSection === 'hk-equities' ? (
                 <EquityObserverPanel
@@ -796,6 +832,7 @@ export default function MacroView() {
                     dashboard={data.hkEquities}
                     source={hkEquitySource}
                     emptyText="港股观察数据暂未拉到，全球总览仍可正常用于宏观定位。"
+                    onSymbolClick={onSymbolClick}
                 />
             ) : (
                 <EquityObserverPanel
@@ -804,6 +841,7 @@ export default function MacroView() {
                     dashboard={data.aShareEquities}
                     source={aShareEquitySource}
                     emptyText="A股观察数据暂未拉到，全球总览仍可正常用于宏观定位。"
+                    onSymbolClick={onSymbolClick}
                 />
             )}
 
@@ -814,3 +852,5 @@ export default function MacroView() {
         </section>
     );
 }
+
+export default memo(MacroView);

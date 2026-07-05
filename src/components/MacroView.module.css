@@ -795,12 +795,30 @@
     grid-template-columns: minmax(126px, 150px) minmax(0, 1fr) minmax(104px, max-content);
     gap: 12px 8px;
     align-items: center;
+    width: 100%;
     min-width: 0;
     min-height: 86px;
     padding: 15px 16px;
     border-radius: 8px;
     border: 1px solid rgba(255, 255, 255, 0.055);
     background: rgba(255, 255, 255, 0.024);
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    text-decoration: none;
+    cursor: pointer;
+    transition: background 0.18s ease, border-color 0.18s ease;
+}
+
+.usEquityRow:hover,
+.usEquityRow:focus-visible {
+    border-color: rgba(252, 213, 53, 0.2);
+    background: rgba(252, 213, 53, 0.035);
+}
+
+.usEquityRow:focus-visible {
+    outline: 2px solid rgba(252, 213, 53, 0.7);
+    outline-offset: 2px;
 }
 
 .usEquityNameBlock,

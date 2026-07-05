@@ -498,14 +498,16 @@ export default function Home() {
 
   // 🔧 Shared state for chart drawer (shared between Dashboard and StrategyCenter)
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
+  const [isChartOpen, setIsChartOpen] = useState(false);
 
   // 使用useCallback优化回调函数
   const handleSymbolClick = useCallback((symbol: string) => {
-    setSelectedSymbol(prev => prev === symbol ? null : symbol);
+    setSelectedSymbol(symbol);
+    setIsChartOpen(true);
   }, []);
 
   const handleCloseChart = useCallback(() => {
-    setSelectedSymbol(null);
+    setIsChartOpen(false);
   }, []);
 
   // Dynamic title update when there are active signals
@@ -605,7 +607,7 @@ export default function Home() {
         />
       )}
       {activeTab === 'macro' && (
-        <MacroView />
+        <MacroView onSymbolClick={handleSymbolClick} />
       )}
       {activeTab === 'watchlists' && (
         <WatchlistsPanel
@@ -649,9 +651,11 @@ export default function Home() {
       )}
 
       {/* Shared ChartDrawer for all tabs */}
-      {selectedSymbol && (
-        <ChartDrawer symbol={selectedSymbol} onClose={handleCloseChart} />
-      )}
+      <ChartDrawer
+        symbol={selectedSymbol}
+        isOpen={isChartOpen}
+        onClose={handleCloseChart}
+      />
     </main>
   );
 }

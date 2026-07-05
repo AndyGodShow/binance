@@ -8,15 +8,25 @@ export function buildTradingViewPerpetualSymbol(symbol: string): string {
     return `BINANCE:${symbol.trim().toUpperCase()}.P`;
 }
 
+export function buildTradingViewSymbol(symbol: string): string {
+    const normalized = symbol.trim().toUpperCase();
+    return normalized.includes(':')
+        ? normalized
+        : buildTradingViewPerpetualSymbol(normalized);
+}
+
 export function buildTradingViewWidgetEmbedUrl(symbol: string): string {
+    const tradingViewSymbol = buildTradingViewSymbol(symbol);
     const url = new URL(TRADINGVIEW_WIDGET_ROUTE, 'http://localhost');
     url.searchParams.set('locale', 'zh_CN');
     url.hash = encodeURIComponent(JSON.stringify({
         autosize: true,
         width: '100%',
         height: '100%',
-        symbol: buildTradingViewPerpetualSymbol(symbol),
-        interval: '15',
+        symbol: tradingViewSymbol,
+        interval: tradingViewSymbol.startsWith('SSE:') || tradingViewSymbol.startsWith('SZSE:')
+            ? 'D'
+            : '15',
         timezone: 'Asia/Shanghai',
         theme: 'dark',
         style: '1',
@@ -37,13 +47,5 @@ export function rewriteTradingViewWidgetHtml(html: string): string {
         .replaceAll(
             '"^embed-widget/([0-9a-zA-Z-]+)/(([0-9a-zA-Z-]+)/)?$"',
             '"^embed-widget/([0-9a-zA-Z-]+)$","^embed-widget/([0-9a-zA-Z-]+)/(([0-9a-zA-Z-]+)/)?$"'
-        )
-        .replaceAll(
-            'window.WEBSOCKET_HOST = "widgetdata.tradingview.com";',
-            'window.WEBSOCKET_HOST = "data.tradingview.com";'
-        )
-        .replaceAll(
-            'window.WEBSOCKET_HOST_FOR_RECONNECT = "widgetdata-backup.tradingview.com";',
-            'window.WEBSOCKET_HOST_FOR_RECONNECT = "prodata.tradingview.com";'
         );
 }
