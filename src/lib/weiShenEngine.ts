@@ -1,4 +1,3 @@
-import { calculateADX, calculateATR, calculateEMA } from './indicators.ts';
 import { getStrategyParameterConfig, type WeiShenLedgerParameters } from './strategyParameters.ts';
 import type { RiskManagement } from './risk/types.ts';
 import type { OHLC } from './types.ts';
@@ -45,203 +44,29 @@ export interface WeiShenSelectedCandidate {
     invalidationPrice: number;
 }
 
-function getLastValue(values: number[]): number | null {
-    if (values.length === 0) {
-        return null;
-    }
+import {
+    getBar,
+    average,
+    clamp,
+    round,
+    gradeWeight,
+    lastClose,
+    quoteVolumes,
+    latestEma,
+    emaLookbackSlopePct,
+    percentageChangeByBars,
+    donchianHigh,
+    donchianLow,
+    averagePriorVolumeRatio,
+    sumVolume,
+    latestAtr,
+    atrExpansionRatio,
+    getAdx,
+    directionalTrendReady,
+    buildEmptyCandidate,
+} from './weiShenMath.ts';
 
-    const lastValue = values[values.length - 1];
-    return Number.isFinite(lastValue) ? lastValue : null;
-}
 
-function getBar(klines: OHLC[], offsetFromEnd = 0): OHLC | null {
-    const index = klines.length - 1 - offsetFromEnd;
-    if (index < 0 || index >= klines.length) {
-        return null;
-    }
-
-    return klines[index] ?? null;
-}
-
-function average(values: number[]): number {
-    if (values.length === 0) {
-        return 0;
-    }
-
-    return values.reduce((sum, value) => sum + value, 0) / values.length;
-}
-
-function clamp(value: number, min: number, max: number): number {
-    return Math.min(max, Math.max(min, value));
-}
-
-function round(value: number, digits = 4): number {
-    if (!Number.isFinite(value)) {
-        return 0;
-    }
-
-    const factor = Math.pow(10, digits);
-    return Math.round(value * factor) / factor;
-}
-
-function gradeWeight(grade: WeiShenSignalGrade): number {
-    switch (grade) {
-        case 'A':
-            return 3;
-        case 'B':
-            return 2;
-        default:
-            return 1;
-    }
-}
-
-function lastClose(klines: OHLC[]): number {
-    return getBar(klines)?.close ?? 0;
-}
-
-function closes(klines: OHLC[]): number[] {
-    return klines.map((kline) => kline.close).filter(Number.isFinite);
-}
-
-function quoteVolumes(klines: OHLC[]): number[] {
-    return klines
-        .map((kline) => kline.quoteVolume ?? (kline.close * kline.volume))
-        .filter(Number.isFinite);
-}
-
-function latestEma(klines: OHLC[], period: number): number | null {
-    const series = calculateEMA(closes(klines), period);
-    return getLastValue(series);
-}
-
-function emaLookbackSlopePct(klines: OHLC[], period: number, lookback: number): number {
-    const series = calculateEMA(closes(klines), period);
-    if (series.length <= lookback) {
-        return 0;
-    }
-
-    const current = series[series.length - 1];
-    const previous = series[series.length - 1 - lookback];
-    if (!Number.isFinite(current) || !Number.isFinite(previous) || previous === 0) {
-        return 0;
-    }
-
-    return ((current - previous) / previous) * 100;
-}
-
-function percentageChangeByBars(klines: OHLC[], lookback: number): number {
-    if (klines.length <= lookback) {
-        return 0;
-    }
-
-    const current = lastClose(klines);
-    const previous = klines[klines.length - 1 - lookback]?.close ?? 0;
-    if (!Number.isFinite(current) || !Number.isFinite(previous) || previous === 0) {
-        return 0;
-    }
-
-    return ((current - previous) / previous) * 100;
-}
-
-function donchianHigh(klines: OHLC[], lookback: number): number {
-    const window = klines.slice(Math.max(0, klines.length - 1 - lookback), Math.max(0, klines.length - 1));
-    if (window.length === 0) {
-        return 0;
-    }
-
-    return Math.max(...window.map((kline) => kline.high));
-}
-
-function donchianLow(klines: OHLC[], lookback: number): number {
-    const window = klines.slice(Math.max(0, klines.length - 1 - lookback), Math.max(0, klines.length - 1));
-    if (window.length === 0) {
-        return 0;
-    }
-
-    return Math.min(...window.map((kline) => kline.low));
-}
-
-function averagePriorVolumeRatio(klines: OHLC[], lookback: number): number {
-    const volumeSeries = quoteVolumes(klines);
-    if (volumeSeries.length < 2) {
-        return 0;
-    }
-
-    const current = volumeSeries[volumeSeries.length - 1];
-    const history = volumeSeries.slice(Math.max(0, volumeSeries.length - 1 - lookback), volumeSeries.length - 1);
-    const volumeAverage = average(history);
-    if (!Number.isFinite(current) || !Number.isFinite(volumeAverage) || volumeAverage <= 0) {
-        return 0;
-    }
-
-    return current / volumeAverage;
-}
-
-function sumVolume(klines: OHLC[], barCount: number): number {
-    return quoteVolumes(klines)
-        .slice(Math.max(0, klines.length - barCount))
-        .reduce((sum, value) => sum + value, 0);
-}
-
-function latestAtr(klines: OHLC[], period: number): number {
-    const atrSeries = calculateATR(klines, period);
-    return getLastValue(atrSeries) ?? 0;
-}
-
-function atrExpansionRatio(klines: OHLC[], period: number): number {
-    const atrSeries = calculateATR(klines, period);
-    if (atrSeries.length < 4) {
-        return 0;
-    }
-
-    const current = atrSeries[atrSeries.length - 1];
-    const baseline = average(atrSeries.slice(Math.max(0, atrSeries.length - 6), atrSeries.length - 1));
-    if (!Number.isFinite(current) || !Number.isFinite(baseline) || baseline <= 0) {
-        return 0;
-    }
-
-    return current / baseline;
-}
-
-function getAdx(klines: OHLC[]): { adx: number; plusDI: number; minusDI: number } {
-    const computed = calculateADX(klines, 14);
-    return {
-        adx: getLastValue(computed.adx) ?? 0,
-        plusDI: getLastValue(computed.plusDI) ?? 0,
-        minusDI: getLastValue(computed.minusDI) ?? 0,
-    };
-}
-
-function directionalTrendReady(
-    klines: OHLC[],
-    direction: Direction,
-    fastPeriod: number,
-    midPeriod: number,
-): { ready: boolean; emaFast: number; emaMid: number; currentPrice: number } {
-    const emaFast = latestEma(klines, fastPeriod) ?? 0;
-    const emaMid = latestEma(klines, midPeriod) ?? 0;
-    const currentPrice = lastClose(klines);
-
-    const ready = direction === 'long'
-        ? currentPrice > emaFast && emaFast > emaMid
-        : currentPrice < emaFast && emaFast < emaMid;
-
-    return { ready, emaFast, emaMid, currentPrice };
-}
-
-function buildEmptyCandidate(reason: string): WeiShenDirectionalCandidate {
-    return {
-        eligible: false,
-        grade: 'C',
-        confidenceScore: 70,
-        passed: [],
-        failed: [reason],
-        blockedReasons: [],
-        stopLossPrice: 0,
-        invalidationPrice: 0,
-        suggestedRiskPct: 0,
-    };
-}
 
 function buildMarketRegime(
     btc4h: OHLC[],
@@ -848,7 +673,7 @@ function resolveActivePositions(portfolioState?: StrategyPortfolioState) {
     return (portfolioState?.activeSymbols ?? []).map((symbol) => ({ symbol, direction: 'long' as const, riskPct: 0 }));
 }
 
-export function applyWeiShenPortfolioGuards(args: {
+function applyWeiShenPortfolioGuards(args: {
     symbol: string;
     grade: WeiShenSignalGrade;
     baseRiskPct: number;

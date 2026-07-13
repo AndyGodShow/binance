@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 2 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: python -m unittest tests.test_ledger_strategy
+      - run: npm run typecheck
+      - run: npm run build
+
+  api-smoke:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Start development server
+        run: npm run dev > /tmp/binance-dashboard-next.log 2>&1 &
+      - name: Wait for server
+        run: |
+          for attempt in {1..60}; do
+            if curl --fail --silent http://127.0.0.1:3000/api/macro >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          cat /tmp/binance-dashboard-next.log
+          exit 1
+      - name: Smoke test bounded APIs
+        env:
+          API_SMOKE_ENDPOINTS: market,market-health,market-light,market-multiframe,oi-multiframe,longshort,macro,rsrs,onchain-dashboard,backtest-klines,data-download-coverage
+        run: npm run verify:api

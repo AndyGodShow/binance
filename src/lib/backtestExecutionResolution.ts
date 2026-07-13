@@ -1,4 +1,4 @@
-export function getBacktestIntervalMs(interval: string): number {
+function getBacktestIntervalMs(interval: string): number {
     const match = interval.match(/^(\d+)(m|h|d|w|M)$/);
     if (!match) {
         return 0;

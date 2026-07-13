@@ -14,9 +14,11 @@ import { buildWeiShenContext, getWeiShenTimeframes } from '@/lib/weiShenStrategy
 import {
     buildMarketKlineEnhancementStagePlan,
     fetchMarketKlineEnhancementGroup,
+    runMarketEnhancementBatches,
     resolveMarketEnrichmentLimits,
     resolveMarketKlineBatchSize,
     selectMarketKlineEligibleSymbols,
+    STRATEGY_MARKET_ENRICHMENT_LIMITS,
 } from '@/lib/marketBuildConfig';
 import {
     attachOpenInterestSnapshotsToTickers,
@@ -40,11 +42,6 @@ interface MarketTickerInput {
 }
 
 const MARKET_ENRICHMENT_LIMITS = resolveMarketEnrichmentLimits();
-const STRATEGY_MARKET_ENRICHMENT_LIMITS = {
-    oiSnapshotSymbolLimit: 220,
-    historicalOiChangeSymbolLimit: 80,
-    klineEnhancementSymbolLimit: 180,
-};
 const MARKET_ENHANCEMENT_CHUNK_SIZE = 40;
 
 interface MarketEnhancementResources {
@@ -65,14 +62,8 @@ interface BuildMarketDataOptions {
         historicalOiChangeSymbolLimit?: number;
         klineEnhancementSymbolLimit: number;
     };
-}
-
-function chunkArray<T>(items: T[], size: number): T[][] {
-    const chunks: T[][] = [];
-    for (let index = 0; index < items.length; index += size) {
-        chunks.push(items.slice(index, index + size));
-    }
-    return chunks;
+    signal?: AbortSignal;
+    deadlineAt?: number;
 }
 
 function fetchUncachedKlinesBatch(
@@ -80,15 +71,16 @@ function fetchUncachedKlinesBatch(
     batchSize: number,
     interval: string,
     limit: number,
+    options: { signal?: AbortSignal } = {},
 ): Promise<Map<string, OHLC[]>> {
-    return fetchKlinesBatch(symbols, batchSize, interval, limit, { cache: false });
+    return fetchKlinesBatch(symbols, batchSize, interval, limit, { cache: false, signal: options.signal });
 }
 
-export async function fetchBaseMarketData(): Promise<TickerData[]> {
+export async function fetchBaseMarketData(signal?: AbortSignal): Promise<TickerData[]> {
     const results = await Promise.allSettled([
-        fetchBinanceJson<TickerData[]>('/fapi/v1/ticker/24hr', { revalidate: 5 }),
-        fetchBinanceJson<PremiumIndex[]>('/fapi/v1/premiumIndex', { revalidate: 5 }),
-        fetchBinanceJson<BinanceExchangeInfoResponse>('/fapi/v1/exchangeInfo?v=2', { revalidate: 3600 }),
+        fetchBinanceJson<TickerData[]>('/fapi/v1/ticker/24hr', { revalidate: 5, init: { signal } }),
+        fetchBinanceJson<PremiumIndex[]>('/fapi/v1/premiumIndex', { revalidate: 5, init: { signal } }),
+        fetchBinanceJson<BinanceExchangeInfoResponse>('/fapi/v1/exchangeInfo?v=2', { revalidate: 3600, init: { signal } }),
     ]);
 
     if (results[0].status === 'rejected' || results[1].status === 'rejected') {
@@ -262,7 +254,9 @@ function attachHistoricalTrackerChanges(
 export async function buildMarketData(options: BuildMarketDataOptions = {}): Promise<TickerData[]> {
     const enrichmentLimits = options.enrichmentLimits ?? MARKET_ENRICHMENT_LIMITS;
     const weiShenTimeframes = getWeiShenTimeframes();
-    const baseMarketData = await fetchBaseMarketData();
+    options.signal?.throwIfAborted();
+    const baseMarketData = await fetchBaseMarketData(options.signal);
+    options.signal?.throwIfAborted();
     const oiTickerInputs = buildTickerInputs(
         [...baseMarketData]
             .sort((a, b) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
@@ -274,9 +268,9 @@ export async function buildMarketData(options: BuildMarketDataOptions = {}): Pro
     );
 
     const [btcReturns, currentOiSnapshotMap, historicalOiChangeSnapshotMap] = await Promise.all([
-        getBTCReturns(),
-        fetchCurrentOpenInterestMarketSnapshotsBatch(oiTickerInputs, 25),
-        fetchOpenInterestMarketSnapshotsBatch(historicalOiTickerInputs, 25),
+        getBTCReturns(options.signal),
+        fetchCurrentOpenInterestMarketSnapshotsBatch(oiTickerInputs, 25, { signal: options.signal }),
+        fetchOpenInterestMarketSnapshotsBatch(historicalOiTickerInputs, 25, { signal: options.signal }),
     ]);
     const oiSnapshotMap = mergeOpenInterestSnapshotMaps(currentOiSnapshotMap, historicalOiChangeSnapshotMap);
 
@@ -302,54 +296,74 @@ export async function buildMarketData(options: BuildMarketDataOptions = {}): Pro
         wei4hKlinesMap,
         wei1dKlinesMap,
     ] = await Promise.all(weiShenStagePlan.weiShen.map((request) =>
-        fetchMarketKlineEnhancementGroup(request, klineBatchSize, fetchKlinesBatch, logger)
+        fetchMarketKlineEnhancementGroup(
+            request,
+            klineBatchSize,
+            (symbols, size, interval, limit) => fetchKlinesBatch(
+                symbols,
+                size,
+                interval,
+                limit,
+                { signal: options.signal },
+            ),
+            logger,
+        )
     ));
 
     logEnhancementUniverse(trackedMarketData.length, eligibleSymbols);
 
     const enhancedBySymbol = new Map<string, TickerData>();
     const baseMarketDataBySymbol = new Map(trackedMarketData.map((ticker) => [ticker.symbol, ticker]));
-    for (const symbolChunk of chunkArray(eligibleSymbols, MARKET_ENHANCEMENT_CHUNK_SIZE)) {
-        const chunkTickers = symbolChunk
-            .map((symbol) => baseMarketDataBySymbol.get(symbol))
-            .filter((ticker): ticker is TickerData => Boolean(ticker));
-        if (chunkTickers.length === 0) {
-            continue;
-        }
+    await runMarketEnhancementBatches(
+        eligibleSymbols,
+    MARKET_ENHANCEMENT_CHUNK_SIZE,
+        async (symbolChunk, context) => {
+            const chunkTickers = symbolChunk
+                .map((symbol) => baseMarketDataBySymbol.get(symbol))
+                .filter((ticker): ticker is TickerData => Boolean(ticker));
+            if (chunkTickers.length === 0) {
+                return;
+            }
 
-        const [
+            const [
             klinesMap,
             trend5mKlinesMap,
             daily1dKlinesMap,
-        ] = await Promise.all([
+            ] = await Promise.all([
             fetchMarketKlineEnhancementGroup(
                 { label: 'eligible-15m', symbols: symbolChunk, interval: '15m', limit: 50 },
                 klineBatchSize,
-                fetchUncachedKlinesBatch,
+                (symbols, size, interval, limit) => fetchUncachedKlinesBatch(
+                    symbols, size, interval, limit, { signal: context.signal },
+                ),
                 logger,
             ),
             fetchMarketKlineEnhancementGroup(
                 { label: 'eligible-5m', symbols: symbolChunk, interval: '5m', limit: 120 },
                 klineBatchSize,
-                fetchUncachedKlinesBatch,
+                (symbols, size, interval, limit) => fetchUncachedKlinesBatch(
+                    symbols, size, interval, limit, { signal: context.signal },
+                ),
                 logger,
             ),
             fetchMarketKlineEnhancementGroup(
                 { label: 'eligible-1d', symbols: symbolChunk, interval: '1d', limit: 30 },
                 klineBatchSize,
-                fetchUncachedKlinesBatch,
+                (symbols, size, interval, limit) => fetchUncachedKlinesBatch(
+                    symbols, size, interval, limit, { signal: context.signal },
+                ),
                 logger,
             ),
         ]);
 
-        const sentimentHotspotMap = await fetchSentimentHotspotContextMap(
+            const sentimentHotspotMap = await fetchSentimentHotspotContextMap(
             chunkTickers,
             daily1dKlinesMap,
             klinesMap,
-            { oiSignalMode: 'current' },
+            { oiSignalMode: 'current', signal: context.signal },
         );
 
-        const chunkEnhancedMarketData = attachEnhancedMarketData(
+            const chunkEnhancedMarketData = attachEnhancedMarketData(
             chunkTickers,
             {
                 btcReturns,
@@ -365,10 +379,16 @@ export async function buildMarketData(options: BuildMarketDataOptions = {}): Pro
             weiUniverseSymbols,
         );
 
-        chunkEnhancedMarketData.forEach((ticker) => {
-            enhancedBySymbol.set(ticker.symbol, ticker);
-        });
-    }
+            chunkEnhancedMarketData.forEach((ticker) => {
+                enhancedBySymbol.set(ticker.symbol, ticker);
+            });
+        },
+        {
+            signal: options.signal,
+            deadlineAt: options.deadlineAt,
+            concurrency: 1,
+        },
+    );
 
     const enhancedMarketData = trackedMarketData.map((ticker) =>
         enhancedBySymbol.get(ticker.symbol) || {

@@ -4,8 +4,10 @@ import {
     authorizeDataDownloadRequest,
     validateDataDownloadRequest,
 } from '@/lib/dataDownloadAccess';
+import { readDataDownloadEnv, readRuntimeEnv } from '@/lib/env';
 
-const isServerless = !!(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.SERVERLESS);
+const serverEnv = { ...readRuntimeEnv(), ...readDataDownloadEnv() };
+const isServerless = serverEnv.isServerless;
 
 export async function POST(req: NextRequest) {
     if (isServerless) {
@@ -16,8 +18,8 @@ export async function POST(req: NextRequest) {
     }
 
     const authResult = authorizeDataDownloadRequest(req.headers.get('authorization'), {
-        nodeEnv: process.env.NODE_ENV,
-        token: process.env.DATA_DOWNLOAD_TOKEN,
+        nodeEnv: serverEnv.nodeEnv,
+        token: serverEnv.dataDownloadToken,
     });
     if (!authResult.ok) {
         return NextResponse.json({ error: authResult.error }, { status: authResult.status });
@@ -40,7 +42,11 @@ export async function POST(req: NextRequest) {
         validation.value.type,
         validation.value.startDate,
         validation.value.endDate
-    ).catch(err => {
+    ).then((result) => {
+        if (result.status === 'partial' || result.status === 'failed') {
+            console.error('Background download finished with missing data:', result);
+        }
+    }).catch(err => {
         console.error('Background download failed:', err);
     });
 
@@ -55,8 +61,8 @@ export async function POST(req: NextRequest) {
  */
 export async function GET(req: NextRequest) {
     const authResult = authorizeDataDownloadRequest(req.headers.get('authorization'), {
-        nodeEnv: process.env.NODE_ENV,
-        token: process.env.DATA_DOWNLOAD_TOKEN,
+        nodeEnv: serverEnv.nodeEnv,
+        token: serverEnv.dataDownloadToken,
     });
     if (!authResult.ok) {
         return NextResponse.json({ error: authResult.error }, { status: authResult.status });

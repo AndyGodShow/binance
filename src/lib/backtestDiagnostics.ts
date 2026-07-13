@@ -1,6 +1,6 @@
 import type { DataQualityMetrics } from './dataQuality.ts';
 
-export interface BacktestDiagnosticCheck {
+interface BacktestDiagnosticCheck {
     key: string;
     label: string;
     status: 'pass' | 'warn' | 'fail';

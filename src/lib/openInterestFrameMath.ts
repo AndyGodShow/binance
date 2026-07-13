@@ -5,7 +5,7 @@ import {
     type BinanceOpenInterestHistEntry,
 } from './openInterestShared.ts';
 
-export interface OpenInterestWindowChangeSnapshot {
+interface OpenInterestWindowChangeSnapshot {
     percent: number;
     value: number;
 }

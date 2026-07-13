@@ -15,7 +15,7 @@ export function buildOpenInterestHistoryPath(symbol: string, period: string, lim
     return `/futures/data/openInterestHist?${params.toString()}`;
 }
 
-export function isBinanceOpenInterestHistEntry(value: unknown): value is BinanceOpenInterestHistEntry {
+function isBinanceOpenInterestHistEntry(value: unknown): value is BinanceOpenInterestHistEntry {
     return typeof value === 'object' &&
         value !== null &&
         typeof (value as BinanceOpenInterestHistEntry).symbol === 'string' &&

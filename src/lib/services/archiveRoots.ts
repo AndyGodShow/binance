@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { readArchiveEnv } from '../env.ts';
 
 const DEFAULT_PRIMARY_ARCHIVE_DIR = path.join(/* turbopackIgnore: true */ process.cwd(), 'data', 'market-archive-v2');
 const LEGACY_ARCHIVE_DIR = path.join(/* turbopackIgnore: true */ process.cwd(), 'data', 'historical');
@@ -13,10 +14,10 @@ function normalizeArchiveRoot(root: string | undefined): string {
 }
 
 export function getArchiveWriteRoot(): string {
-    return normalizeArchiveRoot(process.env.MARKET_ARCHIVE_ROOT);
+    return normalizeArchiveRoot(readArchiveEnv().marketArchiveRoot);
 }
 
-export function getLegacyArchiveRoot(): string {
+function getLegacyArchiveRoot(): string {
     return LEGACY_ARCHIVE_DIR;
 }
 

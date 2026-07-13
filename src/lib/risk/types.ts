@@ -36,7 +36,7 @@ export interface PositionSizing {
 }
 
 // ==================== 风控指标 ====================
-export interface RiskMetrics {
+interface RiskMetrics {
     entryPrice: number;            // 入场价格
     riskAmount: number;            // 单笔风险金额
     potentialProfit: number;       // 潜在盈利
@@ -44,7 +44,7 @@ export interface RiskMetrics {
     expectedValue?: number;        // 期望值 (EV)
 }
 
-export interface DynamicExitPlan {
+interface DynamicExitPlan {
     enabled: boolean;
     timeframe: string;
     emaPeriod: number;
@@ -103,8 +103,3 @@ export interface RiskCalculationParams {
     accountBalance?: number;       // 账户余额
     riskPercentage?: number;       // 单笔风险比例 (默认1%)
 }
-
-// ==================== 策略风控函数类型 ====================
-export type RiskCalculationFunction = (
-    params: RiskCalculationParams
-) => RiskManagement;

@@ -23,6 +23,7 @@ export function useProgressiveTimedPayload<T>(
 ): {
     payload: TimedPayload<Record<string, T>> | undefined;
     error: Error | null;
+    failedSymbols: string[];
     setPayload: React.Dispatch<React.SetStateAction<TimedPayload<Record<string, T>> | undefined>>;
     setError: React.Dispatch<React.SetStateAction<Error | null>>;
 } {
@@ -38,6 +39,7 @@ export function useProgressiveTimedPayload<T>(
     } = options;
     const [payload, setPayload] = useState<TimedPayload<Record<string, T>>>();
     const [error, setError] = useState<Error | null>(null);
+    const [failedSymbols, setFailedSymbols] = useState<string[]>([]);
     const symbolsRef = useRef<string[]>([]);
     const fetchBatchRef = useRef(fetchBatch);
     const buildErrorRef = useRef(buildError);
@@ -68,6 +70,7 @@ export function useProgressiveTimedPayload<T>(
 
         const runProgressiveFetch = async () => {
             setError(null);
+            setFailedSymbols([]);
             const symbols = symbolsRef.current;
 
             for (let index = 0; index < symbols.length; index += batchSize) {
@@ -87,6 +90,7 @@ export function useProgressiveTimedPayload<T>(
                         }
 
                         setPayload((prev) => mergeTimedPayloadData(prev, nextPayload));
+                        setFailedSymbols((current) => current.filter((symbol) => !batch.includes(symbol)));
                         batchFetched = true;
                         break;
                     } catch (nextError) {
@@ -99,6 +103,7 @@ export function useProgressiveTimedPayload<T>(
 
                 if (!batchFetched && !cancelled) {
                     setError(buildErrorRef.current(lastError));
+                    setFailedSymbols((current) => Array.from(new Set([...current, ...batch])));
                 }
 
                 if (index + batchSize < symbols.length) {
@@ -131,6 +136,7 @@ export function useProgressiveTimedPayload<T>(
     return {
         payload,
         error,
+        failedSymbols,
         setPayload,
         setError,
     };

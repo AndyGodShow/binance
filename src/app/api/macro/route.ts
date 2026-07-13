@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { readMacroEnv } from '@/lib/env';
 
 import { fetchBinanceJson } from '@/lib/binanceApi';
 import { withTimeout } from '@/lib/async';
@@ -8,7 +9,6 @@ import {
     buildEtfFlowSourceStatus,
     buildMacroDashboard,
     classifyMacroFreshness,
-    DIGITAL_ASSET_ETF_ASSETS,
     parseBitboBtcEtfFlowApiResponse,
     parseBitboBtcEtfFlowHtml,
     parseBtcEtfFlowText,
@@ -73,160 +73,26 @@ interface BinancePremiumIndex {
     nextFundingTime?: number;
 }
 
-interface YahooAssetConfig {
-    symbol: string;
-    label: string;
-    market: string;
-    querySymbols?: string[];
-    normalizePrice?: (value: number) => number;
-    includePrePost?: boolean;
-}
+import {
+    A_SHARE_EQUITY_ASSETS,
+    HK_EQUITY_ASSETS,
+    US_EQUITY_ASSETS,
+    YAHOO_ASSETS,
+    type YahooAssetConfig,
+} from '@/lib/macroAssets';
+import {
+    MACRO_SOURCE_FRESHNESS_MODE,
+    YAHOO_CHART_HOSTS,
+    YAHOO_CHART_HOST_TIMEOUT_MS,
+} from '@/lib/macroSourceConfig';
 
-const YAHOO_ASSETS: YahooAssetConfig[] = [
-    { symbol: '^GSPC', label: '标普500指数', market: '美股' },
-    { symbol: '^IXIC', label: '纳斯达克综合指数', market: '美股' },
-    { symbol: '^NDX', label: '纳斯达克100', market: '美股' },
-    { symbol: 'XAUUSD=X', label: '伦敦金', market: '大宗商品', querySymbols: ['XAUUSD=X', 'GC=F'] },
-    { symbol: 'XAGUSD=X', label: '伦敦银', market: '大宗商品', querySymbols: ['XAGUSD=X', 'SI=F'] },
-    { symbol: 'CL=F', label: 'WTI原油', market: '大宗商品' },
-    { symbol: 'BZ=F', label: '布伦特原油', market: '大宗商品' },
-    ...DIGITAL_ASSET_ETF_ASSETS,
-    { symbol: '000001.SS', label: '上证指数', market: '中韩日指数' },
-    { symbol: '^KS11', label: '韩国KOSPI', market: '中韩日指数' },
-    { symbol: '^N225', label: '日经225', market: '中韩日指数' },
-    { symbol: '^VIX', label: 'VIX', market: '监控' },
-    { symbol: 'DX-Y.NYB', label: 'DXY', market: '监控' },
-    { symbol: '^TNX', label: 'US10Y', market: '监控' },
-];
 
-const US_EQUITY_ASSETS: YahooAssetConfig[] = [
-    { symbol: 'AAPL', label: '苹果', market: '七姐妹', includePrePost: true },
-    { symbol: 'MSFT', label: '微软', market: '七姐妹', includePrePost: true },
-    { symbol: 'NVDA', label: '英伟达', market: '七姐妹', includePrePost: true },
-    { symbol: 'AMZN', label: '亚马逊', market: '七姐妹', includePrePost: true },
-    { symbol: 'META', label: 'Meta 平台', market: '七姐妹', includePrePost: true },
-    { symbol: 'GOOGL', label: '谷歌母公司', market: '七姐妹', includePrePost: true },
-    { symbol: 'TSLA', label: '特斯拉', market: '七姐妹', includePrePost: true },
-    { symbol: 'AVGO', label: '博通', market: 'AI半导体', includePrePost: true },
-    { symbol: 'AMD', label: 'AMD', market: 'AI半导体', includePrePost: true },
-    { symbol: 'TSM', label: '台积电 ADR', market: 'AI半导体', includePrePost: true },
-    { symbol: 'ASML', label: '阿斯麦 ADR', market: 'AI半导体', includePrePost: true },
-    { symbol: 'MU', label: '美光科技', market: 'AI半导体', includePrePost: true },
-    { symbol: 'SNDK', label: '闪迪', market: 'AI半导体', includePrePost: true },
-    { symbol: 'TQQQ', label: '纳指三倍做多', market: '多空杠杆 ETF/ETN', includePrePost: true },
-    { symbol: 'SQQQ', label: '纳指三倍做空', market: '多空杠杆 ETF/ETN', includePrePost: true },
-    { symbol: 'SOXL', label: '半导体三倍做多', market: '多空杠杆 ETF/ETN', includePrePost: true },
-    { symbol: 'SOXS', label: '半导体三倍做空', market: '多空杠杆 ETF/ETN', includePrePost: true },
-    { symbol: 'SPXL', label: '标普三倍做多', market: '多空杠杆 ETF/ETN', includePrePost: true },
-    { symbol: 'SPXS', label: '标普三倍做空', market: '多空杠杆 ETF/ETN', includePrePost: true },
-    { symbol: 'FNGU', label: 'FANG+ 三倍做多', market: '多空杠杆 ETF/ETN', includePrePost: true },
-    { symbol: 'FNGD', label: 'FANG+ 三倍做空', market: '多空杠杆 ETF/ETN', includePrePost: true },
-    { symbol: 'COIN', label: 'Coinbase 交易所', market: '加密相关股', includePrePost: true },
-    { symbol: 'MSTR', label: 'Strategy 持币公司', market: '加密相关股', includePrePost: true },
-    { symbol: 'MARA', label: 'Marathon 矿企', market: '加密相关股', includePrePost: true },
-    { symbol: 'RIOT', label: 'Riot 矿企', market: '加密相关股', includePrePost: true },
-    { symbol: 'CLSK', label: 'CleanSpark 矿企', market: '加密相关股', includePrePost: true },
-    { symbol: 'HOOD', label: 'Robinhood 券商', market: '加密相关股', includePrePost: true },
-    { symbol: 'BABA', label: '阿里巴巴', market: '中概观察', includePrePost: true },
-    { symbol: 'JD', label: '京东', market: '中概观察', includePrePost: true },
-    { symbol: 'BIDU', label: '百度', market: '中概观察', includePrePost: true },
-    { symbol: 'PDD', label: '拼多多', market: '中概观察', includePrePost: true },
-    { symbol: 'XPEV', label: '小鹏汽车', market: '中概观察', includePrePost: true },
-    { symbol: 'TCOM', label: '携程', market: '中概观察', includePrePost: true },
-    { symbol: 'BILI', label: '哔哩哔哩', market: '中概观察', includePrePost: true },
-    { symbol: 'XLK', label: '科技板块', market: '板块总览', includePrePost: true },
-    { symbol: 'XLY', label: '可选消费', market: '板块总览', includePrePost: true },
-    { symbol: 'XLC', label: '通信服务', market: '板块总览', includePrePost: true },
-    { symbol: 'XLF', label: '金融板块', market: '板块总览', includePrePost: true },
-    { symbol: 'XLV', label: '医疗保健', market: '板块总览', includePrePost: true },
-    { symbol: 'XLI', label: '工业板块', market: '板块总览', includePrePost: true },
-    { symbol: 'XLE', label: '能源板块', market: '板块总览', includePrePost: true },
-    { symbol: 'XLP', label: '必选消费', market: '板块总览', includePrePost: true },
-    { symbol: 'XLU', label: '公用事业', market: '板块总览', includePrePost: true },
-    { symbol: 'XLB', label: '原材料', market: '板块总览', includePrePost: true },
-    { symbol: 'XLRE', label: '房地产', market: '板块总览', includePrePost: true },
-];
-
-const HK_EQUITY_ASSETS: YahooAssetConfig[] = [
-    { symbol: '^HSI', label: '恒生指数', market: '指数/宽基' },
-    { symbol: '^HSCE', label: '恒生国企指数', market: '指数/宽基' },
-    { symbol: '2800.HK', label: '盈富基金', market: '指数/宽基' },
-    { symbol: '2822.HK', label: '南方A50', market: '指数/宽基' },
-    { symbol: '3033.HK', label: '恒生科技ETF', market: '指数/宽基' },
-    { symbol: '3067.HK', label: '安硕恒生科技ETF', market: '板块ETF' },
-    { symbol: '3191.HK', label: 'Global X中国半导体ETF', market: '板块ETF' },
-    { symbol: '2845.HK', label: 'Global X中国电动车ETF', market: '板块ETF' },
-    { symbol: '3174.HK', label: '南方恒生生物科技ETF', market: '板块ETF' },
-    { symbol: '3070.HK', label: '平安香港高息ETF', market: '板块ETF' },
-    { symbol: '0700.HK', label: '腾讯控股', market: '科技互联网' },
-    { symbol: '9988.HK', label: '阿里巴巴-W', market: '科技互联网' },
-    { symbol: '3690.HK', label: '美团-W', market: '科技互联网' },
-    { symbol: '9618.HK', label: '京东集团-SW', market: '科技互联网' },
-    { symbol: '1810.HK', label: '小米集团-W', market: '科技互联网' },
-    { symbol: '0388.HK', label: '港交所', market: '金融地产' },
-    { symbol: '1299.HK', label: '友邦保险', market: '金融地产' },
-    { symbol: '2318.HK', label: '中国平安', market: '金融地产' },
-    { symbol: '0939.HK', label: '建设银行', market: '金融地产' },
-    { symbol: '1398.HK', label: '工商银行', market: '金融地产' },
-    { symbol: '0005.HK', label: '汇丰控股', market: '金融地产' },
-    { symbol: '1211.HK', label: '比亚迪股份', market: '汽车新能源' },
-    { symbol: '9868.HK', label: '小鹏汽车-W', market: '汽车新能源' },
-    { symbol: '2015.HK', label: '理想汽车-W', market: '汽车新能源' },
-    { symbol: '0981.HK', label: '中芯国际', market: '半导体AI' },
-    { symbol: '1347.HK', label: '华虹半导体', market: '半导体AI' },
-    { symbol: '7709.HK', label: '南方两倍做多海力士', market: '半导体AI' },
-    { symbol: '7747.HK', label: '南方两倍做多三星', market: '半导体AI' },
-    { symbol: '2269.HK', label: '药明生物', market: '消费医药' },
-    { symbol: '2020.HK', label: '安踏体育', market: '消费医药' },
-    { symbol: '0883.HK', label: '中国海洋石油', market: '资源公用' },
-    { symbol: '0941.HK', label: '中国移动', market: '资源公用' },
-];
-
-const A_SHARE_EQUITY_ASSETS: YahooAssetConfig[] = [
-    { symbol: '000001.SS', label: '上证指数', market: '指数/宽基' },
-    { symbol: '399001.SZ', label: '深证成指', market: '指数/宽基' },
-    { symbol: '399006.SZ', label: '创业板指', market: '指数/宽基' },
-    { symbol: '510300.SS', label: '沪深300ETF', market: '指数/宽基' },
-    { symbol: '510500.SS', label: '中证500ETF', market: '指数/宽基' },
-    { symbol: '512480.SS', label: '半导体ETF', market: '板块ETF' },
-    { symbol: '512800.SS', label: '银行ETF', market: '板块ETF' },
-    { symbol: '512880.SS', label: '证券ETF', market: '板块ETF' },
-    { symbol: '512010.SS', label: '医药ETF', market: '板块ETF' },
-    { symbol: '512170.SS', label: '医疗ETF', market: '板块ETF' },
-    { symbol: '515030.SS', label: '新能源车ETF', market: '板块ETF' },
-    { symbol: '515790.SS', label: '光伏ETF', market: '板块ETF' },
-    { symbol: '159928.SZ', label: '消费ETF', market: '板块ETF' },
-    { symbol: '600519.SS', label: '贵州茅台', market: '消费医药' },
-    { symbol: '600276.SS', label: '恒瑞医药', market: '消费医药' },
-    { symbol: '300760.SZ', label: '迈瑞医疗', market: '消费医药' },
-    { symbol: '000333.SZ', label: '美的集团', market: '消费医药' },
-    { symbol: '600036.SS', label: '招商银行', market: '金融地产' },
-    { symbol: '601318.SS', label: '中国平安', market: '金融地产' },
-    { symbol: '300059.SZ', label: '东方财富', market: '金融地产' },
-    { symbol: '601398.SS', label: '工商银行', market: '金融地产' },
-    { symbol: '601888.SS', label: '中国中免', market: '消费医药' },
-    { symbol: '300750.SZ', label: '宁德时代', market: '汽车新能源' },
-    { symbol: '002594.SZ', label: '比亚迪', market: '汽车新能源' },
-    { symbol: '601012.SS', label: '隆基绿能', market: '汽车新能源' },
-    { symbol: '601127.SS', label: '赛力斯', market: '汽车新能源' },
-    { symbol: '300124.SZ', label: '汇川技术', market: '汽车新能源' },
-    { symbol: '688981.SS', label: '中芯国际', market: '半导体AI' },
-    { symbol: '002475.SZ', label: '立讯精密', market: '半导体AI' },
-    { symbol: '000063.SZ', label: '中兴通讯', market: '半导体AI' },
-    { symbol: '002415.SZ', label: '海康威视', market: '半导体AI' },
-    { symbol: '300308.SZ', label: '中际旭创', market: '半导体AI' },
-    { symbol: '601899.SS', label: '紫金矿业', market: '资源公用' },
-    { symbol: '600900.SS', label: '长江电力', market: '资源公用' },
-    { symbol: '601985.SS', label: '中国核电', market: '资源公用' },
-];
 
 const ETF_FLOWS_URL = 'https://farside.co.uk/btc/';
 const ETF_FLOWS_BITBO_URL = 'https://bitbo.io/treasuries/etf-flows/';
 const ETF_FLOWS_BITBO_API_URL = 'https://charts.bitbo.io/api/v1/etf-flow-raw-btc/';
-const BITBO_API_KEY = process.env.BITBO_API_KEY;
+const BITBO_API_KEY = readMacroEnv().bitboApiKey;
 const MACRO_SOURCE_TIMEOUT_MS = 8000;
-const YAHOO_CHART_HOSTS = ['query1.finance.yahoo.com', 'query2.finance.yahoo.com'];
-const YAHOO_CHART_HOST_TIMEOUT_MS = 4000;
 const YAHOO_GLOBAL_ASSET_BATCH_SIZE = 6;
 const YAHOO_GLOBAL_ASSET_BATCH_DELAY_MS = 80;
 const YAHOO_EQUITY_BATCH_SIZE = 6;
@@ -802,7 +668,11 @@ export async function GET() {
                 updatedAt: Date.now(),
                 dataTimestamp: latestMarketDataTimestamp,
                 latencyMs: yahooAssetResults.latencyMs,
-                freshness: classifyMacroFreshness(latestMarketDataTimestamp, Date.now(), 'intraday'),
+                freshness: classifyMacroFreshness(
+                    latestMarketDataTimestamp,
+                    Date.now(),
+                    MACRO_SOURCE_FRESHNESS_MODE.market,
+                ),
             },
             {
                 key: 'us-equities',
@@ -818,7 +688,11 @@ export async function GET() {
                 updatedAt: Date.now(),
                 dataTimestamp: latestUsEquityTimestamp,
                 latencyMs: usEquityResults.latencyMs,
-                freshness: classifyMacroFreshness(latestUsEquityTimestamp, Date.now(), 'daily'),
+                freshness: classifyMacroFreshness(
+                    latestUsEquityTimestamp,
+                    Date.now(),
+                    MACRO_SOURCE_FRESHNESS_MODE['us-equities'],
+                ),
             },
             {
                 key: 'hk-equities',
@@ -834,7 +708,11 @@ export async function GET() {
                 updatedAt: Date.now(),
                 dataTimestamp: latestHkEquityTimestamp,
                 latencyMs: hkEquityResults.latencyMs,
-                freshness: classifyMacroFreshness(latestHkEquityTimestamp, Date.now(), 'daily'),
+                freshness: classifyMacroFreshness(
+                    latestHkEquityTimestamp,
+                    Date.now(),
+                    MACRO_SOURCE_FRESHNESS_MODE['hk-equities'],
+                ),
             },
             {
                 key: 'a-share-equities',
@@ -850,7 +728,11 @@ export async function GET() {
                 updatedAt: Date.now(),
                 dataTimestamp: latestAShareEquityTimestamp,
                 latencyMs: aShareEquityResults.latencyMs,
-                freshness: classifyMacroFreshness(latestAShareEquityTimestamp, Date.now(), 'daily'),
+                freshness: classifyMacroFreshness(
+                    latestAShareEquityTimestamp,
+                    Date.now(),
+                    MACRO_SOURCE_FRESHNESS_MODE['a-share-equities'],
+                ),
             },
             {
                 key: 'fear-greed',

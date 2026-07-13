@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AlertConfig, AlertLevel } from '@/lib/types';
 import { X, Bell } from 'lucide-react';
 import styles from './AlertSettings.module.css';
@@ -12,6 +12,14 @@ interface AlertSettingsProps {
 }
 
 export default function AlertSettings({ config, onUpdateConfig, onClose }: AlertSettingsProps) {
+    const panelRef = useRef<HTMLDivElement>(null);
+    const closeButtonRef = useRef<HTMLButtonElement>(null);
+    const onCloseRef = useRef(onClose);
+
+    useEffect(() => {
+        onCloseRef.current = onClose;
+    }, [onClose]);
+
     const [notificationPermission, setNotificationPermission] = useState(
         typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'default'
     );
@@ -42,16 +50,66 @@ export default function AlertSettings({ config, onUpdateConfig, onClose }: Alert
         { value: 'critical', label: '仅紧急 (50%+)' },
     ];
 
+    useEffect(() => {
+        const previouslyFocused = document.activeElement instanceof HTMLElement
+            ? document.activeElement
+            : null;
+        closeButtonRef.current?.focus();
+
+        const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                onCloseRef.current();
+                return;
+            }
+
+            if (event.key !== 'Tab') return;
+
+            const focusable = panelRef.current?.querySelectorAll<HTMLElement>(
+                'button:not([disabled]), select:not([disabled]), textarea:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+            );
+            if (!focusable?.length) {
+                event.preventDefault();
+                panelRef.current?.focus();
+                return;
+            }
+
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+            if (event.shiftKey && document.activeElement === first) {
+                event.preventDefault();
+                last.focus();
+            } else if (!event.shiftKey && document.activeElement === last) {
+                event.preventDefault();
+                first.focus();
+            }
+        };
+
+        document.addEventListener('keydown', handleKeyDown);
+        return () => {
+            document.removeEventListener('keydown', handleKeyDown);
+            previouslyFocused?.focus();
+        };
+    }, []);
+
     return (
         <div className={styles.overlay} onClick={onClose}>
-            <div className={styles.panel} onClick={(e) => e.stopPropagation()}>
+            <div
+                ref={panelRef}
+                className={styles.panel}
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="alert-settings-title"
+                tabIndex={-1}
+                onClick={(e) => e.stopPropagation()}
+            >
                 {/* Header */}
                 <div className={styles.header}>
                     <div className={styles.titleArea}>
                         <Bell size={24} />
-                        <h2 className={styles.title}>提醒设置</h2>
+                        <h2 id="alert-settings-title" className={styles.title}>提醒设置</h2>
                     </div>
-                    <button className={styles.closeBtn} onClick={onClose}>
+                    <button ref={closeButtonRef} className={styles.closeBtn} onClick={onClose} aria-label="关闭提醒设置">
                         <X size={20} />
                     </button>
                 </div>
@@ -64,9 +122,11 @@ export default function AlertSettings({ config, onUpdateConfig, onClose }: Alert
                         <p className={styles.sectionDesc}>选择需要监控的涨幅级别</p>
 
                         <div className={styles.levelCards}>
-                            <div
+                            <button
+                                type="button"
                                 className={`${styles.levelCard} ${styles.info} ${config.enableInfo ? styles.active : ''}`}
                                 onClick={() => onUpdateConfig({ enableInfo: !config.enableInfo })}
+                                aria-pressed={config.enableInfo}
                             >
                                 <div className={styles.levelHeader}>
                                     <span className={styles.levelEmoji}>🔵</span>
@@ -76,11 +136,13 @@ export default function AlertSettings({ config, onUpdateConfig, onClose }: Alert
                                 <div className={styles.levelToggle}>
                                     {config.enableInfo ? '已启用' : '已禁用'}
                                 </div>
-                            </div>
+                            </button>
 
-                            <div
+                            <button
+                                type="button"
                                 className={`${styles.levelCard} ${styles.warning} ${config.enableWarning ? styles.active : ''}`}
                                 onClick={() => onUpdateConfig({ enableWarning: !config.enableWarning })}
+                                aria-pressed={config.enableWarning}
                             >
                                 <div className={styles.levelHeader}>
                                     <span className={styles.levelEmoji}>🟡</span>
@@ -90,11 +152,13 @@ export default function AlertSettings({ config, onUpdateConfig, onClose }: Alert
                                 <div className={styles.levelToggle}>
                                     {config.enableWarning ? '已启用' : '已禁用'}
                                 </div>
-                            </div>
+                            </button>
 
-                            <div
+                            <button
+                                type="button"
                                 className={`${styles.levelCard} ${styles.critical} ${config.enableCritical ? styles.active : ''}`}
                                 onClick={() => onUpdateConfig({ enableCritical: !config.enableCritical })}
+                                aria-pressed={config.enableCritical}
                             >
                                 <div className={styles.levelHeader}>
                                     <span className={styles.levelEmoji}>🔴</span>
@@ -104,7 +168,7 @@ export default function AlertSettings({ config, onUpdateConfig, onClose }: Alert
                                 <div className={styles.levelToggle}>
                                     {config.enableCritical ? '已启用' : '已禁用'}
                                 </div>
-                            </div>
+                            </button>
                         </div>
                     </section>
 
@@ -120,6 +184,9 @@ export default function AlertSettings({ config, onUpdateConfig, onClose }: Alert
                             <button
                                 className={`${styles.switch} ${config.monitorPrice ? styles.on : ''}`}
                                 onClick={() => onUpdateConfig({ monitorPrice: !config.monitorPrice })}
+                                role="switch"
+                                aria-checked={config.monitorPrice}
+                                aria-label="监控价格变化"
                             >
                                 <span className={styles.switchSlider} />
                             </button>
@@ -132,6 +199,9 @@ export default function AlertSettings({ config, onUpdateConfig, onClose }: Alert
                             <button
                                 className={`${styles.switch} ${config.monitorOI ? styles.on : ''}`}
                                 onClick={() => onUpdateConfig({ monitorOI: !config.monitorOI })}
+                                role="switch"
+                                aria-checked={config.monitorOI}
+                                aria-label="监控持仓金额变化"
                             >
                                 <span className={styles.switchSlider} />
                             </button>
@@ -144,6 +214,9 @@ export default function AlertSettings({ config, onUpdateConfig, onClose }: Alert
                             <button
                                 className={`${styles.switch} ${config.monitorDecline ? styles.on : ''}`}
                                 onClick={() => onUpdateConfig({ monitorDecline: !config.monitorDecline })}
+                                role="switch"
+                                aria-checked={config.monitorDecline}
+                                aria-label="监控跌幅"
                             >
                                 <span className={styles.switchSlider} />
                             </button>
@@ -198,6 +271,9 @@ export default function AlertSettings({ config, onUpdateConfig, onClose }: Alert
                                     <button
                                         className={`${styles.switch} ${config.enableNotification ? styles.on : ''}`}
                                         onClick={() => onUpdateConfig({ enableNotification: !config.enableNotification })}
+                                        role="switch"
+                                        aria-checked={config.enableNotification}
+                                        aria-label="启用浏览器通知"
                                     >
                                         <span className={styles.switchSlider} />
                                     </button>
@@ -233,6 +309,9 @@ export default function AlertSettings({ config, onUpdateConfig, onClose }: Alert
                             <button
                                 className={`${styles.switch} ${config.enableSound ? styles.on : ''}`}
                                 onClick={() => onUpdateConfig({ enableSound: !config.enableSound })}
+                                role="switch"
+                                aria-checked={config.enableSound}
+                                aria-label="启用音效"
                             >
                                 <span className={styles.switchSlider} />
                             </button>
@@ -251,6 +330,9 @@ export default function AlertSettings({ config, onUpdateConfig, onClose }: Alert
                             <button
                                 className={`${styles.switch} ${config.enableScheduledAlerts ? styles.on : ''}`}
                                 onClick={() => onUpdateConfig({ enableScheduledAlerts: !config.enableScheduledAlerts })}
+                                role="switch"
+                                aria-checked={config.enableScheduledAlerts}
+                                aria-label="启用定时推送"
                             >
                                 <span className={styles.switchSlider} />
                             </button>

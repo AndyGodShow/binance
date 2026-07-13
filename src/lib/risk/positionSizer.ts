@@ -14,7 +14,7 @@ import type { PositionSizing } from './types.ts';
  * @param confidence 策略置信度 (0-100)
  * @returns 建议仓位百分比
  */
-export function calculateKellyPosition(
+function calculateKellyPosition(
     winRate: number,
     avgWin: number,
     avgLoss: number,
@@ -50,7 +50,7 @@ export function calculateKellyPosition(
  * @param stopLoss 止损价格
  * @returns 建议仓位百分比
  */
-export function calculatePositionByRisk(
+function calculatePositionByRisk(
     accountBalance: number,
     riskPercentage: number,
     entryPrice: number,
@@ -69,7 +69,7 @@ export function calculatePositionByRisk(
 /**
  * 基于置信度的简单映射
  */
-export function calculatePositionByConfidence(confidence: number): number {
+function calculatePositionByConfidence(confidence: number): number {
     if (confidence >= 90) return 30;
     if (confidence >= 85) return 25;
     if (confidence >= 80) return 20;

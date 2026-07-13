@@ -6,7 +6,7 @@ import type { DeepPartial, StrategyParameterConfigMap } from './strategyParamete
 import { getRequiredHistoricalIntervals } from './historicalMultiTimeframe.ts';
 import { getWeiShenBtcContextRequirements, isWeiShenStrategy } from './weiShenStrategy.ts';
 
-export interface BacktestHistoryIntervalReport extends HistoricalRangeAudit {
+interface BacktestHistoryIntervalReport extends HistoricalRangeAudit {
     role: string;
 }
 

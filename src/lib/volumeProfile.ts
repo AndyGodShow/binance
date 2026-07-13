@@ -14,7 +14,7 @@ export interface VolumeProfile {
     priceRanges: PriceRange[]; // 价格区间详情
 }
 
-export interface PriceRange {
+interface PriceRange {
     price: number;            // 价格（区间中点）
     volume: number;           // 该价格区间的成交量
     percentage: number;       // 占总成交量百分比

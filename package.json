@@ -17,16 +17,17 @@
     "verify:api": "node ./scripts/verify-api-smoke.mjs",
     "verify:backtest": "node ./scripts/verify-backtest-batch.mjs",
     "verify:stability": "node ./scripts/verify-stability.mjs",
+    "verify:coverage": "node ./scripts/verify-full-coverage.mjs",
+    "verify:market-enrichment": "node ./scripts/verify-market-enrichment.mjs",
     "optimize:strategies": "node --experimental-specifier-resolution=node ./scripts/optimize-strategies.mjs",
     "sync:binance-klines": "node --experimental-strip-types ./scripts/sync-binance-kline-archive.ts",
     "sync:market-archive-top": "node --experimental-strip-types ./scripts/sync-market-archive-top.ts",
     "audit:backtest-history": "node --experimental-strip-types ./scripts/audit-backtest-history.ts"
   },
   "dependencies": {
-    "@vercel/blob": "^2.3.3",
     "clsx": "^2.1.1",
     "lucide-react": "^0.562.0",
-    "next": "16.2.4",
+    "next": "16.2.10",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "recharts": "^3.7.0",
@@ -37,7 +38,10 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "16.2.4",
+    "eslint-config-next": "16.2.10",
     "typescript": "^5"
+  },
+  "overrides": {
+    "postcss": "8.5.10"
   }
 }

@@ -6,6 +6,7 @@ import {
     commitFallbackMarketData,
     createMarketDataRouteState,
     ensureCachedMarketBuild,
+    ensureFreshFallbackMarketData,
 } from './marketRouteCache.ts';
 
 function createTicker(symbol: string): TickerData {
@@ -96,6 +97,8 @@ test('fallback market data is returned as temporary data without replacing enric
     assert.equal(state.lastSuccessfulMarketData, null);
     assert.equal(state.liveMarketCache, null);
     assert.equal(state.lastSuccessfulAt, 0);
+    assert.equal(state.lastFallbackMarketData, fallback);
+    assert.equal(state.lastFallbackAt, 1000);
 
     const enrichedState = createMarketDataRouteState();
     enrichedState.lastSuccessfulMarketData = enriched;
@@ -106,6 +109,7 @@ test('fallback market data is returned as temporary data without replacing enric
     assert.equal(heavyResult, fallback);
     assert.equal(enrichedState.lastSuccessfulMarketData, enriched);
     assert.deepEqual(enrichedState.liveMarketCache, { time: 900, data: enriched, quality: 'enriched', source: 'heavy' });
+    assert.equal(enrichedState.lastFallbackMarketData, fallback);
 });
 
 test('heavy timeout fallback stays temporary and later heavy completion updates cache to enriched', async () => {
@@ -148,4 +152,72 @@ test('failed heavy market build preserves the previous enriched cache', async ()
     assert.equal(state.lastSuccessfulMarketData, enriched);
     assert.deepEqual(state.liveMarketCache, { time: 123, data: enriched, quality: 'enriched', source: 'heavy' });
     assert.equal(state.inflightMarketBuild, null);
+});
+
+test('fresh lightweight market data is reused without another upstream fetch', async () => {
+    const state = createMarketDataRouteState();
+    const fallback = [createTicker('BTCUSDT')];
+    commitFallbackMarketData(state, fallback, 1_000);
+    let fetchCount = 0;
+
+    const result = await ensureFreshFallbackMarketData(state, async () => {
+        fetchCount += 1;
+        return [createTicker('ETHUSDT')];
+    }, { now: 5_000, freshForMs: 10_000 });
+
+    assert.equal(result, fallback);
+    assert.equal(fetchCount, 0);
+});
+
+test('stale lightweight market data is refreshed once for concurrent callers', async () => {
+    const state = createMarketDataRouteState();
+    commitFallbackMarketData(state, [createTicker('OLDUSDT')], 1_000);
+    const refreshed = [createTicker('BTCUSDT'), createTicker('ETHUSDT')];
+    let fetchCount = 0;
+    let resolveFetch: ((value: TickerData[]) => void) | undefined;
+
+    const fetchMarketData = () => {
+        fetchCount += 1;
+        return new Promise<TickerData[]>((resolve) => {
+            resolveFetch = resolve;
+        });
+    };
+    const first = ensureFreshFallbackMarketData(
+        state,
+        fetchMarketData,
+        { now: 20_000, freshForMs: 10_000 },
+    );
+    const second = ensureFreshFallbackMarketData(
+        state,
+        fetchMarketData,
+        { now: 20_001, freshForMs: 10_000 },
+    );
+
+    resolveFetch?.(refreshed);
+
+    assert.equal(await first, refreshed);
+    assert.equal(await second, refreshed);
+    assert.equal(fetchCount, 1);
+    assert.equal(state.lastFallbackMarketData, refreshed);
+    assert.equal(state.lastFallbackAt, 20_000);
+    assert.equal(state.inflightFallbackBuild, null);
+});
+
+test('failed lightweight refresh preserves the previous fallback snapshot', async () => {
+    const state = createMarketDataRouteState();
+    const fallback = [createTicker('BTCUSDT')];
+    commitFallbackMarketData(state, fallback, 1_000);
+
+    await assert.rejects(
+        ensureFreshFallbackMarketData(
+            state,
+            async () => { throw new Error('upstream unavailable'); },
+            { now: 20_000, freshForMs: 10_000 },
+        ),
+        /upstream unavailable/,
+    );
+
+    assert.equal(state.lastFallbackMarketData, fallback);
+    assert.equal(state.lastFallbackAt, 1_000);
+    assert.equal(state.inflightFallbackBuild, null);
 });

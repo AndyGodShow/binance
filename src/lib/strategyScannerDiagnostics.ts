@@ -2,8 +2,8 @@ import type { StrategyId } from './strategyParameters.ts';
 import type { StrategyInputReadinessSummary } from './strategyInputs.ts';
 import { summarizeTimedPayloadQuality, type UnifiedBuildState, type UnifiedDataQuality } from './dataQualityStatus.ts';
 
-export type MarketDataQuality = UnifiedDataQuality;
-export type MarketBuildState = UnifiedBuildState;
+type MarketDataQuality = UnifiedDataQuality;
+type MarketBuildState = UnifiedBuildState;
 
 export interface MarketDataStatusInput {
     dataQuality?: string;

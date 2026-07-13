@@ -20,7 +20,7 @@ function trimTrailingZeros(value: string): string {
         .replace(/\.$/, '');
 }
 
-export function getPricePrecision(price: number | string, extraDecimals: number = 0): number {
+function getPricePrecision(price: number | string, extraDecimals: number = 0): number {
     const numericPrice = Math.abs(Number(price));
 
     if (!Number.isFinite(numericPrice) || numericPrice === 0) {

@@ -21,9 +21,9 @@ test('buildApiSmokeEndpoints creates conservative route coverage with determinis
         endpoints.map((endpoint) => endpoint.name),
         [
             'market',
+            'market-health',
             'market-light',
             'market-multiframe',
-            'oi-all',
             'oi-multiframe',
             'longshort',
             'macro',
@@ -44,14 +44,19 @@ test('buildApiSmokeEndpoints creates conservative route coverage with determinis
 
 test('validatePayload accepts expected API response shapes', () => {
     assert.doesNotThrow(() => validatePayload({ name: 'market', expect: 'array' }, [{ symbol: 'BTCUSDT' }]));
-    assert.doesNotThrow(() => validatePayload({ name: 'oi-all', expect: 'object' }, { BTCUSDT: '100' }));
     assert.doesNotThrow(() => validatePayload({ name: 'backtest-klines', expect: 'backtest' }, { data: [{}], count: 1 }));
+    assert.doesNotThrow(() => validatePayload({ name: 'market-health', expect: 'market-health', minSymbols: 500, allowedNotReadyReasons: ['redis-not-configured'] }, {
+        service: 'market', ready: false, serving: true, reason: 'redis-not-configured', dataQuality: 'lightweight', buildState: 'blocked', symbolCount: 660,
+    }));
 });
 
 test('validatePayload rejects empty or mismatched API response shapes', () => {
     assert.throws(() => validatePayload({ name: 'market', expect: 'array' }, []), /expected non-empty array/);
-    assert.throws(() => validatePayload({ name: 'oi-all', expect: 'object' }, null), /expected object/);
     assert.throws(() => validatePayload({ name: 'backtest-klines', expect: 'backtest' }, { data: [] }), /expected non-empty backtest data/);
+    assert.throws(() => validatePayload({ name: 'market-health', expect: 'market-health' }, { ready: true }), /valid market health payload/);
+    assert.throws(() => validatePayload({ name: 'market-health', expect: 'market-health', minSymbols: 500 }, {
+        service: 'market', ready: false, serving: false, dataQuality: 'unavailable', buildState: 'building', symbolCount: 0,
+    }), /expected serving market data/);
 });
 
 test('createRunSummary reports pass counts and latency stats', () => {

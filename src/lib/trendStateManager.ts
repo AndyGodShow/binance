@@ -1,14 +1,14 @@
 import { getStrategyParameterConfig } from './strategyParameters.ts';
 import type { TrendConfirmationRules } from './strategyParameters.ts';
 
-export type TrendDirection = 'long' | 'short';
+type TrendDirection = 'long' | 'short';
 export type TrendPhase =
     | 'idle'
     | 'active_long'
     | 'active_short'
     | 'pullback_long'
     | 'pullback_short';
-export type TrendEvent = 'start' | 'resume' | 'reversal' | null;
+type TrendEvent = 'start' | 'resume' | 'reversal' | null;
 
 export interface TrendSnapshot {
     change15m: number;
@@ -22,7 +22,7 @@ export interface TrendSnapshot {
     multiEmaTrend: 'bullish' | 'bearish' | 'mixed';
 }
 
-export interface TrendFlags {
+interface TrendFlags {
     liquidityOk: boolean;
     baseLiquidityOk: boolean;
     participationOk: boolean;
@@ -64,7 +64,7 @@ function inRange(value: number | null, rule: RangeRule): boolean {
     return value !== null && Number.isFinite(value) && value >= rule.minEmaDistance && value <= rule.maxEmaDistance;
 }
 
-export function buildTrendFlags(snapshot: TrendSnapshot): TrendFlags {
+function buildTrendFlags(snapshot: TrendSnapshot): TrendFlags {
     const rules = getTrendConfirmationRules();
     const liquidityOk =
         snapshot.quoteVolume >= rules.minQuoteVolume &&

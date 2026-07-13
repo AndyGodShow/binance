@@ -1,9 +1,9 @@
 export type UnifiedDataQuality = 'enriched' | 'partial' | 'lightweight' | 'stale' | 'degraded' | 'unavailable';
 export type UnifiedBuildState = 'ready' | 'building' | 'stale' | 'failed' | 'idle';
-export type UnifiedSourceStatusValue = 'ok' | 'partial' | 'failed' | 'skipped' | 'timeout';
+type UnifiedSourceStatusValue = 'ok' | 'partial' | 'failed' | 'skipped' | 'timeout';
 export type UnifiedErrorKind = 'timeout' | 'upstream_error' | 'empty_response' | 'invalid_response' | 'rate_limited' | 'unknown';
 
-export interface UnifiedSourceStatus {
+interface UnifiedSourceStatus {
     ok: boolean;
     status: UnifiedSourceStatusValue;
     errorKind?: UnifiedErrorKind;

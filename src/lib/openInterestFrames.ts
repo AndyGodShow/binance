@@ -14,7 +14,7 @@ const OI_FRAME_PERIOD = '15m';
 const oiFrameSnapshotCache = new LRUCache<OpenInterestFrameSnapshot>(1000, OI_FRAME_CACHE_TTL);
 const inflightFrameRequests = new Map<string, Promise<OpenInterestFrameSnapshot | null>>();
 
-export async function fetchOpenInterestFrameSnapshot(symbol: string): Promise<OpenInterestFrameSnapshot | null> {
+async function fetchOpenInterestFrameSnapshot(symbol: string): Promise<OpenInterestFrameSnapshot | null> {
     const normalizedSymbol = symbol.toUpperCase();
     const cacheKey = `oi-frame:${normalizedSymbol}`;
     const cached = oiFrameSnapshotCache.get(cacheKey);

@@ -4,7 +4,7 @@ function createId(): string {
     return `watchlist-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-export function normalizeWatchlistSymbol(value: string): string {
+function normalizeWatchlistSymbol(value: string): string {
     const normalized = value.trim().toUpperCase();
     if (!normalized) {
         return '';

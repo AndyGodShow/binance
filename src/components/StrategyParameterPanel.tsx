@@ -112,8 +112,16 @@ export default function StrategyParameterPanel({
     return (
         <div className={styles.section}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <h3 onClick={() => setExpanded(!expanded)} style={{ cursor: 'pointer', userSelect: 'none' }}>
-                    🧪 策略参数覆盖 {expanded ? '▾' : '▸'}
+                <h3>
+                    <button
+                        type="button"
+                        onClick={() => setExpanded(!expanded)}
+                        aria-expanded={expanded}
+                        aria-controls="strategy-parameter-content"
+                        style={sectionToggleStyle}
+                    >
+                        🧪 策略参数覆盖 {expanded ? '▾' : '▸'}
+                    </button>
                 </h3>
                 {expanded && (
                     <div style={{ display: 'flex', gap: 8 }}>
@@ -128,7 +136,7 @@ export default function StrategyParameterPanel({
             </div>
 
             {expanded && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 8 }}>
+                <div id="strategy-parameter-content" style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 8 }}>
                     <div style={infoBlockStyle}>
                         <div style={infoTitleStyle}>当前默认参数快照</div>
                         <pre style={preStyle}>{defaultSnapshot}</pre>
@@ -177,6 +185,18 @@ const smallButtonStyle: CSSProperties = {
     padding: '4px 10px',
     fontSize: 12,
     cursor: 'pointer',
+};
+
+const sectionToggleStyle: CSSProperties = {
+    appearance: 'none',
+    background: 'none',
+    border: 0,
+    color: 'inherit',
+    cursor: 'pointer',
+    font: 'inherit',
+    padding: 0,
+    textAlign: 'left',
+    userSelect: 'none',
 };
 
 const infoBlockStyle: CSSProperties = {

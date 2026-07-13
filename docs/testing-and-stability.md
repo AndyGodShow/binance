@@ -46,7 +46,6 @@ BASE_URL=http://127.0.0.1:3001 npm run verify:api
 - `market`
 - `market-light`
 - `market-multiframe`
-- `oi-all`
 - `oi-multiframe`
 - `longshort`
 - `macro`

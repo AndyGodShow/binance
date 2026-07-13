@@ -1,10 +1,10 @@
-export interface MultiframeKlineArchive {
+interface MultiframeKlineArchive {
     klines?: Array<{
         open: string;
     }>;
 }
 
-export type MultiframeKlineRow = Array<number | string>;
+type MultiframeKlineRow = Array<number | string>;
 
 export type MultiframeData = Record<string, { o15m: number; o1h: number; o4h: number }>;
 

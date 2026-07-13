@@ -60,12 +60,10 @@ COINALYZE_API_KEY=
 MORALIS_API_KEY=
 SOLANA_NETWORK=mainnet
 BINANCE_FAPI_BASES=
-BLOB_READ_WRITE_TOKEN=
-CRON_SECRET=
 DATA_DOWNLOAD_TOKEN=
 ```
 
-其中 `COINALYZE_API_KEY`、`MORALIS_API_KEY`、`BLOB_READ_WRITE_TOKEN`、`CRON_SECRET` 和 `DATA_DOWNLOAD_TOKEN` 都应只放在本地或部署平台的环境变量中，不要写入源码、README、截图或 issue。
+其中 `COINALYZE_API_KEY`、`MORALIS_API_KEY` 和 `DATA_DOWNLOAD_TOKEN` 都应只放在本地或部署平台的环境变量中，不要写入源码、截图或 issue。Redis REST 凭据同样只应通过本地或部署平台环境变量注入，具体变量名以 `.env.example` 为准。
 
 ## 说明
 

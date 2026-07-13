@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import {
     buildTradingViewSymbol,
@@ -16,15 +16,57 @@ interface ChartDrawerProps {
 
 export default function ChartDrawer({ symbol, isOpen, onClose }: ChartDrawerProps) {
     const [loadedSymbol, setLoadedSymbol] = useState<string | null>(null);
+    const drawerRef = useRef<HTMLDivElement>(null);
+    const closeButtonRef = useRef<HTMLButtonElement>(null);
+    const onCloseRef = useRef(onClose);
 
-    // Close on ESC key
     useEffect(() => {
-        const handleEsc = (e: KeyboardEvent) => {
-            if (e.key === 'Escape' && isOpen) onClose();
+        onCloseRef.current = onClose;
+    }, [onClose]);
+
+    useEffect(() => {
+        if (!isOpen) return;
+
+        const previouslyFocused = document.activeElement instanceof HTMLElement
+            ? document.activeElement
+            : null;
+        closeButtonRef.current?.focus();
+
+        const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                onCloseRef.current();
+                return;
+            }
+
+            if (event.key !== 'Tab') return;
+
+            const focusable = drawerRef.current?.querySelectorAll<HTMLElement>(
+                'button:not([disabled]), iframe, [tabindex]:not([tabindex="-1"])',
+            );
+            if (!focusable?.length) {
+                event.preventDefault();
+                drawerRef.current?.focus();
+                return;
+            }
+
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+            if (event.shiftKey && document.activeElement === first) {
+                event.preventDefault();
+                last.focus();
+            } else if (!event.shiftKey && document.activeElement === last) {
+                event.preventDefault();
+                first.focus();
+            }
         };
-        window.addEventListener('keydown', handleEsc);
-        return () => window.removeEventListener('keydown', handleEsc);
-    }, [isOpen, onClose]);
+
+        document.addEventListener('keydown', handleKeyDown);
+        return () => {
+            document.removeEventListener('keydown', handleKeyDown);
+            previouslyFocused?.focus();
+        };
+    }, [isOpen]);
 
     // Prevent body scroll when drawer is open
     useEffect(() => {
@@ -57,21 +99,27 @@ export default function ChartDrawer({ symbol, isOpen, onClose }: ChartDrawerProp
             />
 
             <div
+                ref={drawerRef}
                 className={`${styles.drawer} ${isOpen ? styles.drawerOpen : ''}`}
+                role="dialog"
+                aria-modal={isOpen}
+                aria-labelledby="chart-drawer-title"
                 aria-hidden={!isOpen}
                 inert={!isOpen}
+                tabIndex={-1}
             >
                 <div className={styles.header}>
-                    <div className={styles.title}>
+                    <div id="chart-drawer-title" className={styles.title}>
                         <span className="text-yellow">{displaySymbol}</span>
                         <span className={styles.perpBadge}>{isBinancePerpetual ? 'PERP' : 'MARKET'}</span>
                     </div>
                     <div className={styles.actions}>
                         <button
+                            ref={closeButtonRef}
                             className={styles.iconBtn}
                             onClick={onClose}
-                            aria-label="Close chart"
-                            title="Close chart"
+                            aria-label="关闭 K 线图"
+                            title="关闭 K 线图"
                         >
                             <X size={20} />
                         </button>

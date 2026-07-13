@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { execFile } from 'child_process';
 import util from 'util';
+import { readRuntimeEnv } from '../env.ts';
 import {
     buildPrimaryArchivePath,
     getArchiveReadRoots,
@@ -12,21 +13,49 @@ const execFilePromise = util.promisify(execFile);
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 // 检测是否在 Serverless 环境（Vercel 等）
-const isServerless = !!(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.SERVERLESS);
+const isServerless = readRuntimeEnv().isServerless;
 
-export type DataType = 'metrics' | 'fundingRate';
-export type FormattedMetricData = {
+type DataType = 'metrics' | 'fundingRate';
+type FormattedMetricData = {
     timestamp: number;
     openInterest: string;
     openInterestValue: string;
 };
 
-export type FormattedFundingRateData = {
+type FormattedFundingRateData = {
     fundingTime: number;
     fundingRate: string;
 };
 
 type FormattedData = FormattedMetricData | FormattedFundingRateData;
+
+export type DataDownloadDayResult =
+    | { date: string; status: 'downloaded' | 'cached' }
+    | { date: string; status: 'failed'; stage: 'download' | 'validate' | 'extract'; error: string };
+
+export interface DataDownloadResult {
+    status: 'success' | 'partial' | 'failed' | 'unsupported';
+    totalDays: number;
+    completedDays: number;
+    failedDays: number;
+    days: DataDownloadDayResult[];
+}
+
+export function summarizeDataDownloadDays(days: DataDownloadDayResult[]): DataDownloadResult {
+    const completedDays = days.filter((day) => day.status !== 'failed').length;
+    const failedDays = days.length - completedDays;
+    return {
+        status: failedDays === 0 ? 'success' : completedDays === 0 ? 'failed' : 'partial',
+        totalDays: days.length,
+        completedDays,
+        failedDays,
+        days,
+    };
+}
+
+function errorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+}
 
 function runtimeExistsSync(targetPath: string): boolean {
     return fs.existsSync(/* turbopackIgnore: true */ targetPath);
@@ -52,7 +81,7 @@ function formatUtcDateString(timestamp: number): string {
     return `${year}-${month}-${day}`;
 }
 
-export class DataCollector {
+class DataCollector {
     private baseUrl = 'https://data.binance.vision/data/futures/um/daily';
 
     constructor() {
@@ -67,10 +96,16 @@ export class DataCollector {
     /**
      * Download data for a specific date range
      */
-    async downloadData(symbol: string, type: DataType, startDate: string, endDate: string) {
+    async downloadData(symbol: string, type: DataType, startDate: string, endDate: string): Promise<DataDownloadResult> {
         if (isServerless) {
             console.warn('[DataCollector] Serverless 环境不支持本地数据下载');
-            return;
+            return {
+                status: 'unsupported',
+                totalDays: 0,
+                completedDays: 0,
+                failedDays: 0,
+                days: [],
+            };
         }
         // Validate symbol to prevent path traversal or injection
         if (!/^[A-Z0-9]+$/i.test(symbol)) {
@@ -88,6 +123,7 @@ export class DataCollector {
         }
 
         console.log(`Starting download for ${symbol} ${type} from ${startDate} to ${endDate}...`);
+        const dayResults: DataDownloadDayResult[] = [];
 
         for (let currentDay = start; currentDay <= end; currentDay += DAY_MS) {
             const dateStr = formatUtcDateString(currentDay);
@@ -99,37 +135,72 @@ export class DataCollector {
             // If CSV already exists, skip
             if (runtimeExistsSync(localCsvPath)) {
                 console.log(`Using cached: ${fileName}`);
+                dayResults.push({ date: dateStr, status: 'cached' });
                 continue;
             }
 
             const url = `${this.baseUrl}/${type}/${symbol.toUpperCase()}/${zipName}`;
 
             try {
-                // Download
                 console.log(`Downloading ${url}...`);
-                await execFilePromise('curl', ['-s', '-o', localZipPath, url]);
+                await execFilePromise('curl', [
+                    '--fail', '--silent', '--show-error', '--remove-on-error',
+                    '--connect-timeout', '10', '--max-time', '90',
+                    '--retry', '2', '--retry-delay', '1', '--retry-connrefused',
+                    '-o', localZipPath, url,
+                ]);
+            } catch (error) {
+                if (runtimeExistsSync(localZipPath)) {
+                    fs.unlinkSync(localZipPath);
+                }
+                dayResults.push({ date: dateStr, status: 'failed', stage: 'download', error: errorMessage(error) });
+                console.error(`Failed to download ${dateStr}:`, error);
+                continue;
+            }
 
-                // Check if file is valid (not empty and is a zip)
+            try {
                 const stats = fs.statSync(localZipPath);
                 if (stats.size < 1000) {
-                    console.warn(`File too small, possibly missing data: ${zipName}`);
-                    fs.unlinkSync(localZipPath); // Delete invalid file
+                    fs.unlinkSync(localZipPath);
+                    dayResults.push({
+                        date: dateStr,
+                        status: 'failed',
+                        stage: 'validate',
+                        error: `Archive is too small (${stats.size} bytes)`,
+                    });
                     continue;
                 }
+            } catch (error) {
+                dayResults.push({ date: dateStr, status: 'failed', stage: 'validate', error: errorMessage(error) });
+                continue;
+            }
 
-                // Unzip
+            try {
                 console.log(`Unzipping ${zipName}...`);
                 await execFilePromise('unzip', ['-o', localZipPath, '-d', symbolDir]);
-
-                // Clean up zip
                 fs.unlinkSync(localZipPath);
-
+                if (!runtimeExistsSync(localCsvPath) || fs.statSync(localCsvPath).size === 0) {
+                    dayResults.push({
+                        date: dateStr,
+                        status: 'failed',
+                        stage: 'extract',
+                        error: 'Extracted CSV is missing or empty',
+                    });
+                    continue;
+                }
+                dayResults.push({ date: dateStr, status: 'downloaded' });
             } catch (error) {
+                if (runtimeExistsSync(localZipPath)) {
+                    fs.unlinkSync(localZipPath);
+                }
+                dayResults.push({ date: dateStr, status: 'failed', stage: 'extract', error: errorMessage(error) });
                 console.error(`Failed to process ${dateStr}:`, error);
             }
         }
 
-        console.log(`Download completed for ${symbol} ${type}`);
+        const result = summarizeDataDownloadDays(dayResults);
+        console.log(`Download ${result.status} for ${symbol} ${type}: ${result.completedDays}/${result.totalDays} days available`);
+        return result;
     }
 
     /**

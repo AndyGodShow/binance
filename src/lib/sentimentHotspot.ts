@@ -6,9 +6,9 @@ import {
     normalizeOpenInterestHistEntries,
 } from './openInterestShared.ts';
 
-export type SentimentHotspotSignalType = 'A_PLUS_LONG' | 'CORE_LONG' | 'WATCH' | 'RISK_OVERHEATED' | 'IGNORE';
-export type SentimentHotspotEntryHint = 'breakout-ready' | 'pullback-watch' | 'avoid-chase' | 'wait';
-export type SentimentHotspotExitLevel = 'hold' | 'warning' | 'exit';
+type SentimentHotspotSignalType = 'A_PLUS_LONG' | 'CORE_LONG' | 'WATCH' | 'RISK_OVERHEATED' | 'IGNORE';
+type SentimentHotspotEntryHint = 'breakout-ready' | 'pullback-watch' | 'avoid-chase' | 'wait';
+type SentimentHotspotExitLevel = 'hold' | 'warning' | 'exit';
 
 export interface SentimentHotspotEntryContext {
     oneHourHigh: number;
@@ -80,6 +80,7 @@ export interface SentimentHotspotOiSignal {
 
 export interface SentimentHotspotContextMapOptions {
     oiSignalMode?: 'history' | 'current';
+    signal?: AbortSignal;
 }
 
 interface CoinGeckoTrendingResponse {
@@ -430,10 +431,10 @@ function calculateVolumeSurgeRatio(ticker: TickerData, dailyKlines?: OHLC[]): nu
     return averagePreviousVolume > 0 ? volume24h / averagePreviousVolume : 0;
 }
 
-async function fetchCoinGeckoTrendingCoinsUncached(): Promise<Set<string>> {
+async function fetchCoinGeckoTrendingCoinsUncached(signal?: AbortSignal): Promise<Set<string>> {
     try {
         const response = await fetch('https://api.coingecko.com/api/v3/search/trending', {
-            signal: AbortSignal.timeout(8000),
+            signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(8000)]) : AbortSignal.timeout(8000),
             next: { revalidate: 300 },
         });
         if (!response.ok) {
@@ -455,14 +456,14 @@ async function fetchCoinGeckoTrendingCoinsUncached(): Promise<Set<string>> {
     }
 }
 
-async function fetchCoinGeckoTrendingCoins(): Promise<Set<string>> {
+async function fetchCoinGeckoTrendingCoins(signal?: AbortSignal): Promise<Set<string>> {
     const now = Date.now();
     if (coinGeckoTrendingCache && coinGeckoTrendingCache.expiresAt > now) {
         return new Set(coinGeckoTrendingCache.coins);
     }
 
     if (!coinGeckoTrendingInflight) {
-        coinGeckoTrendingInflight = fetchCoinGeckoTrendingCoinsUncached()
+        coinGeckoTrendingInflight = fetchCoinGeckoTrendingCoinsUncached(signal)
             .then((coins) => {
                 coinGeckoTrendingCache = {
                     expiresAt: Date.now() + COINGECKO_TRENDING_CACHE_TTL_MS,
@@ -475,7 +476,9 @@ async function fetchCoinGeckoTrendingCoins(): Promise<Set<string>> {
             });
     }
 
-    return new Set(await coinGeckoTrendingInflight);
+    const coins = await coinGeckoTrendingInflight;
+    signal?.throwIfAborted();
+    return new Set(coins);
 }
 
 export function clearSentimentHotspotCachesForTest() {
@@ -573,7 +576,7 @@ export async function fetchSentimentHotspotContextMap(
     options: SentimentHotspotContextMapOptions = {},
 ): Promise<Map<string, SentimentHotspotContext>> {
     const oiSignalMode = options.oiSignalMode || 'history';
-    const coinGeckoTrending = await fetchCoinGeckoTrendingCoins();
+    const coinGeckoTrending = await fetchCoinGeckoTrendingCoins(options.signal);
     const baseContexts = new Map<string, Omit<SentimentHotspotContext, 'oiUsd' | 'oiChangePct' | 'oiSegments' | 'oiRising' | 'oiStrong'>>();
 
     tickers.forEach((ticker) => {

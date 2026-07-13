@@ -15,6 +15,12 @@ export interface MarketEnrichmentLimits {
     klineEnhancementSymbolLimit: number;
 }
 
+export const STRATEGY_MARKET_ENRICHMENT_LIMITS: MarketEnrichmentLimits = {
+    oiSnapshotSymbolLimit: 220,
+    historicalOiChangeSymbolLimit: 80,
+    klineEnhancementSymbolLimit: 180,
+};
+
 export function resolveMarketEnrichmentLimits(
     _env: Pick<NodeJS.ProcessEnv, 'NODE_ENV'> = process.env,
 ): MarketEnrichmentLimits {
@@ -40,6 +46,63 @@ export interface MarketKlineEnhancementStagePlan {
 
 export interface MarketKlineWarnLogger {
     warn(message: string, context?: Record<string, unknown>): void;
+}
+
+export interface MarketEnhancementBatchContext {
+    signal?: AbortSignal;
+    deadlineAt?: number;
+}
+
+function throwIfMarketBuildStopped(options: {
+    signal?: AbortSignal;
+    deadlineAt?: number;
+    now: () => number;
+}) {
+    if (options.signal?.aborted) {
+        throw options.signal.reason instanceof Error
+            ? options.signal.reason
+            : new Error('Market enhancement aborted');
+    }
+    if (options.deadlineAt !== undefined && options.now() > options.deadlineAt) {
+        throw new Error('Market enhancement deadline exceeded');
+    }
+}
+
+export async function runMarketEnhancementBatches(
+    symbols: string[],
+    batchSize: number,
+    worker: (symbols: string[], context: MarketEnhancementBatchContext) => Promise<void>,
+    options: {
+        signal?: AbortSignal;
+        deadlineAt?: number;
+        now?: () => number;
+        concurrency?: number;
+    } = {},
+): Promise<void> {
+    const now = options.now ?? Date.now;
+    const safeBatchSize = Math.max(1, Math.floor(batchSize));
+    const batches = Array.from(
+        { length: Math.ceil(symbols.length / safeBatchSize) },
+        (_, index) => symbols.slice(index * safeBatchSize, (index + 1) * safeBatchSize),
+    );
+    let nextBatchIndex = 0;
+    const runWorker = async () => {
+        while (nextBatchIndex < batches.length) {
+            throwIfMarketBuildStopped({ ...options, now });
+            const batch = batches[nextBatchIndex];
+            nextBatchIndex += 1;
+            await worker(batch, {
+                signal: options.signal,
+                deadlineAt: options.deadlineAt,
+            });
+        }
+    };
+    const workerCount = Math.min(
+        batches.length,
+        Math.max(1, Math.floor(options.concurrency ?? 1)),
+    );
+    await Promise.all(Array.from({ length: workerCount }, runWorker));
+    throwIfMarketBuildStopped({ ...options, now });
 }
 
 export type MarketKlineBatchFetcher<T> = (

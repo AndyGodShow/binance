@@ -1,7 +1,7 @@
 import type { KlineData } from '../app/api/backtest/klines/route.ts';
 import { detectKlineGaps } from './klineRangeUtils.ts';
 
-export type HistoricalRangeReadiness = 'ready' | 'exploratory-only' | 'not-ready';
+type HistoricalRangeReadiness = 'ready' | 'exploratory-only' | 'not-ready';
 
 export interface HistoricalRangeAudit {
     symbol: string;

@@ -2,7 +2,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_DOWNLOAD_RANGE_DAYS = 366;
 const SYMBOL_PATTERN = /^[A-Z0-9]{2,20}$/;
 
-export type DataDownloadType = 'metrics' | 'fundingRate';
+type DataDownloadType = 'metrics' | 'fundingRate';
 
 export interface DataDownloadRequestPayload {
     symbol: string | null | undefined;

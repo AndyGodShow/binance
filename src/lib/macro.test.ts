@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 
 import {
     BTC_LONG_SHORT_RATIO_PERIOD,
@@ -15,16 +14,14 @@ import {
     selectFreshestBtcEtfFlow,
     type MacroSourcePayload,
 } from './macro.ts';
+import { A_SHARE_EQUITY_ASSETS, HK_EQUITY_ASSETS } from './macroAssets.ts';
+import {
+    MACRO_SOURCE_FRESHNESS_MODE,
+    YAHOO_CHART_HOSTS,
+    YAHOO_CHART_HOST_TIMEOUT_MS,
+} from './macroSourceConfig.ts';
 
 const NOW = Date.parse('2026-04-17T12:00:00.000Z');
-const MACRO_ROUTE_SOURCE = readFileSync(new URL('../app/api/macro/route.ts', import.meta.url), 'utf8');
-
-function extractRouteAssetSymbols(assetListName: string): string[] {
-    const match = MACRO_ROUTE_SOURCE.match(new RegExp(`const ${assetListName}: YahooAssetConfig\\[] = \\[([\\s\\S]*?)\\];`));
-    assert.ok(match, `missing ${assetListName}`);
-
-    return [...match[1].matchAll(/symbol:\s*'([^']+)'/g)].map((symbolMatch) => symbolMatch[1]);
-}
 
 function createPayload(overrides: Partial<MacroSourcePayload> = {}): MacroSourcePayload {
     return {
@@ -93,18 +90,10 @@ test('classifyMacroFreshness keeps last trading day stock observer data valid ov
 });
 
 test('macro equity observer source statuses use daily freshness to avoid weekend stale labels', () => {
-    assert.match(
-        MACRO_ROUTE_SOURCE,
-        /key:\s*'us-equities'[\s\S]*?freshness:\s*classifyMacroFreshness\(latestUsEquityTimestamp,\s*Date\.now\(\),\s*'daily'\)/
-    );
-    assert.match(
-        MACRO_ROUTE_SOURCE,
-        /key:\s*'hk-equities'[\s\S]*?freshness:\s*classifyMacroFreshness\(latestHkEquityTimestamp,\s*Date\.now\(\),\s*'daily'\)/
-    );
-    assert.match(
-        MACRO_ROUTE_SOURCE,
-        /key:\s*'a-share-equities'[\s\S]*?freshness:\s*classifyMacroFreshness\(latestAShareEquityTimestamp,\s*Date\.now\(\),\s*'daily'\)/
-    );
+    assert.equal(MACRO_SOURCE_FRESHNESS_MODE.market, 'intraday');
+    assert.equal(MACRO_SOURCE_FRESHNESS_MODE['us-equities'], 'daily');
+    assert.equal(MACRO_SOURCE_FRESHNESS_MODE['hk-equities'], 'daily');
+    assert.equal(MACRO_SOURCE_FRESHNESS_MODE['a-share-equities'], 'daily');
 });
 
 test('macro route keeps HK and A-share observer pools broad enough for sector scanning', () => {
@@ -119,17 +108,13 @@ test('macro route keeps HK and A-share observer pools broad enough for sector sc
         '600900.SS',
     ];
 
-    for (const symbol of expectedSymbols) {
-        assert.match(
-            MACRO_ROUTE_SOURCE,
-            new RegExp(`symbol:\\s*'${symbol.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}'`)
-        );
-    }
+    const configuredSymbols = new Set([...HK_EQUITY_ASSETS, ...A_SHARE_EQUITY_ASSETS].map((asset) => asset.symbol));
+    for (const symbol of expectedSymbols) assert.equal(configuredSymbols.has(symbol), true, `${symbol} should be configured`);
 });
 
 test('macro route curates HK and A-share observer pools to avoid noisy long tails', () => {
-    const hkSymbols = extractRouteAssetSymbols('HK_EQUITY_ASSETS');
-    const aShareSymbols = extractRouteAssetSymbols('A_SHARE_EQUITY_ASSETS');
+    const hkSymbols = HK_EQUITY_ASSETS.map((asset) => asset.symbol);
+    const aShareSymbols = A_SHARE_EQUITY_ASSETS.map((asset) => asset.symbol);
     const removedLongTailSymbols = [
         '1024.HK',
         '9999.HK',
@@ -169,18 +154,16 @@ test('macro route includes HK and A-share sector ETFs for board-level observatio
         '515790.SS',
     ];
 
-    for (const symbol of expectedSectorEtfs) {
-        assert.match(
-            MACRO_ROUTE_SOURCE,
-            new RegExp(`symbol:\\s*'${symbol.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}'`)
-        );
-    }
+    const configuredSymbols = new Set([...HK_EQUITY_ASSETS, ...A_SHARE_EQUITY_ASSETS].map((asset) => asset.symbol));
+    for (const symbol of expectedSectorEtfs) assert.equal(configuredSymbols.has(symbol), true, `${symbol} should be configured`);
 });
 
 test('macro route falls back across Yahoo chart hosts for equity data resilience', () => {
-    assert.match(MACRO_ROUTE_SOURCE, /query1\.finance\.yahoo\.com/);
-    assert.match(MACRO_ROUTE_SOURCE, /query2\.finance\.yahoo\.com/);
-    assert.match(MACRO_ROUTE_SOURCE, /YAHOO_CHART_HOST_TIMEOUT_MS\s*=\s*4000/);
+    assert.deepEqual(YAHOO_CHART_HOSTS, [
+        'query1.finance.yahoo.com',
+        'query2.finance.yahoo.com',
+    ]);
+    assert.equal(YAHOO_CHART_HOST_TIMEOUT_MS, 4_000);
 });
 
 test('buildMacroDashboard produces neutral regime when risk assets offset macro pressure', () => {

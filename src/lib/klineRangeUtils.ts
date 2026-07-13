@@ -1,4 +1,4 @@
-import type { KlineData } from '../app/api/backtest/klines/route.ts';
+import type { KlineData } from './backtestKlineMerge.ts';
 
 export function detectKlineGaps(klines: KlineData[], intervalMs: number) {
     let gapCount = 0;

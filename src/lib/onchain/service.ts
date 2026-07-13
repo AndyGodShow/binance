@@ -4,53 +4,52 @@ import { applySupplyToHolderConcentration, buildSupplyBreakdown } from './supply
 import {
     chainPriority,
     normalizeAssetTerm,
-    resolveTokenIdentity,
     tokenizeSearchInput,
 } from './identity.ts';
 import { fetchBinanceJson } from '../binanceApi.ts';
 import { logger } from '../logger.ts';
+import { readOnchainEnv } from '../env.ts';
+import {
+    buildFallbackSourceStatuses,
+    errorMessage,
+    settleOnchainSource,
+    sourceStateOf,
+    type SettledOnchainSource,
+} from './providerStatus.ts';
+import {
+    applyEligibilityToHolderConcentration,
+    buildTokenIdentityResolution,
+    buildTokenEligibility,
+    identityFromResolution,
+    resolveOnchainMappingStatus,
+} from './tokenEligibility.ts';
+export {
+    applyEligibilityToHolderConcentration,
+    buildAddressIdentity,
+    buildTokenEligibility,
+    resolveOnchainMappingStatus,
+} from './tokenEligibility.ts';
 import type {
-    ChainFamily,
-    AnalysisEligibility,
-    AddressIdentity,
-    DexPriceWindow,
     DexTradeWindow,
     HistoricalHoldersPoint,
-    HolderAcquisition,
-    HolderDistribution,
     OnchainFallbackReason,
     OnchainSearchScope,
-    HolderSupplyBucket,
-    HolderConcentrationAnalysis,
-    SupplyBreakdown,
     TokenHolderMetrics,
-    TokenIdentityCandidate,
-    TokenIdentityResolution,
     TokenResearchPayload,
     TokenSearchResult,
     TopHolderItem,
 } from './types';
 
-const MORALIS_API_KEY = process.env.MORALIS_API_KEY;
+const SERVER_ENV = readOnchainEnv();
+const MORALIS_API_KEY = SERVER_ENV.moralisApiKey;
 const MORALIS_EVM_BASE = 'https://deep-index.moralis.io/api/v2.2';
 const MORALIS_SOLANA_BASE = 'https://solana-gateway.moralis.io';
 const DEX_SCREENER_BASE = 'https://api.dexscreener.com/latest/dex';
 const DEFAULT_QUERY = 'PEPE';
-const SOLANA_NETWORK = process.env.SOLANA_NETWORK ?? 'mainnet';
+const SOLANA_NETWORK = SERVER_ENV.solanaNetwork;
 const MIN_HOLDER_COUNT = 100;
 const MIN_CANDIDATE_MARKET_CAP = 2_000_000;
 const MIN_CANDIDATE_LIQUIDITY = 1;
-const SUPPORTED_EVM_CHAINS = new Set([
-    'ethereum',
-    'bsc',
-    'base',
-    'polygon',
-    'arbitrum',
-    'optimism',
-    'avalanche',
-    'fantom',
-    'cronos',
-]);
 const NATIVE_CONTRACT_ASSETS = new Set([
     'BTC',
     'ETH',
@@ -73,15 +72,6 @@ const STABLE_CONTRACT_ASSETS = new Set([
     'TUSD',
     'DAI',
     'USDE',
-]);
-const WRAPPED_ASSETS = new Set([
-    'WBTC',
-    'WETH',
-    'WBNB',
-    'WSOL',
-    'WAVAX',
-    'WMATIC',
-    'WTRX',
 ]);
 
 interface BinanceContractSymbol {
@@ -146,629 +136,34 @@ async function fetchDexScreenerJson<T>(url: string): Promise<T> {
     return res.json() as Promise<T>;
 }
 
-function parseNumber(value: string | number | null | undefined) {
-    const num = Number(value ?? 0);
-    return Number.isFinite(num) ? num : 0;
-}
-
-function parseOptionalNumber(value: unknown) {
-    if (value === null || value === undefined || value === '') {
-        return null;
-    }
-
-    const num = Number(value);
-    return Number.isFinite(num) ? num : null;
-}
-
-function emptyTradeWindow(): DexTradeWindow {
-    return { buys: null, sells: null, total: null };
-}
-
-function emptyPriceWindow(): DexPriceWindow {
-    return { priceChangePercent: null, volumeUsd: null };
-}
-
-function mapTradeWindow(raw: unknown): DexTradeWindow {
-    const obj = recordOfValues(raw);
-    const buys = parseOptionalNumber(obj.buys);
-    const sells = parseOptionalNumber(obj.sells);
-
-    return {
-        buys,
-        sells,
-        total: buys === null && sells === null ? null : (buys ?? 0) + (sells ?? 0),
-    };
-}
-
-function mapPriceWindow(rawPriceChange: unknown, rawVolume: unknown): DexPriceWindow {
-    return {
-        priceChangePercent: parseOptionalNumber(rawPriceChange),
-        volumeUsd: parseOptionalNumber(rawVolume),
-    };
-}
-
-function toFamily(chainId: string, chainName: string): ChainFamily {
-    if (chainName.toLowerCase().includes('solana') || chainId.startsWith('solana') || chainId === 'mainnet') {
-        return 'solana';
-    }
-    return 'evm';
-}
-
-function isAddressLikeQuery(query: string) {
-    const trimmed = query.trim();
-    return /^0x[a-fA-F0-9]{40}$/.test(trimmed) || /^[1-9A-HJ-NP-Za-km-z]{32,64}$/.test(trimmed) || /^T[A-Za-z1-9]{25,}$/.test(trimmed);
-}
-
-function isSupportedOnchainToken(token: TokenSearchResult) {
-    return token.chainFamily === 'solana' || SUPPORTED_EVM_CHAINS.has(token.chainId);
-}
-
-function isSupportedChain(chainId: string, chainFamily: ChainFamily) {
-    return chainFamily === 'solana' || SUPPORTED_EVM_CHAINS.has(chainId);
-}
-
-function mapHolderDistribution(input: Record<string, string | number | null | undefined>): HolderDistribution {
-    return {
-        whales: parseNumber(input.whales),
-        sharks: parseNumber(input.sharks),
-        dolphins: parseNumber(input.dolphins),
-        fish: parseNumber(input.fish),
-        octopus: parseNumber(input.octopus),
-        crabs: parseNumber(input.crabs ?? input.crab),
-        shrimps: parseNumber(input.shrimps),
-    };
-}
-
-function mapAcquisition(input: Record<string, string | number | null | undefined>): HolderAcquisition {
-    return {
-        swap: parseNumber(input.swap),
-        transfer: parseNumber(input.transfer),
-        airdrop: parseNumber(input.airdrop),
-    };
-}
-
-function mapSupplyBucket(input: Record<string, string | number | null | undefined>): HolderSupplyBucket {
-    return {
-        supply: parseNumber(input.supply),
-        supplyPercent: parseNumber(input.supplyPercent),
-    };
-}
-
-function recordOfValues(value: unknown): Record<string, string | number | null | undefined> {
-    return (value && typeof value === 'object' ? value : {}) as Record<string, string | number | null | undefined>;
-}
-
-function recordOfRecords(value: unknown): Record<string, Record<string, string | number | null | undefined>> {
-    return (value && typeof value === 'object' ? value : {}) as Record<string, Record<string, string | number | null | undefined>>;
-}
-
-export function normalizeAcquisitionMix(input: HolderAcquisition): HolderAcquisition {
-    const total = input.swap + input.transfer + input.airdrop;
-    if (total <= 0) {
-        return input;
-    }
-
-    return {
-        swap: (input.swap / total) * 100,
-        transfer: (input.transfer / total) * 100,
-        airdrop: (input.airdrop / total) * 100,
-    };
-}
-
-export function filterAndSortSearchResults(
-    searchResults: TokenSearchResult[],
-    minHolderCount = MIN_HOLDER_COUNT
-) {
-    return searchResults
-        .filter((token) => token.totalHolders === null || token.totalHolders >= minHolderCount)
-        .sort((a, b) => {
-            const aHolders = a.totalHolders;
-            const bHolders = b.totalHolders;
-
-            if (aHolders !== null && bHolders !== null && aHolders !== bHolders) {
-                return bHolders - aHolders;
-            }
-
-            if (aHolders === null && bHolders !== null) {
-                return 1;
-            }
-
-            if (aHolders !== null && bHolders === null) {
-                return -1;
-            }
-
-            const marketCapDiff = (b.marketCap ?? 0) - (a.marketCap ?? 0);
-            if (marketCapDiff !== 0) {
-                return marketCapDiff;
-            }
-
-            return (b.totalLiquidityUsd ?? 0) - (a.totalLiquidityUsd ?? 0);
-        });
-}
-
-function hasTokenTerm(query: string, assetSet: Set<string>) {
-    return tokenizeSearchInput(query).some((term) => assetSet.has(term));
-}
-
-function mapHolderChangeWindow(raw: unknown): { change: number; changePercent: number } {
-    const obj = recordOfValues(raw);
-    return {
-        change: parseNumber(obj.change),
-        changePercent: parseNumber(obj.changePercent),
-    };
-}
-
-function mapHolderChange(raw: unknown): TokenHolderMetrics['holderChange'] {
-    const obj = recordOfRecords(raw);
-    return {
-        '5min': mapHolderChangeWindow(obj['5min']),
-        '1h': mapHolderChangeWindow(obj['1h']),
-        '6h': mapHolderChangeWindow(obj['6h']),
-        '24h': mapHolderChangeWindow(obj['24h']),
-        '3d': mapHolderChangeWindow(obj['3d']),
-        '7d': mapHolderChangeWindow(obj['7d']),
-        '30d': mapHolderChangeWindow(obj['30d']),
-    };
-}
-
-function moralisChainParam(chainId: string): string {
-    switch (chainId) {
-        case 'ethereum': return 'eth';
-        case 'polygon': return 'polygon';
-        case 'bsc': return 'bsc';
-        case 'arbitrum': return 'arbitrum';
-        case 'optimism': return 'optimism';
-        case 'base': return 'base';
-        default: return chainId;
-    }
-}
-
-function mapDexChain(chainId: string) {
-    const normalized = chainId.toLowerCase();
-
-    switch (normalized) {
-        case 'eth':
-        case 'ethereum':
-            return { chainId: 'ethereum', chain: 'ethereum', chainName: 'Ethereum', chainFamily: 'evm' as const };
-        case 'bsc':
-            return { chainId: 'bsc', chain: 'bsc', chainName: 'BNB Chain', chainFamily: 'evm' as const };
-        case 'base':
-            return { chainId: 'base', chain: 'base', chainName: 'Base', chainFamily: 'evm' as const };
-        case 'solana':
-            return { chainId: 'solana', chain: 'solana', chainName: 'Solana', chainFamily: 'solana' as const };
-        case 'polygon':
-            return { chainId: 'polygon', chain: 'polygon', chainName: 'Polygon', chainFamily: 'evm' as const };
-        case 'arbitrum':
-            return { chainId: 'arbitrum', chain: 'arbitrum', chainName: 'Arbitrum', chainFamily: 'evm' as const };
-        case 'optimism':
-            return { chainId: 'optimism', chain: 'optimism', chainName: 'Optimism', chainFamily: 'evm' as const };
-        default:
-            return {
-                chainId: normalized,
-                chain: normalized,
-                chainName: normalized.charAt(0).toUpperCase() + normalized.slice(1),
-                chainFamily: toFamily(normalized, normalized),
-            };
-    }
-}
-
-function primaryTokenScore(token: TokenSearchResult, query: string) {
-    const queryTerms = tokenizeSearchInput(query);
-    const symbol = normalizeAssetTerm(token.symbol);
-    const name = normalizeAssetTerm(token.name);
-    let score = 0;
-
-    if (queryTerms.some((term) => symbol === term)) {
-        score += 200;
-    } else if (queryTerms.some((term) => symbol.includes(term))) {
-        score += 120;
-    }
-
-    if (queryTerms.some((term) => name === term)) {
-        score += 120;
-    } else if (queryTerms.some((term) => name.includes(term))) {
-        score += 60;
-    }
-
-    if (token.chainFamily === 'evm') {
-        score += 20;
-    }
-
-    score += chainPriority(token.chainId) * 10;
-    score += Math.min(80, Math.log10((token.totalHolders ?? 0) + 1) * 20);
-    score += Math.min(80, Math.log10((token.totalLiquidityUsd ?? 0) + 1) * 10);
-    score += Math.min(60, Math.log10((token.marketCap ?? 0) + 1) * 8);
-
-    return score;
-}
-
-function mapSearchResults(raw: Array<Record<string, unknown>>): TokenSearchResult[] {
-    const unique = new Map<string, TokenSearchResult>();
-
-    raw.forEach((item) => {
-        const chainMeta = mapDexChain(String(item.chainId || ''));
-        const baseToken = recordOfValues(item.baseToken);
-        const tokenAddress = String(baseToken.address || '');
-        const key = `${chainMeta.chainId}:${tokenAddress}`;
-
-        if (!tokenAddress || unique.has(key) || !isSupportedChain(chainMeta.chainId, chainMeta.chainFamily)) {
-            return;
-        }
-
-        unique.set(key, {
-            tokenAddress,
-            chainId: chainMeta.chainId,
-            chain: chainMeta.chain,
-            chainName: chainMeta.chainName,
-            chainFamily: chainMeta.chainFamily,
-            name: String(baseToken.name || ''),
-            symbol: String(baseToken.symbol || ''),
-            logo: typeof item.info === 'object' && item.info && typeof (item.info as Record<string, unknown>).imageUrl === 'string'
-                ? String((item.info as Record<string, unknown>).imageUrl)
-                : null,
-            usdPrice: item.priceUsd == null ? null : Number(item.priceUsd),
-            marketCap: item.marketCap == null ? null : Number(item.marketCap),
-            fdv: item.fdv == null ? null : Number(item.fdv),
-            totalLiquidityUsd: typeof item.liquidity === 'object' && item.liquidity
-                ? Number((item.liquidity as Record<string, unknown>).usd ?? 0)
-                : null,
-            securityScore: null,
-            totalHolders: null,
-            isVerifiedContract: false,
-            turnoverRatio: null,
-            dexTrades: {
-                h1: mapTradeWindow(typeof item.txns === 'object' && item.txns ? (item.txns as Record<string, unknown>).h1 : null),
-                h6: mapTradeWindow(typeof item.txns === 'object' && item.txns ? (item.txns as Record<string, unknown>).h6 : null),
-                h24: mapTradeWindow(typeof item.txns === 'object' && item.txns ? (item.txns as Record<string, unknown>).h24 : null),
-            },
-            dexPriceStats: {
-                m5: mapPriceWindow(
-                    typeof item.priceChange === 'object' && item.priceChange ? (item.priceChange as Record<string, unknown>).m5 : null,
-                    typeof item.volume === 'object' && item.volume ? (item.volume as Record<string, unknown>).m5 : null
-                ),
-                h1: mapPriceWindow(
-                    typeof item.priceChange === 'object' && item.priceChange ? (item.priceChange as Record<string, unknown>).h1 : null,
-                    typeof item.volume === 'object' && item.volume ? (item.volume as Record<string, unknown>).h1 : null
-                ),
-                h6: mapPriceWindow(
-                    typeof item.priceChange === 'object' && item.priceChange ? (item.priceChange as Record<string, unknown>).h6 : null,
-                    typeof item.volume === 'object' && item.volume ? (item.volume as Record<string, unknown>).h6 : null
-                ),
-                h24: mapPriceWindow(
-                    typeof item.priceChange === 'object' && item.priceChange ? (item.priceChange as Record<string, unknown>).h24 : null,
-                    typeof item.volume === 'object' && item.volume ? (item.volume as Record<string, unknown>).h24 : null
-                ),
-            },
-        });
-    });
-
-    return Array.from(unique.values())
-        .sort((a, b) => {
-            const marketCapDiff = (b.marketCap ?? 0) - (a.marketCap ?? 0);
-            if (marketCapDiff !== 0) {
-                return marketCapDiff;
-            }
-            return (b.totalLiquidityUsd ?? 0) - (a.totalLiquidityUsd ?? 0);
-        })
-        .slice(0, 10);
-}
-
-export function resolveOnchainMappingStatus(
-    scope: OnchainSearchScope,
-    token: TokenSearchResult
-) {
-    if (token.isVerifiedContract) {
-        return 'confirmed';
-    }
-
-    return scope === 'contracts' || scope === 'alpha' ? 'candidate' : 'unavailable';
-}
-
-export function buildTokenIdentityResolution({
-    token,
-    scope,
-    query = token?.symbol ?? DEFAULT_QUERY,
-    searchResults = [],
-}: {
-    token: TokenSearchResult | null;
-    scope: OnchainSearchScope;
-    query?: string;
-    searchResults?: TokenSearchResult[];
-}): TokenIdentityResolution {
-    const candidates = (searchResults.length > 0 ? searchResults : (token ? [token] : []))
-        .map((candidate) => {
-            const terms = tokenizeSearchInput(query);
-            const symbol = normalizeAssetTerm(candidate.symbol);
-            const name = normalizeAssetTerm(candidate.name);
-            const normalizedAddress = query.trim().toLowerCase();
-            const isAddressMatch = candidate.tokenAddress.toLowerCase() === normalizedAddress;
-            const isExactSymbol = terms.some((term) => symbol === term);
-            const isSymbolFuzzy = terms.some((term) => symbol.includes(term) || term.includes(symbol));
-            const isNameFuzzy = terms.some((term) => name.includes(term));
-            const source = candidate.isVerifiedContract ? 'binance_alpha' as const : 'dex_screener' as const;
-            const matchType: TokenIdentityCandidate['matchType'] = isAddressMatch
-                ? 'exact_address'
-                : isExactSymbol
-                    ? 'exact_symbol'
-                    : isSymbolFuzzy
-                        ? 'symbol_fuzzy'
-                        : isNameFuzzy
-                            ? 'name_fuzzy'
-                            : 'unknown';
-
-            return {
-                token: candidate,
-                source,
-                matchType,
-                evidence: [
-                    source === 'binance_alpha'
-                        ? 'Binance Alpha 可识别地址候选。'
-                        : 'DEX Screener/Moralis 候选地址。',
-                ],
-                riskFlags: matchType === 'symbol_fuzzy' || matchType === 'name_fuzzy'
-                    ? ['symbol/name 模糊命中。']
-                    : [],
-            };
-        });
-    const resolution = resolveTokenIdentity({
-        query,
-        scope,
-        futuresSymbols: scope === 'contracts' ? tokenizeSearchInput(query).slice(-1) : [],
-        candidates,
-    });
-    return {
-        ...resolution,
-        candidates: token
-            ? [
-                ...resolution.candidates.filter((candidate) => (
-                    candidate.token.tokenAddress.toLowerCase() === token.tokenAddress.toLowerCase()
-                    && candidate.token.chainId === token.chainId
-                )),
-                ...resolution.candidates.filter((candidate) => !(
-                    candidate.token.tokenAddress.toLowerCase() === token.tokenAddress.toLowerCase()
-                    && candidate.token.chainId === token.chainId
-                )),
-            ]
-            : resolution.candidates,
-    };
-}
-
-function identityFromResolution(
-    resolution: TokenIdentityResolution,
-    mappingStatus: ReturnType<typeof resolveOnchainMappingStatus>,
-    token: TokenSearchResult | null
-): AddressIdentity {
-    return {
-        symbol: token?.symbol ?? resolution.normalizedSymbol,
-        chain: resolution.chain ?? '',
-        address: resolution.address,
-        confidence: mappingStatus === 'unavailable' ? 'blocked' : resolution.confidence,
-        source: resolution.source,
-        evidence: resolution.evidence,
-        riskFlags: resolution.riskFlags,
-    };
-}
-
-export function buildAddressIdentity({
-    token,
-    scope,
-    mappingStatus,
-    query = token?.symbol ?? DEFAULT_QUERY,
-    searchResults = [],
-}: {
-    token: TokenSearchResult | null;
-    scope: OnchainSearchScope;
-    mappingStatus: ReturnType<typeof resolveOnchainMappingStatus>;
-    query?: string;
-    searchResults?: TokenSearchResult[];
-}): AddressIdentity {
-    return identityFromResolution(
-        buildTokenIdentityResolution({ token, scope, query, searchResults }),
-        mappingStatus,
-        token
-    );
-}
-
-function hasBadSupplyBuckets(metrics: TokenHolderMetrics | null) {
-    if (!metrics) {
-        return false;
-    }
-
-    const buckets = [
-        metrics.holderSupply.top10.supplyPercent,
-        metrics.holderSupply.top25.supplyPercent,
-        metrics.holderSupply.top50.supplyPercent,
-        metrics.holderSupply.top100.supplyPercent,
-        metrics.holderSupply.top250.supplyPercent,
-        metrics.holderSupply.top500.supplyPercent,
-    ].map((value) => (value < 1 ? value * 100 : value));
-
-    return buckets.some((value) => !Number.isFinite(value) || value < 0 || value > 100)
-        || buckets.some((value, index) => index > 0 && value + 0.000001 < buckets[index - 1]);
-}
-
-export function buildTokenEligibility({
-    token,
-    identity,
-    mappingStatus,
-    metrics,
-    dataQuality,
-    holderConcentration,
-    supplyBreakdown,
-}: {
-    token: TokenSearchResult | null;
-    identity: AddressIdentity;
-    mappingStatus: ReturnType<typeof resolveOnchainMappingStatus>;
-    metrics: TokenHolderMetrics | null;
-    dataQuality: ReturnType<typeof buildOnchainDataQuality>;
-    holderConcentration?: HolderConcentrationAnalysis;
-    supplyBreakdown?: SupplyBreakdown;
-}): AnalysisEligibility {
-    const reasons: string[] = [];
-    const requiredManualChecks: string[] = [];
-    const symbolTerms = token ? tokenizeSearchInput(token.symbol) : [];
-    const name = token?.name.toLowerCase() ?? '';
-    const topCoverage = dataQuality.topHolderCoveragePercent;
-    const hasImpossibleTopHolders = topCoverage !== null && topCoverage > 100.000001;
-    const isWrapped = symbolTerms.some((term) => WRAPPED_ASSETS.has(term)) || name.includes('wrapped');
-    const isBridgeLike = name.includes('bridge') || identity.riskFlags.some((flag) => /bridge|跨链|桥/i.test(flag));
-    const isStable = symbolTerms.some((term) => STABLE_CONTRACT_ASSETS.has(term));
-    const isNative = symbolTerms.some((term) => NATIVE_CONTRACT_ASSETS.has(term));
-
-    if (!token || !identity.address || identity.confidence === 'blocked') {
-        return {
-            level: 'blocked',
-            category: 'C',
-            reasons: ['地址无法确认，禁止生成链上结构观察。'],
-            requiredManualChecks: ['确认官方合约地址、链和主交易池。'],
-        };
-    }
-
-    if (isNative || isStable || isWrapped || isBridgeLike) {
-        reasons.push(
-            isNative ? '原生 gas/主流资产不适合套用 token holder 集中度口径。'
-                : isStable ? '稳定币需要单独发行储备和跨链口径，禁止生成链上结构观察。'
-                    : isWrapped ? 'Wrapped asset 的 holder 结构反映包装合约流通，不代表底层资产筹码。'
-                        : 'Bridge token 的 holder 结构受跨链托管/桥合约影响。'
-        );
-    }
-
-    if (identity.confidence === 'unverified') {
-        reasons.push('地址来源未验证。');
-    }
-
-    if (hasImpossibleTopHolders || hasBadSupplyBuckets(metrics)) {
-        reasons.push('TopN 或 holderSupply 数据异常。');
-    }
-
-    if (holderConcentration && (
-        holderConcentration.rawTop1 === null
-        || holderConcentration.rawTop5 === null
-        || holderConcentration.rawTop10 === null
-    )) {
-        reasons.push('holder percentage 无法计算。');
-    }
-    if (
-        holderConcentration
-        && holderConcentration.classifiedHolders.length > 0
-        && holderConcentration.classifiedHolders.every((holder) => holder.class === 'unknown')
-    ) {
-        reasons.push('全部 Top holders 都无法可靠分类。');
-    }
-    if (supplyBreakdown && (
-        (supplyBreakdown.estimatedFloatSupply !== null && supplyBreakdown.estimatedFloatSupply <= 0)
-        || (
-            supplyBreakdown.estimatedFloatSupply !== null
-            && supplyBreakdown.totalSupply !== null
-            && supplyBreakdown.estimatedFloatSupply > supplyBreakdown.totalSupply
-        )
-        || supplyBreakdown.warnings.some((warning) => /分母存在冲突|数学异常/.test(warning))
-    )) {
-        reasons.push('estimatedFloatSupply 或供应分母数学异常。');
-    }
-
-    if (reasons.length > 0) {
-        return {
-            level: 'blocked',
-            category: 'C',
-            reasons,
-            requiredManualChecks: [
-                '核验官方合约地址和 token supply 分母。',
-                '复核 Top holders 是否存在接口口径错误。',
-            ],
-        };
-    }
-
-    if (mappingStatus !== 'confirmed' || identity.confidence === 'fallback') {
-        reasons.push('地址映射来自 fallback 候选，不能生成链上结构观察。');
-    }
-    if (dataQuality.confidence !== '高') {
-        reasons.push('holder 数据不完整或数据可信度不足。');
-    }
-    if (!metrics) {
-        reasons.push('holder metrics 缺失，只能展示市场与身份原始数据。');
-    }
-    if (dataQuality.flaggedTopHolderSharePercent > 0) {
-        reasons.push('Top holders 存在 LP/CEX/burn/contract 污染，当前未做净化剔除。');
-    }
-    if (dataQuality.topHoldersCount < 10) {
-        reasons.push('Top holders 标签或覆盖不足，只能展示原始数据。');
-    }
-    if (holderConcentration) {
-        if (holderConcentration.unknownSharePercent >= 25) {
-            reasons.push(`未知地址占比约 ${holderConcentration.unknownSharePercent.toFixed(2)}%，不能生成净化后观察。`);
-        }
-        if (holderConcentration.excludedSharePercent >= 20) {
-            reasons.push(`疑似非流通/基础设施地址占比约 ${holderConcentration.excludedSharePercent.toFixed(2)}%，原始集中度污染明显。`);
-        }
-        if (token.chainFamily === 'solana' && holderConcentration.unknownSharePercent >= 50) {
-            reasons.push('Solana Top holders 缺少 label/entity，地址分类可信度不足。');
-        }
-    }
-    if (supplyBreakdown) {
-        if (supplyBreakdown.confidence === 'low') {
-            reasons.push('SupplyBreakdown confidence = low，只能展示原始供应口径。');
-        }
-        if (supplyBreakdown.circulatingSupply === null) {
-            reasons.push('circulatingSupply 缺失，估算可流通供应不等于真实流通量。');
-        }
-        if (supplyBreakdown.warnings.some((warning) => /FDV|unknownTopHolderSupply|lockedOrInfrastructureSupply/.test(warning))) {
-            reasons.push(...supplyBreakdown.warnings);
-        }
-    }
-    if (identity.riskFlags.length > 0) {
-        reasons.push(...identity.riskFlags);
-    }
-
-    if (reasons.length > 0) {
-        requiredManualChecks.push('确认官方合约地址、链、主池和项目公告。');
-        requiredManualChecks.push('人工标注 Top holders 中的 LP、CEX、burn、treasury、vesting、bridge 地址。');
-        return {
-            level: 'raw_only',
-            category: 'B',
-            reasons: Array.from(new Set(reasons)),
-            requiredManualChecks,
-        };
-    }
-
-    return {
-        level: 'analysis_allowed',
-        category: 'A',
-        reasons: ['地址来源和 holder 数据通过第一阶段可信度门槛。'],
-        requiredManualChecks: ['继续人工复核 Top holders 标签，当前系统尚未做地址净化。'],
-    };
-}
-
-export function applyEligibilityToHolderConcentration(
-    holderConcentration: HolderConcentrationAnalysis,
-    eligibility: AnalysisEligibility
-): HolderConcentrationAnalysis {
-    if (eligibility.level === 'analysis_allowed') {
-        return holderConcentration;
-    }
-
-    return {
-        ...holderConcentration,
-        floatTop1: null,
-        floatTop5: null,
-        floatTop10: null,
-        warnings: Array.from(new Set([
-            ...holderConcentration.warnings,
-            '未通过 eligibility gate，隐藏净化后 TopN。',
-        ])),
-    };
-}
-
-function withDerivedMarketStats(token: TokenSearchResult): TokenSearchResult {
-    const turnoverRatio = token.marketCap && token.marketCap > 0 && token.dexPriceStats.h24.volumeUsd !== null
-        ? token.dexPriceStats.h24.volumeUsd / token.marketCap
-        : null;
-
-    return {
-        ...token,
-        turnoverRatio,
-    };
-}
+import {
+    emptyPriceWindow,
+    emptyTradeWindow,
+    parseNumber,
+    parseOptionalNumber,
+    isAddressLikeQuery,
+    isSupportedOnchainToken,
+    mapHolderDistribution,
+    mapAcquisition,
+    mapSupplyBucket,
+    recordOfValues,
+    recordOfRecords,
+    normalizeAcquisitionMix,
+    filterAndSortSearchResults,
+    hasTokenTerm,
+    mapHolderChange,
+    mapPriceWindow,
+    mapTradeWindow,
+    moralisChainParam,
+    mapDexChain,
+    mapSearchResults,
+    primaryTokenScore,
+    withDerivedMarketStats,
+} from './providerAdapters.ts';
+export {
+    filterAndSortSearchResults,
+    normalizeAcquisitionMix,
+} from './providerAdapters.ts';
 
 async function fetchCandidateHolderCount(token: TokenSearchResult): Promise<number | null> {
     try {
@@ -1031,7 +426,9 @@ async function enrichSearchResultsWithHolderCounts(searchResults: TokenSearchRes
     return filtered.length > 0 ? filtered : filterAndSortSearchResults(enriched, 0);
 }
 
-async function hydrateDexDetails(token: TokenSearchResult): Promise<TokenSearchResult> {
+async function hydrateDexDetails(
+    token: TokenSearchResult,
+): Promise<SettledOnchainSource<TokenSearchResult>> {
     try {
         const chain = token.chainId === 'ethereum'
             ? 'eth'
@@ -1040,7 +437,7 @@ async function hydrateDexDetails(token: TokenSearchResult): Promise<TokenSearchR
         const pairs = await fetchDexScreenerJson<Array<Record<string, unknown>>>(url);
 
         if (!Array.isArray(pairs) || pairs.length === 0) {
-            return token;
+            return { status: 'empty', data: token };
         }
 
         const normalizedAddress = token.tokenAddress.toLowerCase();
@@ -1106,24 +503,27 @@ async function hydrateDexDetails(token: TokenSearchResult): Promise<TokenSearchR
             : null;
 
         return {
-            ...token,
-            name: String(dominantBaseToken.name || token.name),
-            symbol: String(dominantBaseToken.symbol || token.symbol),
-            logo: typeof dominantInfo.imageUrl === 'string' ? dominantInfo.imageUrl : token.logo,
-            usdPrice: parseOptionalNumber(dominantPair.priceUsd) ?? token.usdPrice,
-            marketCap,
-            fdv,
-            totalLiquidityUsd,
-            turnoverRatio,
-            dexTrades: {
-                h1: aggregateTrades('h1'),
-                h6: aggregateTrades('h6'),
-                h24: aggregateTrades('h24'),
+            status: 'ok',
+            data: {
+                ...token,
+                name: String(dominantBaseToken.name || token.name),
+                symbol: String(dominantBaseToken.symbol || token.symbol),
+                logo: typeof dominantInfo.imageUrl === 'string' ? dominantInfo.imageUrl : token.logo,
+                usdPrice: parseOptionalNumber(dominantPair.priceUsd) ?? token.usdPrice,
+                marketCap,
+                fdv,
+                totalLiquidityUsd,
+                turnoverRatio,
+                dexTrades: {
+                    h1: aggregateTrades('h1'),
+                    h6: aggregateTrades('h6'),
+                    h24: aggregateTrades('h24'),
+                },
+                dexPriceStats,
             },
-            dexPriceStats,
         };
-    } catch {
-        return token;
+    } catch (error) {
+        return { status: 'failed', data: token, error: errorMessage(error) };
     }
 }
 
@@ -1153,62 +553,54 @@ export function pickPrimaryToken(searchResults: TokenSearchResult[], query: stri
 }
 
 async function buildContractSearchResults(query: string) {
-    try {
-        const universe = await fetchBinanceContractUniverse();
-        const officialUniverse = await fetchBinanceAlphaUniverse().catch(() => []);
-        if (isAddressLikeQuery(query)) {
-            const directOfficialMatches = matchOfficialAlphaTokenByAddress(officialUniverse, query).map(mapAlphaTokenToSearchResult);
-            if (directOfficialMatches.length > 0) {
-                return filterAndSortSearchResults(directOfficialMatches, 0);
-            }
-
-            return enrichSearchResultsWithHolderCounts(await searchTokens(query));
+    const universe = await fetchBinanceContractUniverse();
+    const officialUniverse = await fetchBinanceAlphaUniverse().catch(() => []);
+    if (isAddressLikeQuery(query)) {
+        const directOfficialMatches = matchOfficialAlphaTokenByAddress(officialUniverse, query).map(mapAlphaTokenToSearchResult);
+        if (directOfficialMatches.length > 0) {
+            return filterAndSortSearchResults(directOfficialMatches, 0);
         }
 
-        const terms = tokenizeSearchInput(query);
-        const fuzzyMatches = universe.filter((item) => terms.some((term) => normalizeAssetTerm(item.baseAsset).includes(term)));
-        const matches = universe.filter((item) => {
-            const base = normalizeAssetTerm(item.baseAsset);
-            const symbol = normalizeAssetTerm(item.symbol);
-            return terms.some((term) => base === term || symbol === term || base.includes(term));
-        });
-
-        const matchedAssets: string[] = (matches.length > 0 ? matches : fuzzyMatches.slice(0, 6)).map((item) => item.baseAsset);
-        const officialMatches = matchOfficialAlphaTokens(officialUniverse, matchedAssets, query);
-        if (officialMatches.length > 0) {
-            const officialCandidates = filterAndSortSearchResults(
-                officialMatches
-                    .map(mapAlphaTokenToSearchResult)
-                    .filter(isSupportedOnchainToken),
-                0
-            );
-            if (officialCandidates.length > 0) {
-                return officialCandidates;
-            }
-        }
-
-        const searchTerms: string[] = Array.from(new Set(matchedAssets.flatMap((asset) => tokenizeSearchInput(asset))));
-        const rawResults = await searchByTerms(searchTerms.length > 0 ? searchTerms.slice(0, 6) : [query]);
-        const enriched = await enrichSearchResultsWithHolderCounts(rawResults);
-        return buildCandidateTokenResults(enriched.length > 0 ? enriched : rawResults, matchedAssets, query).slice(0, 5);
-    } catch {
-        return [];
+        return enrichSearchResultsWithHolderCounts(await searchTokens(query));
     }
+
+    const terms = tokenizeSearchInput(query);
+    const fuzzyMatches = universe.filter((item) => terms.some((term) => normalizeAssetTerm(item.baseAsset).includes(term)));
+    const matches = universe.filter((item) => {
+        const base = normalizeAssetTerm(item.baseAsset);
+        const symbol = normalizeAssetTerm(item.symbol);
+        return terms.some((term) => base === term || symbol === term || base.includes(term));
+    });
+
+    const matchedAssets: string[] = (matches.length > 0 ? matches : fuzzyMatches.slice(0, 6)).map((item) => item.baseAsset);
+    const officialMatches = matchOfficialAlphaTokens(officialUniverse, matchedAssets, query);
+    if (officialMatches.length > 0) {
+        const officialCandidates = filterAndSortSearchResults(
+            officialMatches
+                .map(mapAlphaTokenToSearchResult)
+                .filter(isSupportedOnchainToken),
+            0
+        );
+        if (officialCandidates.length > 0) {
+            return officialCandidates;
+        }
+    }
+
+    const searchTerms: string[] = Array.from(new Set(matchedAssets.flatMap((asset) => tokenizeSearchInput(asset))));
+    const rawResults = await searchByTerms(searchTerms.length > 0 ? searchTerms.slice(0, 6) : [query]);
+    const enriched = await enrichSearchResultsWithHolderCounts(rawResults);
+    return buildCandidateTokenResults(enriched.length > 0 ? enriched : rawResults, matchedAssets, query).slice(0, 5);
 }
 
 async function buildAlphaSearchResults(query: string) {
-    try {
-        const universe = await fetchBinanceAlphaUniverse();
-        const matched = isAddressLikeQuery(query)
-            ? matchOfficialAlphaTokenByAddress(universe, query)
-            : matchOfficialAlphaTokens(universe, [query], query);
-        const mapped = matched.map(mapAlphaTokenToSearchResult);
+    const universe = await fetchBinanceAlphaUniverse();
+    const matched = isAddressLikeQuery(query)
+        ? matchOfficialAlphaTokenByAddress(universe, query)
+        : matchOfficialAlphaTokens(universe, [query], query);
+    const mapped = matched.map(mapAlphaTokenToSearchResult);
 
-        const filtered = filterAndSortSearchResults(mapped);
-        return filtered.length > 0 ? filtered : filterAndSortSearchResults(mapped, 0);
-    } catch {
-        return [];
-    }
+    const filtered = filterAndSortSearchResults(mapped);
+    return filtered.length > 0 ? filtered : filterAndSortSearchResults(mapped, 0);
 }
 
 async function fetchMetrics(token: TokenSearchResult): Promise<TokenHolderMetrics> {
@@ -1315,7 +707,7 @@ function fallbackPayload(
     query: string,
     scope: OnchainSearchScope,
     reason: OnchainFallbackReason,
-    overrides?: Partial<Pick<TokenResearchPayload, 'searchResults' | 'selectedToken' | 'notes'>>
+    overrides?: Partial<Pick<TokenResearchPayload, 'searchResults' | 'selectedToken' | 'notes' | 'sourceStatuses'>>
 ): TokenResearchPayload {
     const selectedToken = overrides?.selectedToken ?? null;
     const searchResults = overrides?.searchResults ?? (selectedToken ? [selectedToken] : []);
@@ -1370,6 +762,7 @@ function fallbackPayload(
         sourceMode: 'fallback',
         mappingStatus: 'unavailable',
         fallbackReason: reason,
+        sourceStatuses: overrides?.sourceStatuses ?? buildFallbackSourceStatuses(reason),
         identityResolution,
         identity,
         eligibility,
@@ -1440,7 +833,8 @@ export async function buildTokenResearchPayload(
         if (!selectedToken) {
             return fallbackPayload(query, scope, scope === 'contracts' ? 'data_source_unconfirmed' : 'no_search_results', { searchResults });
         }
-        const selectedTokenWithDex = await hydrateDexDetails(selectedToken);
+        const dexSource = await hydrateDexDetails(selectedToken);
+        const selectedTokenWithDex = dexSource.data;
         const mappingStatus = resolveOnchainMappingStatus(scope, selectedTokenWithDex);
         const identityResolution = buildTokenIdentityResolution({
             token: selectedTokenWithDex,
@@ -1460,34 +854,44 @@ export async function buildTokenResearchPayload(
             });
         }
 
-        const [metricsResult, historicalResult, topHolders] = await Promise.all([
-            fetchMetrics(selectedTokenWithDex).catch((error) => {
+        const [metricsSource, historySource, topHoldersSource] = await Promise.all([
+            fetchMetrics(selectedTokenWithDex).then(
+                (data) => ({ status: 'ok' as const, data }),
+                (error: unknown) => {
                 logger.error('Failed to fetch onchain holder metrics', error as Error, {
                     query: normalizedQuery,
                     chainId: selectedTokenWithDex.chainId,
                     tokenAddress: selectedTokenWithDex.tokenAddress,
                 });
-                return null;
+                return { status: 'failed' as const, data: null, error: error instanceof Error ? error.message : String(error) };
             }),
-            fetchHistorical(selectedTokenWithDex).catch((error) => {
+            fetchHistorical(selectedTokenWithDex).then(
+                (data) => settleOnchainSource(data),
+                (error: unknown) => {
                 logger.warn('Failed to fetch onchain holder history', {
                     query: normalizedQuery,
                     chainId: selectedTokenWithDex.chainId,
                     tokenAddress: selectedTokenWithDex.tokenAddress,
                     error: error instanceof Error ? error.message : String(error),
                 });
-                return null;
+                return settleOnchainSource<HistoricalHoldersPoint[]>([], error);
             }),
-            fetchTopHolders(selectedTokenWithDex).catch((error) => {
+            fetchTopHolders(selectedTokenWithDex).then(
+                (data) => settleOnchainSource(data),
+                (error: unknown) => {
                 logger.warn('Failed to fetch onchain top holders', {
                     query: normalizedQuery,
                     chainId: selectedTokenWithDex.chainId,
                     tokenAddress: selectedTokenWithDex.tokenAddress,
                     error: error instanceof Error ? error.message : String(error),
                 });
-                return [];
+                return settleOnchainSource<TopHolderItem[]>([], error);
             }),
         ]);
+
+        const metricsResult = metricsSource.data;
+        const historical = historySource.data;
+        const topHolders = topHoldersSource.data;
 
         if (!metricsResult) {
             return fallbackPayload(query, scope, 'metrics_unavailable', {
@@ -1497,10 +901,21 @@ export async function buildTokenResearchPayload(
                     `已锁定主地址 ${selectedTokenWithDex.symbol}（${selectedTokenWithDex.chainName}），但这次没有拿到 holder metrics。`,
                     '页面会保留候选地址与市场快照，不再伪造筹码结构和 Top holders 数据。',
                 ],
+                sourceStatuses: {
+                    dex: sourceStateOf(dexSource),
+                    metrics: { status: 'failed', ...('error' in metricsSource && typeof metricsSource.error === 'string' ? { error: metricsSource.error } : {}) },
+                    history: {
+                        status: historySource.status,
+                        ...(historySource.error ? { error: historySource.error } : {}),
+                    },
+                    topHolders: {
+                        status: topHoldersSource.status,
+                        ...(topHoldersSource.error ? { error: topHoldersSource.error } : {}),
+                    },
+                },
             });
         }
 
-        const historical = historicalResult ?? [];
         const dataQuality = buildOnchainDataQuality(metricsResult, historical, topHolders);
         const rawHolderConcentration = buildHolderConcentration(topHolders);
         const supplyBreakdown = buildSupplyBreakdown({
@@ -1532,7 +947,7 @@ export async function buildTokenResearchPayload(
                 ? '候选结果不是官方确认地址，请结合合约地址、链、成交池和项目公告二次确认。'
                 : `候选结果已按持币地址数从高到低排序，并优先过滤掉持币地址少于 ${MIN_HOLDER_COUNT} 的低相关币。`,
         ];
-        if (!historicalResult) {
+        if (historySource.status === 'failed') {
             notes.push('历史持币数据加载失败，当前仅显示最新快照。');
         }
 
@@ -1542,6 +957,17 @@ export async function buildTokenResearchPayload(
             scope,
             sourceMode: 'hybrid',
             mappingStatus,
+            sourceStatuses: {
+                dex: sourceStateOf(dexSource),
+                metrics: {
+                    status: metricsSource.status,
+                    ...('error' in metricsSource && typeof metricsSource.error === 'string'
+                        ? { error: metricsSource.error }
+                        : {}),
+                },
+                history: { status: historySource.status, ...(historySource.error ? { error: historySource.error } : {}) },
+                topHolders: { status: topHoldersSource.status, ...(topHoldersSource.error ? { error: topHoldersSource.error } : {}) },
+            },
             identityResolution,
             identity,
             eligibility,

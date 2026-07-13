@@ -3,7 +3,7 @@ import type { SentimentHotspotContext } from './sentimentHotspot.ts';
 export type WeiShenSignalGrade = 'A' | 'B' | 'C';
 export type WeiShenExecutionMode = 'trade' | 'observe';
 export type WeiShenEntryType = 'breakout' | 'pullback';
-export type WeiShenMarketRegimeState = 'bull-trend' | 'bear-trend' | 'range' | 'risk-off';
+type WeiShenMarketRegimeState = 'bull-trend' | 'bear-trend' | 'range' | 'risk-off';
 
 export interface WeiShenDirectionalCandidate {
     eligible: boolean;
@@ -17,7 +17,7 @@ export interface WeiShenDirectionalCandidate {
     suggestedRiskPct: number;
 }
 
-export interface WeiShenDirectionalCandidates {
+interface WeiShenDirectionalCandidates {
     long: WeiShenDirectionalCandidate;
     short: WeiShenDirectionalCandidate;
 }
@@ -32,7 +32,7 @@ export interface WeiShenMarketRegimeContext {
     failed: string[];
 }
 
-export interface WeiShenRelativeStrengthContext {
+interface WeiShenRelativeStrengthContext {
     passed: boolean;
     reasons: string[];
     slope1h: number;

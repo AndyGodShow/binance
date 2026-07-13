@@ -9,6 +9,8 @@ const DEFAULT_BASE_URL = process.env.BASE_URL || 'http://127.0.0.1:3000';
 const DEFAULT_TIMEOUT_MS = Number.parseInt(process.env.API_SMOKE_TIMEOUT_MS || '25000', 10);
 const DEFAULT_SYMBOL = process.env.API_SMOKE_SYMBOL || process.env.SYMBOL || 'BTCUSDT';
 const DEFAULT_KEYWORD = process.env.API_SMOKE_KEYWORD || 'PEPE';
+const DATA_DOWNLOAD_TOKEN = process.env.API_SMOKE_DATA_DOWNLOAD_TOKEN || process.env.DATA_DOWNLOAD_TOKEN || '';
+const REQUIRE_MARKET_READY = process.env.API_SMOKE_REQUIRE_MARKET_READY === '1';
 
 function parseEndpointFilter() {
     const raw = process.env.API_SMOKE_ENDPOINTS;
@@ -22,12 +24,12 @@ function parseEndpointFilter() {
         .filter(Boolean);
 }
 
-async function fetchJsonWithTimeout(url, timeoutMs) {
+async function fetchJsonWithTimeout(url, timeoutMs, headers = undefined) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
-        const response = await fetch(url, { signal: controller.signal });
+        const response = await fetch(url, { signal: controller.signal, headers });
         const text = await response.text();
         let json = null;
 
@@ -53,14 +55,26 @@ async function verifyEndpoint(baseUrl, endpoint, timeoutMs) {
     const url = new URL(endpoint.path, baseUrl).toString();
 
     try {
-        const response = await fetchJsonWithTimeout(url, timeoutMs);
+        const headers = endpoint.name === 'data-download-coverage' && DATA_DOWNLOAD_TOKEN
+            ? { Authorization: `Bearer ${DATA_DOWNLOAD_TOKEN}` }
+            : undefined;
+        const response = await fetchJsonWithTimeout(url, timeoutMs, headers);
         const durationMs = Date.now() - startedAt;
 
-        if (!response.ok) {
+        const allowedNotReady = endpoint.name === 'market-health'
+            && endpoint.allowNotReady
+            && !REQUIRE_MARKET_READY
+            && response.status === 503;
+        if (!response.ok && !allowedNotReady) {
             throw new Error(`HTTP ${response.status}: ${response.text.slice(0, 160)}`);
         }
 
         validatePayload(endpoint, response.json);
+        if (endpoint.name === 'market-health' && REQUIRE_MARKET_READY) {
+            if (response.json.ready !== true || response.json.dataQuality !== 'enriched' || response.json.buildState !== 'ready') {
+                throw new Error(`market-health is not production ready: ${JSON.stringify(response.json)}`);
+            }
+        }
 
         return {
             name: endpoint.name,

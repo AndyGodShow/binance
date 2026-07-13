@@ -22,6 +22,7 @@ import { calculateVolumeProfile } from '@/lib/volumeProfile';
 import { logger } from '@/lib/logger';
 import { klineCache } from '@/lib/cache';
 import { APP_CONFIG } from '@/lib/config';
+import { readBinanceEnv } from '@/lib/env';
 import {
     classifyBinanceFailureKind,
     createBinanceFailureLogLimiter,
@@ -56,6 +57,7 @@ const klineFetchFailureLogLimiter = createBinanceFailureLogLimiter(1, 60_000);
 
 interface FetchKlinesOptions {
     cache?: boolean;
+    signal?: AbortSignal;
 }
 
 function isBinanceKline(value: unknown): value is BinanceKline {
@@ -72,7 +74,7 @@ function isBinanceKline(value: unknown): value is BinanceKline {
 /**
  * 获取 K 线数据
  */
-export async function fetchKlines(
+async function fetchKlines(
     symbol: string,
     interval: string = '15m',
     limit: number = 50,
@@ -85,7 +87,7 @@ export async function fetchKlines(
     // 尝试从缓存获取
     const cached = useCache ? klineCache.get(cacheKey) as OHLC[] | undefined : undefined;
     if (cached) {
-        if (process.env.DEBUG_KLINE_CACHE === '1') {
+        if (readBinanceEnv().debugKlineCache) {
             logger.debug(`Klines cache hit for ${symbol}`);
         }
         return cached;
@@ -96,7 +98,8 @@ export async function fetchKlines(
             `/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`,
             {
                 revalidate: APP_CONFIG.API.REVALIDATE_MARKET,
-                timeoutMs: APP_CONFIG.API.RETRY_MAX_DELAY
+                timeoutMs: APP_CONFIG.API.RETRY_MAX_DELAY,
+                init: { signal: options.signal },
             }
         );
 
@@ -199,6 +202,7 @@ export async function fetchKlinesBatch(
 
     // 分批处理，避免过多并发请求
     for (let i = 0; i < symbols.length; i += batchSize) {
+        options.signal?.throwIfAborted();
         const batch = symbols.slice(i, i + batchSize);
         const results = await Promise.allSettled(
             batch.map(symbol => fetchKlines(symbol, interval, limit, options))
@@ -212,7 +216,13 @@ export async function fetchKlinesBatch(
 
         // 稍微延迟，避免触发限频
         if (i + batchSize < symbols.length) {
-            await new Promise(resolve => setTimeout(resolve, APP_CONFIG.API.BATCH_DELAY));
+            await new Promise<void>((resolve, reject) => {
+                const timeout = setTimeout(resolve, APP_CONFIG.API.BATCH_DELAY);
+                options.signal?.addEventListener('abort', () => {
+                    clearTimeout(timeout);
+                    reject(options.signal?.reason ?? new Error('Kline batch aborted'));
+                }, { once: true });
+            });
         }
     }
 
@@ -475,7 +485,7 @@ export function enhanceTickerData(
 let btcReturnsCache: { data: number[]; timestamp: number } | null = null;
 const BTC_CACHE_TTL = 5 * 60 * 1000; // 5 分钟缓存
 
-export async function getBTCReturns(): Promise<number[]> {
+export async function getBTCReturns(signal?: AbortSignal): Promise<number[]> {
     const now = Date.now();
 
     // 使用缓存
@@ -484,7 +494,7 @@ export async function getBTCReturns(): Promise<number[]> {
     }
 
     try {
-        const klines = await fetchKlines('BTCUSDT', '15m', 100);
+        const klines = await fetchKlines('BTCUSDT', '15m', 100, { signal });
         if (klines.length > 0) {
             const closePrices = extractClosePrices(klines);
             const returns = calculateReturns(closePrices);

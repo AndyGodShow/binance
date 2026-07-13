@@ -3,222 +3,41 @@ import type { TickerData } from './types.ts';
 import type { RiskManagement } from './risk/types.ts';
 import { TechnicalIndicators } from './technicalIndicators.ts';
 import { BacktestExecutionProvider } from './backtestExecutionProvider.ts';
-import { calculateEMA } from './indicators.ts';
 import {
     adaptKlinesToBacktestDataSlice,
     type FundingPoint,
     type MarketBar,
 } from './backtestDataAdapter.ts';
+import { calculateBacktestMetrics } from './backtestMetrics.ts';
 
 /**
  * 回测结果接口
  */
-export interface BacktestResult {
-    // 基本信息
-    symbol: string;
-    interval: string;
-    executionInterval: string;
-    strategyName: string;
-    startTime: number;
-    endTime: number;
-    totalBars: number;
-    executionBarsProcessed: number;
+export type {
+    BacktestConfig,
+    BacktestResult,
+    EquityPoint,
+    Trade,
+} from './backtestEngineTypes.ts';
+import type {
+    BacktestConfig,
+    BacktestPosition,
+    BacktestResult,
+    EquityPoint,
+    PendingBacktestEntry,
+    StrategyResult,
+    Trade,
+    TradeSettlement,
+} from './backtestEngineTypes.ts';
 
-    // 交易统计
-    totalTrades: number;
-    winningTrades: number;
-    losingTrades: number;
-    winRate: number; // 胜率 (%)
 
-    // 盈亏统计
-    totalProfit: number; // 总盈亏 (%)
-    totalProfitUSDT: number; // 总盈亏 (USDT)
-    averageProfit: number; // 平均盈亏 (%)
-    averageWin: number; // 平均盈利 (%)
-    averageLoss: number; // 平均亏损 (%)
-    largestWin: number; // 最大盈利 (%)
-    largestLoss: number; // 最大亏损 (%)
 
-    // 风险指标
-    maxDrawdown: number; // 最大回撤 (%)
-    sharpeRatio: number; // 夏普比率
-    profitFactor: number; // 盈亏比，无亏损单时为 Infinity
-    sortinoRatio: number; // Sortino比率 (只考虑下行波动)
-    calmarRatio: number; // Calmar比率 (收益/最大回撤)
-    expectancy: number; // 期望值 (每笔交易的平均收益)
-    recoveryFactor: number; // 恢复因子 (净利润/最大回撤)
-    maxConsecutiveWins: number; // 最大连续盈利次数
-    maxConsecutiveLosses: number; // 最大连续亏损次数
-    currentStreak: { type: 'win' | 'loss'; count: number }; // 当前连续状态
+import {
+    isMoreProtectiveStop,
+    computeDynamicTrailStop,
+} from './backtestExecutionMath.ts';
 
-    // 持仓统计
-    averageHoldingTime: number; // 平均持仓时间(毫秒)
-    maxHoldingTime: number; // 最大持仓时间(毫秒)
-    minHoldingTime: number; // 最小持仓时间(毫秒)
 
-    // 详细交易记录
-    trades: Trade[];
-    tradeLegs: Trade[];
-
-    // 资金曲线
-    equityCurve: EquityPoint[];
-}
-
-/**
- * 单次交易记录
- */
-export interface Trade {
-    symbol?: string;
-    entryTime: number;
-    exitTime: number;
-    entryPrice: number;
-    exitPrice: number;
-    direction: 'long' | 'short';
-    size: number; // 仓位比例 (0-1)
-    profit: number; // 盈亏 (%)
-    profitUSDT: number; // 盈亏 (USDT)
-    qty?: number;
-    margin?: number;
-    notional?: number;
-    fee?: number;
-    slippageCost?: number;
-    funding?: number;
-    pnl?: number;
-    pnlPct?: number;
-    holdingTime: number; // 持仓时间(毫秒)
-    exitReason: 'stop_loss' | 'take_profit' | 'signal' | 'end_of_data' | 'time_stop';
-    strategyRiskPct?: number;
-    plannedPositionPct?: number;
-    stopLossPct?: number;
-}
-
-/**
- * 资金曲线点
- */
-export interface EquityPoint {
-    time: number;
-    equity: number; // 权益 (%)
-    drawdown: number; // 回撤 (%)
-}
-
-/**
- * 回测配置
- */
-export interface BacktestConfig {
-    initialCapital: number; // 初始资金
-    commission: number; // 手续费 (%)
-    slippage: number; // 滑点 (%)
-    useStrategyRiskManagement?: boolean; // 是否使用策略自带的风控参数
-}
-
-/**
- * 策略返回结果
- */
-export interface StrategyResult {
-    signal: 'long' | 'short' | null;
-    confidence: number;
-    risk?: RiskManagement; // 策略携带的风控信息
-}
-
-interface TradeSettlement {
-    capitalReturned: number;
-    profitUSDT: number;
-}
-
-interface BacktestPosition {
-    direction: 'long' | 'short';
-    entryPrice: number;
-    entryTime: number;
-    entryCapital: number;
-    margin: number;
-    notional: number;
-    qty: number;
-    leverage: number;
-    accruedFunding: number;
-    signalEntryTime: number;
-    entryIndex: number;
-    risk?: RiskManagement;
-    highestPrice: number;
-    lowestPrice: number;
-    initialSize: number;
-    remainingSize: number;
-    hitTargetIndices: number[];
-    executionHistory: MarketBar[];
-}
-
-interface PendingBacktestEntry {
-    direction: 'long' | 'short';
-    signalTime: number;
-    risk?: RiskManagement;
-}
-
-function isMoreProtectiveStop(
-    direction: 'long' | 'short',
-    candidateStop: number,
-    currentStop: number
-): boolean {
-    return direction === 'long'
-        ? candidateStop > currentStop
-        : candidateStop < currentStop;
-}
-
-function toExecutionHistoryOHLC(bars: MarketBar[]) {
-    return bars.map((bar) => ({
-        time: bar.time,
-        open: bar.open,
-        high: bar.high,
-        low: bar.low,
-        close: bar.close,
-        volume: bar.volume,
-    }));
-}
-
-function computeDonchianMid(bars: MarketBar[], lookback: number): number | null {
-    if (lookback <= 0 || bars.length < lookback) {
-        return null;
-    }
-
-    const window = bars.slice(Math.max(0, bars.length - lookback));
-    if (window.length === 0) {
-        return null;
-    }
-
-    const highestHigh = Math.max(...window.map((bar) => bar.high));
-    const lowestLow = Math.min(...window.map((bar) => bar.low));
-    if (!Number.isFinite(highestHigh) || !Number.isFinite(lowestLow)) {
-        return null;
-    }
-
-    return (highestHigh + lowestLow) / 2;
-}
-
-function computeDynamicTrailStop(
-    direction: 'long' | 'short',
-    history: MarketBar[],
-    risk: RiskManagement,
-): number | null {
-    const dynamicExit = risk.dynamicExit;
-    if (!dynamicExit?.enabled) {
-        return null;
-    }
-
-    const ohlcHistory = toExecutionHistoryOHLC(history);
-    const emaSeries = calculateEMA(
-        ohlcHistory.map((bar) => bar.close),
-        dynamicExit.emaPeriod,
-    );
-    const emaValue = emaSeries.length > 0 ? emaSeries[emaSeries.length - 1] : null;
-    const donchianMid = computeDonchianMid(history, dynamicExit.donchianLookback);
-    const candidates = [emaValue, donchianMid].filter((value): value is number => Number.isFinite(value));
-
-    if (candidates.length === 0) {
-        return null;
-    }
-
-    return direction === 'long'
-        ? Math.max(...candidates)
-        : Math.min(...candidates);
-}
 
 export interface BacktestRunInput {
     signalKlines: KlineData[];
@@ -234,7 +53,7 @@ export interface BacktestRunInput {
 /**
  * 策略检测函数类型
  */
-export type StrategyDetector = (ticker: TickerData) => StrategyResult | null;
+type StrategyDetector = (ticker: TickerData) => StrategyResult | null;
 
 /**
  * 回测引擎类
@@ -1147,6 +966,7 @@ export class BacktestEngine {
      * 计算回测指标
      */
     private calculateMetrics(
+
         trades: Trade[],
         tradeLegs: Trade[],
         equityCurve: EquityPoint[],
@@ -1160,114 +980,12 @@ export class BacktestEngine {
         totalBars: number,
         executionBarsProcessed: number
     ): BacktestResult {
-        const totalTrades = trades.length;
-        const winningTrades = trades.filter(t => t.profit > 0).length;
-        const losingTrades = trades.filter(t => t.profit < 0).length;
-        const winRate = totalTrades > 0 ? (winningTrades / totalTrades) * 100 : 0;
-
-        const endingEquity = equityCurve[equityCurve.length - 1]?.equity ?? 100;
-        const totalProfit = endingEquity - 100;
-        const totalProfitUSDT = this.config.initialCapital * (totalProfit / 100);
-        const averageProfit = totalTrades > 0
-            ? trades.reduce((sum, trade) => sum + trade.profit, 0) / totalTrades
-            : 0;
-
-        const wins = trades.filter(t => t.profit > 0);
-        const losses = trades.filter(t => t.profit < 0);
-        const averageWin = wins.length > 0 ? wins.reduce((sum, t) => sum + t.profit, 0) / wins.length : 0;
-        const averageLoss = losses.length > 0 ? losses.reduce((sum, t) => sum + t.profit, 0) / losses.length : 0;
-
-        const largestWin = wins.length > 0 ? Math.max(...wins.map(t => t.profit)) : 0;
-        const largestLoss = losses.length > 0 ? Math.min(...losses.map(t => t.profit)) : 0;
-
-        const totalWin = wins.reduce((sum, t) => sum + t.profitUSDT, 0);
-        const totalLoss = Math.abs(losses.reduce((sum, t) => sum + t.profitUSDT, 0));
-        const profitFactor = totalLoss > 0
-            ? totalWin / totalLoss
-            : totalWin > 0
-                ? Number.POSITIVE_INFINITY
-                : 0;
-
-        const intervalMs = this.getIntervalMs(interval);
-        const yearMs = 365.25 * 24 * 60 * 60 * 1000;
-        const barsPerYear = intervalMs ? yearMs / intervalMs : 365.25;
-        const equityReturns = equityCurve.slice(1)
-            .map((point, index) => {
-                const previous = equityCurve[index]?.equity ?? 100;
-                return previous > 0 ? (point.equity - previous) / previous : 0;
-            })
-            .filter((value) => Number.isFinite(value));
-        const avgReturn = equityReturns.length > 0
-            ? equityReturns.reduce((sum, value) => sum + value, 0) / equityReturns.length
-            : 0;
-        const variance = equityReturns.length > 0
-            ? equityReturns.reduce((sum, value) => sum + Math.pow(value - avgReturn, 2), 0) / equityReturns.length
-            : 0;
-        const stdDev = Math.sqrt(variance);
-        const sharpeRatio = stdDev > 0 ? (avgReturn / stdDev) * Math.sqrt(barsPerYear) : 0;
-
-        // 持仓时间统计
-        const holdingTimes = trades.map(t => t.holdingTime);
-        const averageHoldingTime = holdingTimes.length > 0 ? holdingTimes.reduce((a, b) => a + b, 0) / holdingTimes.length : 0;
-        const maxHoldingTime = holdingTimes.length > 0 ? Math.max(...holdingTimes) : 0;
-        const minHoldingTime = holdingTimes.length > 0 ? Math.min(...holdingTimes) : 0;
-
-        // 🔥 新增风险指标计算
-
-        // 1. Sortino比率 (只考虑下行波动)
-        const downsideReturns = equityReturns.filter(r => r < 0);
-        const downsideVariance = downsideReturns.length > 0
-            ? downsideReturns.reduce((sum, value) => sum + Math.pow(value, 2), 0) / downsideReturns.length
-            : 0;
-        const downsideDeviation = Math.sqrt(downsideVariance);
-        const sortinoRatio = downsideDeviation > 0 ? (avgReturn / downsideDeviation) * Math.sqrt(barsPerYear) : 0;
-
-        const durationMs = Math.max(1, endTime - startTime);
-        const annualizedReturn = endingEquity > 0
-            ? Math.pow(endingEquity / 100, yearMs / durationMs) - 1
-            : -1;
-        const maxDrawdownDecimal = maxDrawdown / 100;
-        const calmarRatio = maxDrawdownDecimal > 0 ? annualizedReturn / maxDrawdownDecimal : 0;
-
-        const expectancy = totalTrades > 0
-            ? (winRate / 100) * averageWin + ((100 - winRate) / 100) * averageLoss
-            : 0;
-
-        const recoveryFactor = maxDrawdown > 0 ? totalProfit / maxDrawdown : 0;
-
-        let maxConsecutiveWins = 0;
-        let maxConsecutiveLosses = 0;
-        let currentStreak = { type: 'win' as 'win' | 'loss', count: 0 };
-        let tempWinStreak = 0;
-        let tempLossStreak = 0;
-
-        trades.forEach(trade => {
-            if (trade.profit > 0) {
-                tempWinStreak++;
-                tempLossStreak = 0;
-                if (tempWinStreak > maxConsecutiveWins) {
-                    maxConsecutiveWins = tempWinStreak;
-                }
-            } else if (trade.profit < 0) {
-                tempLossStreak++;
-                tempWinStreak = 0;
-                if (tempLossStreak > maxConsecutiveLosses) {
-                    maxConsecutiveLosses = tempLossStreak;
-                }
-            }
-        });
-
-        // 记录当前连续状态
-        if (trades.length > 0) {
-            const lastTrade = trades[trades.length - 1];
-            if (lastTrade.profit > 0) {
-                currentStreak = { type: 'win', count: tempWinStreak };
-            } else {
-                currentStreak = { type: 'loss', count: tempLossStreak };
-            }
-        }
-
-        return {
+        return calculateBacktestMetrics(
+            this.config.initialCapital,
+            trades,
+            tradeLegs,
+            equityCurve,
+            maxDrawdown,
             symbol,
             interval,
             executionInterval,
@@ -1275,34 +993,7 @@ export class BacktestEngine {
             startTime,
             endTime,
             totalBars,
-            executionBarsProcessed,
-            totalTrades,
-            winningTrades,
-            losingTrades,
-            winRate,
-            totalProfit,
-            totalProfitUSDT,
-            averageProfit,
-            averageWin,
-            averageLoss,
-            largestWin,
-            largestLoss,
-            maxDrawdown,
-            sharpeRatio,
-            profitFactor,
-            sortinoRatio,
-            calmarRatio,
-            expectancy,
-            recoveryFactor,
-            maxConsecutiveWins,
-            maxConsecutiveLosses,
-            currentStreak,
-            averageHoldingTime,
-            maxHoldingTime,
-            minHoldingTime,
-            trades,
-            tradeLegs,
-            equityCurve,
-        };
+            executionBarsProcessed
+        );
     }
 }

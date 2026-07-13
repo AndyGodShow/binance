@@ -119,7 +119,7 @@ export type SortableKey = keyof TickerData | 'openInterestValue' | 'rank';
 
 export type LeaderboardWindow = '15m' | '1h' | '4h' | '24h';
 
-export interface OpenInterestWindowChange {
+interface OpenInterestWindowChange {
     percent: number;
     value: number;
 }

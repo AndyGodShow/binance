@@ -50,7 +50,7 @@ export interface PortfolioBacktestResult {
     diagnostics?: PortfolioBacktestDiagnostics;
 }
 
-export type PortfolioSkipReason =
+type PortfolioSkipReason =
     | 'sameSymbolOpen'
     | 'maxConcurrentPositions'
     | 'maxDrawdown'
@@ -59,7 +59,7 @@ export type PortfolioSkipReason =
     | 'weiShenClusterRisk'
     | 'insufficientCash';
 
-export interface PortfolioBacktestDiagnostics {
+interface PortfolioBacktestDiagnostics {
     skipReasons: Partial<Record<PortfolioSkipReason, number>>;
 }
 

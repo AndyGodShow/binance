@@ -36,7 +36,7 @@ export interface StrategyRiskConfig {
     historicalAvgLoss: number;   // 平均亏损%
 }
 
-export function resolveRiskConfigStrategyId(strategyId: string): string {
+function resolveRiskConfigStrategyId(strategyId: string): string {
     if (strategyId === 'rsrs-trend') {
         return 'rsrs';
     }
@@ -52,7 +52,7 @@ export function getDefaultRiskConfig(strategyId: string): StrategyRiskConfig {
 
 // ==================== 各策略默认配置 ====================
 
-export const DEFAULT_RISK_CONFIGS: Record<string, StrategyRiskConfig> = {
+const DEFAULT_RISK_CONFIGS: Record<string, StrategyRiskConfig> = {
     // 强势突破策略
     'strong-breakout': {
         stopLoss: {

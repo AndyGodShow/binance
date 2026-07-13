@@ -124,14 +124,21 @@ async function syncKlineBatch(symbols: string[], options: Options): Promise<void
 
 async function syncAuxiliaryData(symbols: string[], options: Options): Promise<void> {
     const endDate = getTodayUtcDate();
+    const incomplete: string[] = [];
 
     for (const symbol of symbols) {
         if (options.includeFundingRate) {
-            await dataCollector.downloadData(symbol, 'fundingRate', options.auxStartDate, endDate);
+            const result = await dataCollector.downloadData(symbol, 'fundingRate', options.auxStartDate, endDate);
+            if (result.status !== 'success') incomplete.push(`${symbol}:fundingRate:${result.status}`);
         }
         if (options.includeMetrics) {
-            await dataCollector.downloadData(symbol, 'metrics', options.auxStartDate, endDate);
+            const result = await dataCollector.downloadData(symbol, 'metrics', options.auxStartDate, endDate);
+            if (result.status !== 'success') incomplete.push(`${symbol}:metrics:${result.status}`);
         }
+    }
+
+    if (incomplete.length > 0) {
+        throw new Error(`Auxiliary data sync incomplete: ${incomplete.join(', ')}`);
     }
 }
 

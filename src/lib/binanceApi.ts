@@ -1,6 +1,7 @@
 import { request as httpsRequest } from 'node:https';
 
 import { logger } from './logger.ts';
+import { readBinanceEnv } from './env.ts';
 
 const DEFAULT_BINANCE_FAPI_BASES = [
     'https://fapi.binance.com',
@@ -13,10 +14,7 @@ const DEFAULT_BINANCE_DATA_API_BASES = [
     'https://data-api.binance.vision',
 ];
 
-const ENV_BINANCE_FAPI_BASES = (process.env.BINANCE_FAPI_BASES || '')
-    .split(',')
-    .map(s => s.trim())
-    .filter(Boolean);
+const ENV_BINANCE_FAPI_BASES = readBinanceEnv().binanceFapiBases;
 
 const BINANCE_FAPI_BASES = ENV_BINANCE_FAPI_BASES.length > 0
     ? ENV_BINANCE_FAPI_BASES
@@ -440,16 +438,6 @@ function getCandidateBases(path: string): string[] {
     return supportsDataApi
         ? [...DEFAULT_BINANCE_DATA_API_BASES, ...DEFAULT_BINANCE_FAPI_BASES]
         : DEFAULT_BINANCE_FAPI_BASES;
-}
-
-export async function fetchBinance(path: string, options: BinanceFetchOptions = {}): Promise<Response> {
-    return runMirroredRequest(path, options, 'response', async (url, init) => {
-        const response = await fetch(url, init);
-        if (!response.ok) {
-            throw new Error(`${url} -> HTTP ${response.status}`);
-        }
-        return response;
-    });
 }
 
 export async function fetchBinanceJson<T>(path: string, options: BinanceFetchOptions = {}): Promise<T> {

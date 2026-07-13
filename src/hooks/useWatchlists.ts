@@ -83,6 +83,7 @@ export function useWatchlists() {
 
     return {
         state,
+        storageReady,
         watchlists: state.watchlists,
         activeWatchlist,
         addWatchlist,

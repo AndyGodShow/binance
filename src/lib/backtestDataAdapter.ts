@@ -1,6 +1,6 @@
 import type { KlineData } from '../app/api/backtest/klines/route.ts';
 
-export type BacktestAuxiliaryQuality = 'exact' | 'forward-fill' | 'missing';
+type BacktestAuxiliaryQuality = 'exact' | 'forward-fill' | 'missing';
 
 export interface MarketBar {
     time: number;
@@ -18,7 +18,7 @@ export interface FundingPoint {
     quality: BacktestAuxiliaryQuality;
 }
 
-export interface OpenInterestPoint {
+interface OpenInterestPoint {
     time: number;
     openInterest: number;
     openInterestValue?: number;
@@ -26,13 +26,13 @@ export interface OpenInterestPoint {
     quality: BacktestAuxiliaryQuality;
 }
 
-export interface BacktestDataQualityWarning {
+interface BacktestDataQualityWarning {
     code: 'missing-funding' | 'missing-open-interest' | 'invalid-market-bar';
     message: string;
     count: number;
 }
 
-export interface BacktestDataQuality {
+interface BacktestDataQuality {
     totalBars: number;
     validBars: number;
     fundingCoverage: number;

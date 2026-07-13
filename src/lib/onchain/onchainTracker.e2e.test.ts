@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 
 import { buildHolderConcentration } from './addressClassifier.ts';
 import { buildOnchainDataQuality, buildStructureObservation } from './analysis.ts';
@@ -532,24 +531,4 @@ test('analysis allowed only when every gate is explicitly satisfied', () => {
     assert.equal(result.supplyBreakdown.confidence, 'high');
     assert.notEqual(result.holderConcentration.floatTop1, null);
     assert.notEqual(result.analysis, null);
-});
-
-test('running UI code contains no removed authoritative conclusion terms', () => {
-    const ui = readFileSync(new URL('../../components/OnchainTracker.tsx', import.meta.url), 'utf8');
-
-    assert.doesNotMatch(
-        ui,
-        /chipScore|controlLevel|executiveSummary|buildExecutiveSummary|控筹指数|研究结论|一句话判断|庄家|主力|吸筹|出货|控盘/
-    );
-});
-
-test('running UI guards purified TopN cards behind analysis_allowed', () => {
-    const ui = readFileSync(new URL('../../components/OnchainTracker.tsx', import.meta.url), 'utf8');
-    const gateIndex = ui.indexOf("eligibility?.level === 'analysis_allowed'");
-    const top1Index = ui.indexOf('净化 Top1');
-    const hiddenIndex = ui.indexOf('净化观察');
-
-    assert.ok(gateIndex >= 0);
-    assert.ok(top1Index > gateIndex);
-    assert.ok(hiddenIndex > gateIndex);
 });

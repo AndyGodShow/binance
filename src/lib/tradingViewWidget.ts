@@ -1,5 +1,5 @@
 export const TRADINGVIEW_WIDGET_UPSTREAM_URL = 'https://www.tradingview.com/embed-widget/advanced-chart/?locale=zh_CN';
-export const TRADINGVIEW_WIDGET_ROUTE = '/embed-widget/advanced-chart';
+const TRADINGVIEW_WIDGET_ROUTE = '/embed-widget/advanced-chart';
 
 const BLOCKED_WIDGET_HOST = 'https://www.tradingview-widget.com/';
 const ACCESSIBLE_WIDGET_HOST = 'https://www.tradingview.com/';

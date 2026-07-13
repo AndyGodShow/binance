@@ -71,14 +71,20 @@ export default function SignalCard({ signal, onDismiss, onSymbolClick }: SignalC
     return (
         <div className={`${cardStyle} ${directionColor} ${isCooling ? styles.coolingCard : ''}`}>
             <div className={styles.header}>
-                <div className={styles.symbol} onClick={() => onSymbolClick?.(signal.symbol)}>
+                <button
+                    type="button"
+                    className={styles.symbol}
+                    onClick={() => onSymbolClick?.(signal.symbol)}
+                    disabled={!onSymbolClick}
+                    aria-label={`打开 ${cleanSymbol} K 线图`}
+                >
                     {directionIcon} {cleanSymbol}
                     {signal.price && (
                         <span className={styles.price}>
                             ${formatPrice(signal.price)}
                         </span>
                     )}
-                </div>
+                </button>
                 <div className={styles.confidenceGroup}>
                     {stackBadge && <span className={styles.stackBadge}>{stackBadge}</span>}
                     <div className={styles.confidence}>{signal.confidence}分</div>
@@ -89,6 +95,7 @@ export default function SignalCard({ signal, onDismiss, onSymbolClick }: SignalC
                             onDismiss(signal);
                         }}
                         title="关闭此信号"
+                        aria-label={`关闭 ${cleanSymbol} 信号`}
                     >
                         ✕
                     </button>

@@ -1,8 +1,8 @@
-export type OnchainSourceMode = 'hybrid' | 'fallback';
+type OnchainSourceMode = 'hybrid' | 'fallback';
 export type OnchainMappingStatus = 'confirmed' | 'candidate' | 'unavailable';
 export type AddressConfidence = 'official' | 'probable' | 'fallback' | 'unverified' | 'blocked';
-export type AnalysisEligibilityLevel = 'analysis_allowed' | 'raw_only' | 'blocked';
-export type AnalysisEligibilityCategory = 'A' | 'B' | 'C';
+type AnalysisEligibilityLevel = 'analysis_allowed' | 'raw_only' | 'blocked';
+type AnalysisEligibilityCategory = 'A' | 'B' | 'C';
 export type TokenIdentitySource = 'binance_alpha' | 'dex_screener' | 'futures_symbol' | 'manual' | 'unknown';
 export type OnchainFallbackReason =
     | 'missing_moralis_api_key'
@@ -14,7 +14,20 @@ export type OnchainFallbackReason =
     | 'upstream_request_failed';
 export type ChainFamily = 'evm' | 'solana';
 export type OnchainSearchScope = 'contracts' | 'alpha';
-export type DexWindowKey = 'm5' | 'h1' | 'h6' | 'h24';
+type DexWindowKey = 'm5' | 'h1' | 'h6' | 'h24';
+type OnchainSourceStatus = 'ok' | 'empty' | 'failed' | 'unavailable';
+
+export interface OnchainSourceState {
+    status: OnchainSourceStatus;
+    error?: string;
+}
+
+export interface OnchainSourceStatuses {
+    dex: OnchainSourceState;
+    metrics: OnchainSourceState;
+    history: OnchainSourceState;
+    topHolders: OnchainSourceState;
+}
 
 export interface DexTradeWindow {
     buys: number | null;
@@ -62,7 +75,7 @@ export interface HolderSupplyBucket {
     supplyPercent: number;
 }
 
-export interface HolderChangeWindow {
+interface HolderChangeWindow {
     change: number;
     changePercent: number;
 }
@@ -180,7 +193,7 @@ export interface SupplyBreakdown {
     evidence: string[];
 }
 
-export interface StructureSummaryCard {
+interface StructureSummaryCard {
     title: string;
     value: string;
     description: string;
@@ -240,6 +253,7 @@ export interface TokenResearchPayload {
     sourceMode: OnchainSourceMode;
     mappingStatus: OnchainMappingStatus;
     fallbackReason?: OnchainFallbackReason;
+    sourceStatuses: OnchainSourceStatuses;
     identityResolution: TokenIdentityResolution;
     identity: AddressIdentity;
     eligibility: AnalysisEligibility;

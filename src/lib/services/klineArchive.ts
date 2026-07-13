@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 
-import type { KlineData } from '../../app/api/backtest/klines/route.ts';
+import type { KlineData } from '../backtestKlineMerge.ts';
 import { getKlineIntervalMs } from '../binanceKlineFetcher.ts';
 import { detectKlineGaps } from '../klineRangeUtils.ts';
 import {
@@ -43,11 +43,11 @@ function buildArchiveDir(symbol: string, interval: string): string {
     return buildPrimaryArchivePath(symbol, 'klines', interval);
 }
 
-export function getArchiveMergedCsvPath(symbol: string, interval: string): string {
+function getArchiveMergedCsvPath(symbol: string, interval: string): string {
     return path.join(buildArchiveDir(symbol, interval), 'merged.csv');
 }
 
-export function getArchiveAuditPath(symbol: string, interval: string): string {
+function getArchiveAuditPath(symbol: string, interval: string): string {
     return path.join(buildArchiveDir(symbol, interval), 'audit.json');
 }
 

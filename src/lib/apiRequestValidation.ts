@@ -45,7 +45,7 @@ export function invalidRequestBody(details: string) {
     };
 }
 
-export function normalizeFuturesSymbol(
+function normalizeFuturesSymbol(
     value: string | null,
     fallback?: string,
     options: { allowLocalized?: boolean } = {}
@@ -235,9 +235,3 @@ export function validateOnchainDashboardParams(searchParams: URLSearchParams): V
         },
     };
 }
-
-export const requestValidationInternals = {
-    BACKTEST_INTERVALS,
-    LONG_SHORT_PERIODS,
-    MAX_BACKTEST_RANGE_MS,
-};

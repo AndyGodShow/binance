@@ -7,7 +7,7 @@
 - 没有发现 `.env.local`、私钥文件、`.pem` 或 `.key` 文件被 git 跟踪。
 - `.env.example` 是唯一被跟踪的 env 文件，内容为空占位变量，可作为公开配置模板。
 - 本地存在 `.env.local`，但它被 `.gitignore` 的 `.env*` 规则忽略；不要把其中真实值复制到文档、issue、截图或提交信息。
-- 代码中的 `COINALYZE_API_KEY`、`MORALIS_API_KEY`、`DATA_DOWNLOAD_TOKEN`、`CRON_SECRET` 等命中均为环境变量读取、测试占位或配置说明，不是硬编码密钥。
+- 代码中的 `COINALYZE_API_KEY`、`MORALIS_API_KEY`、`DATA_DOWNLOAD_TOKEN` 等命中均为环境变量读取、测试占位或配置说明，不是硬编码密钥。
 - 历史提交中只看到 `.env.example` 的 env 文件记录，没有看到 `.env.local`、私钥文件或证书文件进入历史。
 - `output/playwright/*.png` 当前已经在 git 跟踪列表中；继续提交截图前应确认画面里没有本地路径、账户信息、token、私有钱包地址或未公开策略数据。
 - `data/daily-news/`、`data/external/`、`data/ledger_strategy/`、`data/historical/` 和 `.playwright-cli/` 已被忽略，适合存放本地抓取缓存和临时输出，但不要手动强制添加。

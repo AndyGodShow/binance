@@ -154,7 +154,7 @@ export function isStrategyScanCandidate(
     );
 }
 
-export function getLatestCloseTime(data: TickerData[] | undefined): number | undefined {
+function getLatestCloseTime(data: TickerData[] | undefined): number | undefined {
     if (!data || data.length === 0) {
         return undefined;
     }
@@ -198,7 +198,7 @@ export function isHeavyMarketPayloadFresh(payload: TimedPayload<TickerData[]> | 
     return (Date.now() - payload.fetchedAt) <= maxAgeMs;
 }
 
-export function enrichTickerWithDeferredData(
+function enrichTickerWithDeferredData(
     ticker: TickerData,
     frameData?: MultiFrameDataMap,
     rsrsData?: RsrsDataMap
@@ -245,7 +245,7 @@ export function enrichTickerWithDeferredData(
     return nextTicker;
 }
 
-export function isUsdtTickerCandidate(ticker: TickerData | undefined | null): ticker is TickerData {
+function isUsdtTickerCandidate(ticker: TickerData | undefined | null): ticker is TickerData {
     if (!ticker || typeof ticker.symbol !== 'string') {
         return false;
     }
@@ -255,14 +255,6 @@ export function isUsdtTickerCandidate(ticker: TickerData | undefined | null): ti
         typeof ticker.quoteVolume === 'string' &&
         ticker.symbol.endsWith('USDT')
     );
-}
-
-export function isRecentTicker(ticker: TickerData, now: number): boolean {
-    return Number.isFinite(ticker.closeTime) && (now - ticker.closeTime) < 24 * 60 * 60 * 1000;
-}
-
-export function isLiquidTicker(ticker: TickerData): boolean {
-    return Number.isFinite(parseFloat(ticker.quoteVolume)) && parseFloat(ticker.quoteVolume) > 100000;
 }
 
 export function mergeLightMarketOpenInterest(
@@ -364,10 +356,7 @@ export function normalizeTickerUniverse(
         return [];
     }
 
-    const now = Date.now();
     return rawData
         .filter(isUsdtTickerCandidate)
-        .filter((ticker) => isRecentTicker(ticker, now))
-        .filter(isLiquidTicker)
         .map((ticker) => enrichTickerWithDeferredData(ticker, frameData, rsrsData));
 }

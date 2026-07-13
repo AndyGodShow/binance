@@ -69,8 +69,16 @@ export default function RiskConfigPanel({ strategyId, onChange }: RiskConfigPane
     return (
         <div className={styles.section}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <h3 onClick={() => setExpanded(!expanded)} style={{ cursor: 'pointer', userSelect: 'none' }}>
-                    🎯 策略风控参数 {expanded ? '▾' : '▸'}
+                <h3>
+                    <button
+                        type="button"
+                        onClick={() => setExpanded(!expanded)}
+                        aria-expanded={expanded}
+                        aria-controls="risk-config-content"
+                        style={sectionToggleStyle}
+                    >
+                        🎯 策略风控参数 {expanded ? '▾' : '▸'}
+                    </button>
                 </h3>
                 {expanded && (
                     <button
@@ -91,7 +99,7 @@ export default function RiskConfigPanel({ strategyId, onChange }: RiskConfigPane
             </div>
 
             {expanded && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 8 }}>
+                <div id="risk-config-content" style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 8 }}>
                     {/* ===== 止损区域 ===== */}
                     <div style={sectionStyle}>
                         <div style={sectionTitleStyle}>🛡️ 止损设置</div>
@@ -268,6 +276,18 @@ export default function RiskConfigPanel({ strategyId, onChange }: RiskConfigPane
 }
 
 // ===== Inline styles =====
+const sectionToggleStyle: React.CSSProperties = {
+    appearance: 'none',
+    background: 'none',
+    border: 0,
+    color: 'inherit',
+    cursor: 'pointer',
+    font: 'inherit',
+    padding: 0,
+    textAlign: 'left',
+    userSelect: 'none',
+};
+
 const sectionStyle: React.CSSProperties = {
     background: 'rgba(43,49,57,0.4)',
     borderRadius: 8,

@@ -41,7 +41,7 @@ import { strategyRegistry } from '../strategies/registry.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-export interface StrategyRunSymbolSummary {
+interface StrategyRunSymbolSummary {
     symbol: string;
     totalProfit: number;
     winRate: number;
@@ -51,7 +51,7 @@ export interface StrategyRunSymbolSummary {
     diagnosticsConfidence: DiagnosticsConfidence;
 }
 
-export interface StrategyWindowBatchSummary {
+interface StrategyWindowBatchSummary {
     requestedSymbols: number;
     completedSymbols: number;
     failedSymbols: string[];
@@ -62,7 +62,7 @@ export interface StrategyWindowBatchSummary {
     averageTrades: number;
 }
 
-export interface StrategyWindowEvaluation {
+interface StrategyWindowEvaluation {
     window: OptimizationWindow;
     portfolio: StrategyWindowMetrics;
     portfolioResult: PortfolioBacktestResult | null;
@@ -71,7 +71,7 @@ export interface StrategyWindowEvaluation {
     symbolResults: StrategyRunSymbolSummary[];
 }
 
-export interface StrategyCandidateEvaluation {
+interface StrategyCandidateEvaluation {
     candidate: StrategyParameterCandidate;
     metrics: StrategyWindowMetricMap;
     windows: Partial<Record<OptimizationWindow, StrategyWindowEvaluation>>;

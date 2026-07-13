@@ -52,6 +52,7 @@ export default function ControlBar({
                             value={search}
                             onChange={(e) => setSearch(e.target.value)}
                             className={styles.searchInput}
+                            aria-label="搜索币种"
                         />
                     </div>
                 </div>
@@ -64,6 +65,7 @@ export default function ControlBar({
                                 key={opt.value}
                                 onClick={() => setVolumeFilter(opt.value)}
                                 className={cn(styles.segmentBtn, volumeFilter === opt.value && styles.activeSegment)}
+                                aria-pressed={volumeFilter === opt.value}
                             >
                                 {opt.label}
                             </button>
@@ -78,6 +80,7 @@ export default function ControlBar({
                             value={watchlistFilter}
                             onChange={(e) => setWatchlistFilter(e.target.value)}
                             className={styles.select}
+                            aria-label="选择观察池"
                         >
                             {watchlistOptions.map((option) => (
                                 <option key={option.value} value={option.value}>
@@ -97,6 +100,7 @@ export default function ControlBar({
                             className={styles.alertBtn}
                             onClick={onOpenAlertSettings}
                             title="提醒设置"
+                            aria-label="打开提醒设置"
                         >
                             <Bell size={18} />
                         </button>
@@ -107,6 +111,8 @@ export default function ControlBar({
                             className={cn(styles.iconBtn, !compactMode && styles.activeIcon)}
                             onClick={() => setCompactMode(false)}
                             title="Comfortable View"
+                            aria-label="舒适视图"
+                            aria-pressed={!compactMode}
                         >
                             <LayoutGrid size={18} />
                         </button>
@@ -114,6 +120,8 @@ export default function ControlBar({
                             className={cn(styles.iconBtn, compactMode && styles.activeIcon)}
                             onClick={() => setCompactMode(true)}
                             title="Compact View"
+                            aria-label="紧凑视图"
+                            aria-pressed={compactMode}
                         >
                             <List size={18} />
                         </button>

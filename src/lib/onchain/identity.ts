@@ -13,7 +13,7 @@ export function normalizeAssetTerm(value: string) {
     return value.trim().toUpperCase();
 }
 
-export function stripLeadingMultiplier(value: string) {
+function stripLeadingMultiplier(value: string) {
     return value.replace(/^\d+/, '');
 }
 

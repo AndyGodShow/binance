@@ -1,9 +1,9 @@
 import type { TickerData } from './types.ts';
 
-export type MarketDataQuality = 'enriched' | 'lightweight';
-export type MarketDataSource = 'heavy' | 'fallback';
+type MarketDataQuality = 'enriched' | 'lightweight';
+type MarketDataSource = 'heavy' | 'fallback';
 
-export interface MarketDataCacheEntry {
+interface MarketDataCacheEntry {
     time: number;
     data: TickerData[];
     quality: MarketDataQuality;
@@ -15,6 +15,9 @@ export interface MarketDataRouteState {
     lastSuccessfulAt: number;
     liveMarketCache: MarketDataCacheEntry | null;
     inflightMarketBuild: Promise<TickerData[]> | null;
+    inflightFallbackBuild: Promise<TickerData[]> | null;
+    lastFallbackMarketData: TickerData[] | null;
+    lastFallbackAt: number;
 }
 
 export function createMarketDataRouteState(): MarketDataRouteState {
@@ -23,10 +26,13 @@ export function createMarketDataRouteState(): MarketDataRouteState {
         lastSuccessfulAt: 0,
         liveMarketCache: null,
         inflightMarketBuild: null,
+        inflightFallbackBuild: null,
+        lastFallbackMarketData: null,
+        lastFallbackAt: 0,
     };
 }
 
-export function commitSuccessfulMarketData(
+function commitSuccessfulMarketData(
     state: MarketDataRouteState,
     data: TickerData[],
     now: number = Date.now(),
@@ -41,13 +47,36 @@ export function commitSuccessfulMarketData(
 }
 
 export function commitFallbackMarketData(
-    _state: MarketDataRouteState,
+    state: MarketDataRouteState,
     data: TickerData[],
-    _now: number = Date.now(),
+    now: number = Date.now(),
 ): TickerData[] {
-    void _state;
-    void _now;
+    if (data.length > 0) {
+        state.lastFallbackMarketData = data;
+        state.lastFallbackAt = now;
+    }
     return data;
+}
+
+export function ensureFreshFallbackMarketData(
+    state: MarketDataRouteState,
+    fetchMarketData: () => Promise<TickerData[]>,
+    options: { now: number; freshForMs: number },
+): Promise<TickerData[]> {
+    const cached = state.lastFallbackMarketData;
+    if (cached?.length && options.now - state.lastFallbackAt < options.freshForMs) {
+        return Promise.resolve(cached);
+    }
+
+    if (!state.inflightFallbackBuild) {
+        state.inflightFallbackBuild = fetchMarketData()
+            .then((data) => commitFallbackMarketData(state, data, options.now))
+            .finally(() => {
+                state.inflightFallbackBuild = null;
+            });
+    }
+
+    return state.inflightFallbackBuild;
 }
 
 export function ensureCachedMarketBuild(
@@ -68,4 +97,39 @@ export function ensureCachedMarketBuild(
     }
 
     return state.inflightMarketBuild;
+}
+
+export interface MarketSnapshotDecision {
+    state: 'fresh' | 'stale-refreshing' | 'building';
+    data: TickerData[] | null;
+    build: Promise<TickerData[]> | null;
+}
+
+export function resolveMarketSnapshotRequest(
+    state: MarketDataRouteState,
+    buildMarketData: () => Promise<TickerData[]>,
+    options: {
+        now: number;
+        freshForMs: number;
+        startBuild?: boolean;
+    },
+): MarketSnapshotDecision {
+    const snapshot = state.lastSuccessfulMarketData;
+    const isFresh = Boolean(
+        snapshot?.length
+        && options.now - state.lastSuccessfulAt < options.freshForMs,
+    );
+
+    if (isFresh) {
+        return { state: 'fresh', data: snapshot, build: null };
+    }
+
+    const build = options.startBuild === false
+        ? null
+        : ensureCachedMarketBuild(state, buildMarketData);
+    if (snapshot?.length) {
+        return { state: 'stale-refreshing', data: snapshot, build };
+    }
+
+    return { state: 'building', data: null, build };
 }

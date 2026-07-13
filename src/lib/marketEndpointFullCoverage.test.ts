@@ -1,33 +1,41 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import test from 'node:test';
 
-const repoRoot = process.cwd();
+import { resolveMarketEnrichmentLimits } from './marketBuildConfig.ts';
+import { resolveWorkspaceMarketPolicy } from './workspaceMarketPolicy.ts';
+import { normalizeTickerUniverse } from './liveMarketData.ts';
+import type { TickerData } from './types.ts';
 
-test('main market endpoint always builds enriched market data', () => {
-    const routeSource = readFileSync(join(repoRoot, 'src/app/api/market/route.ts'), 'utf8');
+test('main market enrichment limits preserve the full market universe', () => {
+    const limits = resolveMarketEnrichmentLimits({ NODE_ENV: 'production' });
 
-    assert.doesNotMatch(routeSource, /USE_LIGHTWEIGHT_MARKET_ROUTE/);
-    assert.doesNotMatch(routeSource, /FULL_MARKET_BUILD_ON_ROUTE/);
-    assert.match(routeSource, /ensureCachedMarketBuild\([\s\S]*marketRouteState,[\s\S]*buildMarketData[\s\S]*\)/);
-    assert.match(routeSource, /'X-Data-Quality': 'enriched'/);
+    assert.equal(limits.oiSnapshotSymbolLimit, Number.POSITIVE_INFINITY);
+    assert.equal(limits.klineEnhancementSymbolLimit, Number.POSITIVE_INFINITY);
 });
 
-test('ordinary market views request the enriched market endpoint', () => {
-    const pageSource = readFileSync(join(repoRoot, 'src/app/page.tsx'), 'utf8');
-
-    assert.match(pageSource, /const shouldRunHeavyMarketRequests = shouldRunLiveMarketRequests;/);
-    assert.match(pageSource, /activeTab === 'strategies'[\s\S]*\?[\s\S]*'\/api\/market\/strategy'[\s\S]*:[\s\S]*'\/api\/market'/);
+test('workspace market request policy routes ordinary and strategy research explicitly', () => {
+    assert.equal(resolveWorkspaceMarketPolicy('dashboard').heavyMarketEndpoint, '/api/market');
+    assert.equal(resolveWorkspaceMarketPolicy('strategies').heavyMarketEndpoint, '/api/market/strategy');
+    assert.equal(resolveWorkspaceMarketPolicy('strategies').runDeferredIndicatorRequests, false);
+    assert.equal(resolveWorkspaceMarketPolicy('trading').runLiveMarketRequests, false);
 });
 
-test('full market pipeline combines current OI values with historical 4h OI change', () => {
-    const pipelineSource = readFileSync(join(repoRoot, 'src/lib/marketDataPipeline.ts'), 'utf8');
+test('dashboard normalization preserves stale and low-volume active USDT rows', () => {
+    const base = {
+        lastPrice: '1',
+        priceChange: '0',
+        priceChangePercent: '0',
+        weightedAvgPrice: '1',
+        prevClosePrice: '1',
+        highPrice: '1',
+        lowPrice: '1',
+        volume: '1',
+        openTime: 1,
+    };
+    const rows = [
+        { ...base, symbol: 'LOWUSDT', quoteVolume: '1', closeTime: 1 },
+        { ...base, symbol: 'FRESHUSDT', quoteVolume: '1000000', closeTime: Date.now() },
+    ] as TickerData[];
 
-    assert.match(pipelineSource, /fetchCurrentOpenInterestMarketSnapshotsBatch/);
-    assert.match(pipelineSource, /fetchOpenInterestMarketSnapshotsBatch/);
-    assert.match(pipelineSource, /mergeOpenInterestSnapshotMaps\(currentOiSnapshotMap, historicalOiChangeSnapshotMap\)/);
-    assert.match(pipelineSource, /fetchSentimentHotspotContextMap\([\s\S]*oiSignalMode: 'current'[\s\S]*\)/);
-    assert.match(pipelineSource, /const trackedMarketData = attachHistoricalTrackerChanges\(/);
-    assert.match(pipelineSource, /new Map\(trackedMarketData\.map/);
+    assert.deepEqual(normalizeTickerUniverse(rows).map((row) => row.symbol), ['LOWUSDT', 'FRESHUSDT']);
 });

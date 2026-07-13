@@ -1,5 +1,6 @@
 import { LRUCache } from '@/lib/cache';
 import { logger } from '@/lib/logger';
+import { readCoinalyzeEnv } from '@/lib/env';
 
 const COINALYZE_BASE_URL = 'https://api.coinalyze.net/v1';
 const MARKET_CACHE_TTL = 6 * 60 * 60 * 1000;
@@ -53,11 +54,11 @@ const inflightFutureMarkets = new Map<string, Promise<CoinalyzeFutureMarket[]>>(
 const inflightHistory = new Map<string, Promise<CoinalyzeOpenInterestPoint[]>>();
 
 function getCoinalyzeApiKey(): string | null {
-    const key = process.env.COINALYZE_API_KEY?.trim();
+    const key = readCoinalyzeEnv().coinalyzeApiKey;
     return key ? key : null;
 }
 
-export function isCoinalyzeConfigured(): boolean {
+function isCoinalyzeConfigured(): boolean {
     return Boolean(getCoinalyzeApiKey());
 }
 
@@ -76,7 +77,8 @@ function isCoinalyzeHistoryEntry(value: unknown): value is CoinalyzeHistoryEntry
 async function fetchCoinalyzeJson<T>(
     path: string,
     params: URLSearchParams,
-    revalidate: number = 300
+    revalidate: number = 300,
+    signal?: AbortSignal,
 ): Promise<T> {
     const apiKey = getCoinalyzeApiKey();
     if (!apiKey) {
@@ -90,7 +92,7 @@ async function fetchCoinalyzeJson<T>(
             Accept: 'application/json',
         },
         next: { revalidate },
-        signal: AbortSignal.timeout(10000),
+        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10000)]) : AbortSignal.timeout(10000),
     });
 
     if (!response.ok) {
@@ -203,7 +205,8 @@ export async function fetchCoinalyzeOpenInterestHistory(
     binanceSymbol: string,
     interval: string,
     fromMs: number,
-    toMs: number
+    toMs: number,
+    signal?: AbortSignal,
 ): Promise<CoinalyzeOpenInterestPoint[]> {
     if (!isCoinalyzeConfigured()) {
         return [];
@@ -244,7 +247,7 @@ export async function fetchCoinalyzeOpenInterestHistory(
             });
         }
 
-        const response = await fetchCoinalyzeJson<unknown>('/open-interest-history', params);
+        const response = await fetchCoinalyzeJson<unknown>('/open-interest-history', params, 300, signal);
         const responseItems = Array.isArray(response)
             ? response.filter(isCoinalyzeHistoryResponseItem)
             : [];

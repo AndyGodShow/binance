@@ -24,9 +24,16 @@ export function buildApiSmokeEndpoints(options = {}) {
 
     return [
         { name: 'market', path: '/api/market', expect: 'array' },
+        {
+            name: 'market-health',
+            path: '/api/health/market',
+            expect: 'market-health',
+            allowNotReady: true,
+            minSymbols: 500,
+            allowedNotReadyReasons: ['redis-not-configured', 'enrichment-building', 'enrichment-stuck', 'enriched-snapshot-stale'],
+        },
         { name: 'market-light', path: '/api/market/light', expect: 'array' },
         { name: 'market-multiframe', path: `/api/market/multiframe?symbols=${symbol}`, expect: 'object' },
-        { name: 'oi-all', path: '/api/oi/all', expect: 'object', allowEmptyObject: true },
         { name: 'oi-multiframe', path: `/api/oi/multiframe?symbols=${symbol}`, expect: 'object', allowEmptyObject: true },
         { name: 'longshort', path: `/api/longshort?symbol=${symbol}&period=1h&limit=30`, expect: 'object' },
         { name: 'macro', path: '/api/macro', expect: 'object' },
@@ -46,6 +53,27 @@ export function buildApiSmokeEndpoints(options = {}) {
 }
 
 export function validatePayload(endpoint, payload) {
+    if (endpoint.expect === 'market-health') {
+        const valid = payload
+            && payload.service === 'market'
+            && typeof payload.ready === 'boolean'
+            && ['enriched', 'lightweight', 'unavailable'].includes(payload.dataQuality)
+            && ['ready', 'building', 'stuck', 'blocked'].includes(payload.buildState)
+            && Number.isInteger(payload.symbolCount)
+            && payload.symbolCount >= 0;
+        if (!valid) {
+            throw new Error(`${endpoint.name} expected a valid market health payload`);
+        }
+        if (payload.serving !== true || payload.symbolCount < (endpoint.minSymbols ?? 1)) {
+            throw new Error(`${endpoint.name} expected serving market data with at least ${endpoint.minSymbols ?? 1} symbols`);
+        }
+        if (payload.ready === false && endpoint.allowedNotReadyReasons
+            && !endpoint.allowedNotReadyReasons.includes(payload.reason)) {
+            throw new Error(`${endpoint.name} returned unexpected degradation reason ${payload.reason ?? 'missing'}`);
+        }
+        return;
+    }
+
     if (endpoint.expect === 'array') {
         if (!Array.isArray(payload) || payload.length === 0) {
             throw new Error(`${endpoint.name} expected non-empty array`);
@@ -164,6 +192,15 @@ export function createEndpointBaseline(endpoint, payload, options = {}) {
         return summarizeArrayPayload(payload, symbol);
     }
 
+    if (endpoint.expect === 'market-health') {
+        return {
+            kind: 'market-health',
+            service: payload.service,
+            dataQuality: payload.dataQuality,
+            buildState: payload.buildState,
+        };
+    }
+
     if (endpoint.expect === 'backtest') {
         return summarizeBacktestPayload(payload);
     }
@@ -183,6 +220,11 @@ export function compareEndpointToBaseline(endpoint, baseline, payload, options =
 
     if (baseline.kind !== current.kind) {
         issues.push(`${endpoint.name} payload kind changed from ${baseline.kind} to ${current.kind}`);
+        return issues;
+    }
+
+    if (baseline.kind === 'market-health') {
+        if (current.service !== 'market') issues.push('market-health service changed');
         return issues;
     }
 
